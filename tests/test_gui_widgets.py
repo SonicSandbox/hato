@@ -808,6 +808,78 @@ def test_the_key_itself_never_reaches_a_command_line(qapp):
 # "Connected" about a brand-new bad one. Adversarial pass, 2026-09-18.
 # ---------------------------------------------------------------------------
 
+def test_an_OPEN_accordion_carries_no_graphics_effect(qapp):
+    u"""🚨 THE HOVER BUG, PINNED AT ITS MECHANISM.
+
+    Sonic, 2026-09-19, on the published 1.0.0: *"when you hover over the
+    options for the episodes in the needs you, the option goes invisible
+    while you hover over it."*
+
+    ⛔ A `QGraphicsEffect` CACHES THE SOURCE IT DRAWS, and this one stayed
+    attached for the widget's whole life. A repaint of a DESCENDANT -- which
+    is exactly what `#cand:hover` triggers -- never reached the composited
+    result, so the stale cache was drawn and the card rendered as nothing.
+
+    ⭐ MEASURED at the time: hovering took the card's region of the window
+    from **964 bright pixels to 0**, and back to 964 once the effect was
+    dropped. ⚠ The measurement only worked on a grab of the WINDOW --
+    `card.grab()` renders the widget directly, bypasses compositing, and
+    reported a healthy card throughout.
+
+    ⚠ Pinned structurally rather than by pixels because the open is
+    ANIMATED: in a suite no wall-clock time passes, the animation never
+    finishes, and a pixel assertion would be measuring a half-open row.
+    """
+    content = QLabel(u"the candidates live in here")
+    accordion = gui_app.Accordion(content)
+
+    assert accordion.graphicsEffect() is not None, \
+        u"closed, it needs the effect -- that is what it fades with"
+
+    accordion.set_open(True, animate=False)
+    assert accordion.graphicsEffect() is None, (
+        u"an open row still carries an opacity effect, so any hover repaint "
+        u"inside it can be swallowed by the effect's cache")
+
+    # ⭐ AND IT MUST COME BACK. A fix that permanently removed the effect
+    # would pass the line above and lose the fade this widget exists for.
+    accordion.set_open(False, animate=False)
+    assert accordion.graphicsEffect() is not None, \
+        u"it can never fade again"
+
+
+def test_the_key_dialog_RENDERS_dark_not_merely_carries_a_stylesheet(qapp):
+    u"""🚨 THIS SHIPPED, AND THE OLD CHECK WAS GREEN THE WHOLE TIME.
+
+    Sonic, 2026-09-19, on the published 1.0.0: *"the API key window was white
+    and ugly on this version."* It was not a frozen-build problem -- it
+    reproduces from source and always did.
+
+    ⛔ The sheet sets `color` on every `QWidget` and `background` on ONE
+    object name, `#window`. A dialog is a top-level window of its own, so it
+    took the light ink and Qt's default light grey: its heading was
+    invisible, not merely off-palette.
+
+    ⚠ AND THE CHECK THAT WAS SUPPOSED TO COVER IT asserted the dialog's
+    `styleSheet()` was non-empty -- 16,440 characters of one. A stylesheet
+    that is present and a stylesheet that WORKS are different claims, and
+    only a rendered pixel can tell them apart.
+    """
+    dialog = gui_app.KeyDialog(None, replacing=False)
+    dialog.resize(460, 240)
+    image = dialog.grab().toImage()
+    assert image.width() > 100 and image.height() > 100, u"nothing rendered"
+
+    # ⚠ A corner, well away from any control, is the dialog's own ground.
+    corner = image.pixelColor(6, 6)
+    brightness = corner.red() + corner.green() + corner.blue()
+    ceiling = sum(int(theme.SURFACE[i:i + 2], 16) for i in (1, 3, 5)) + 90
+    assert brightness <= ceiling, (
+        u"the dialog's ground renders at %s (sum %d) -- light ink on a light "
+        u"ground is how its heading became unreadable"
+        % (corner.name(), brightness))
+
+
 def test_a_key_that_FAILS_to_save_is_not_reported_as_saved(qapp):
     window = make()
     window.state.key_hint = u"…old1"
@@ -880,6 +952,80 @@ def test_a_failed_save_NEVER_reaches_the_connection_test(qapp, monkeypatch):
 # settings line? That brings them to the github issues page as well as the
 # github?"*
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 🚨 NO KEY IS A REFUSAL, AND IT SHIPPED AS SILENCE
+#
+# Sonic, 2026-09-19, on the published 1.0.0: *"I gave it a new folder to look
+# at, and ran it, it doesn't do anything ... I THINK that behavior happened
+# because i didn't have the API key in."*
+#
+# ⛔ THREE FAULTS STACKED. The CLI exited 1 -- the SAME code as "something
+# needs a pick" -- with its explanation on a stderr the window does not read;
+# and the window treats only exit 2 as "could not run", so the footer said
+# **done** over an empty tab. Nothing anywhere said "no key".
+#
+# ⚠ AND THE SMOKE TEST DID NOT COVER IT. It asserts the CLI refuses with an
+# instruction, which was always true. Nothing asserted what the WINDOW does
+# with that refusal -- the seam between them, again.
+# ---------------------------------------------------------------------------
+
+def test_a_run_with_no_key_REFUSES_and_says_why(qapp, monkeypatch):
+    window = make(running=False, folders=[u"D:\\Anime"])
+    window.state.key_hint = None
+
+    started = []
+    monkeypatch.setattr(gui_run, u"Runner",
+                        lambda **kw: started.append(kw) or _NullRunner())
+
+    assert window.start_run() is None, u"it tried to run without a key"
+    assert started == [], u"it started a run that could only fail"
+    assert u"key" in gui_app.footer_status(window.state).lower(), \
+        u"the footer says %r, which does not mention the key" \
+        % gui_app.footer_status(window.state)
+
+
+def test_with_a_key_a_run_still_starts(qapp, monkeypatch):
+    u"""⛔ THE GUARD MUST NOT BE A WALL. A refusal that fired for everybody
+    would pass the check above and break the product -- which is the shape of
+    a fix that is worse than the bug."""
+    window = make(running=False, folders=[u"D:\\Anime"])
+    window.state.key_hint = u"…ab12"
+
+    started = []
+    monkeypatch.setattr(gui_run, u"Runner",
+                        lambda **kw: started.append(kw) or _NullRunner())
+
+    assert window.start_run() is not None
+    assert started, u"a run with a key never started"
+
+
+def test_folders_but_no_key_SHOWS_the_way_to_add_one(qapp):
+    u"""*"There then needs to be another button to add the api key with
+    instructions to get them there as well."*"""
+    window = make(rows=[], folders=[u"D:\\Anime"])
+    window.state.key_hint = None
+    window.show_tab(gui_app.TAB_SUBS)
+
+    joined = u" ".join(gui_app.texts(window))
+    assert u"No jimaku key yet" in joined
+    assert u"jimaku.cc/account" in joined, \
+        u"it names the problem and not where to solve it"
+
+    adders = [b for b in window.findChildren(QPushButton)
+              if u"jimaku key" in b.text()]
+    assert adders, u"no control to add one"
+    assert adders[0].receivers(adders[0].clicked) > 0, u"the button is inert"
+
+
+def test_a_missing_key_never_hides_results_already_on_screen(qapp):
+    u"""⛔ Somebody who has run before keeps their rows. Replacing real
+    results with a nag is worse than the nag is worth."""
+    window = make(folders=[u"D:\\Anime"])          # the full fixture rows
+    window.state.key_hint = None
+    window.show_tab(gui_app.TAB_SUBS)
+    assert u"No jimaku key yet" not in u" ".join(gui_app.texts(window))
+
 
 def test_the_tab_line_offers_feedback_and_the_repository(qapp):
     window = make()
@@ -1831,10 +1977,46 @@ def test_episodes_skipped_inside_an_added_show_are_counted_under_it(qapp):
 
 
 def test_needs_you_rows_are_on_the_needs_you_tab_and_nowhere_else(qapp):
-    u"""[*] FAILURES LIVE IN THEIR OWN TAB. Being there IS the signal."""
+    u"""[*] FAILURES LIVE IN THEIR OWN TAB. Being there IS the signal.
+
+    ⚠ EACH TAB IS SHOWN BEFORE IT IS READ. Panes are built lazily now --
+    only the visible one is rebuilt on each render, because rebuilding all
+    three eight times a second during a run tore the Settings tab apart in
+    front of the person. The claim is unchanged; reaching it takes one more
+    line.
+    """
     window = make()
+    window.show_tab(gui_app.TAB_PICK)
     assert len(window.panes[gui_app.TAB_PICK].findChildren(gui_app.PickHead)) == 2
+    window.show_tab(gui_app.TAB_SUBS)
     assert window.panes[gui_app.TAB_SUBS].findChildren(gui_app.PickHead) == []
+
+
+def test_a_needs_you_row_names_the_VIDEO_FILE_not_just_the_show(qapp):
+    u"""🚨 SHIPPED UNSORTABLE. Sonic, 2026-09-19, on the published 1.0.0:
+    *"i cannot see the actual name of the file in the 'needs you' which makes
+    it impossible to sort. it should show the actual video one."*
+
+    ⛔ The row read `title or name`, and `title` is the SHOW -- so every
+    episode of one series rendered an identical line and the only thing
+    telling two rows apart was the number in the left column.
+    """
+    title = u"Tsuihou sareta Tensei Juukishi"
+    window = make(rows=[needs_you(11, title), needs_you(12, title)])
+    window.show_tab(gui_app.TAB_PICK)
+
+    heads = window.panes[gui_app.TAB_PICK].findChildren(gui_app.PickHead)
+    assert len(heads) == 2
+    shown = [w.full() if hasattr(w, u"full") else w.text()
+             for head in heads
+             for w in head.findChildren(gui_app.Elide)
+             if w.objectName() == u"who"]
+    assert len(shown) == 2, shown
+    # ⭐ The two rows must not say the same thing.
+    assert shown[0] != shown[1], \
+        u"both rows read %r -- indistinguishable" % shown[0]
+    for text in shown:
+        assert u".mkv" in text, u"the row does not name a file: %r" % text
 
 
 def test_not_yet_rows_are_a_quiet_line_on_the_needs_you_tab(qapp):

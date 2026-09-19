@@ -898,9 +898,42 @@ class Accordion(Styled):
         self._anim.setDuration(theme.SLOW)
         self._anim.setEasingCurve(ease())
         self._anim.finished.connect(self._settle)
-        self._fade = QGraphicsOpacityEffect(self)
-        self._fade.setOpacity(0.0)
-        self.setGraphicsEffect(self._fade)
+        self._fade = None
+        self._ensure_fade().setOpacity(0.0)
+
+    def _ensure_fade(self):
+        u"""The opacity effect, made when it is needed. -> the effect"""
+        if self._fade is None:
+            self._fade = QGraphicsOpacityEffect(self)
+            self.setGraphicsEffect(self._fade)
+        return self._fade
+
+    def _drop_fade(self):
+        u"""🚨 DETACH IT ONCE THE ROW IS OPEN, AND THIS IS A REAL BUG'S FIX.
+
+        Sonic, 2026-09-19, on the published 1.0.0: *"when you hover over the
+        options for the episodes in the needs you, the option goes invisible
+        while you hover over it."*
+
+        ⛔ A `QGraphicsEffect` CACHES THE SOURCE IT DRAWS. While one is
+        attached, a repaint of a DESCENDANT -- which is exactly what
+        `#cand:hover` triggers -- can fail to reach the composited result, so
+        the stale cache is drawn instead and the card renders as nothing.
+
+        ⭐ MEASURED, not reasoned: hovering a candidate took the card's
+        region of the window from **964 bright pixels to 0**. ⚠ And it only
+        showed up when the WINDOW was grabbed -- `card.grab()` renders the
+        widget directly, bypasses compositing, and reported a perfectly
+        healthy card the whole time.
+
+        ⚠ The effect is worth having DURING the fade and nothing afterwards:
+        at full opacity it changes no pixel and costs a caching hazard. So it
+        goes as soon as the row has settled open, and is remade next time
+        something needs to fade.
+        """
+        if self._fade is not None:
+            self.setGraphicsEffect(None)      # ⚠ Qt deletes the old effect
+            self._fade = None
 
     def target_height(self):
         u"""-> the content's OWN height. [X] Never a constant."""
@@ -913,10 +946,13 @@ class Accordion(Styled):
     def set_open(self, open_, animate=True):
         self._open = bool(open_)
         end = self.target_height() if self._open else 0
-        self._fade.setOpacity(1.0 if self._open else 0.0)
+        self._ensure_fade().setOpacity(1.0 if self._open else 0.0)
         if not animate:
             self._anim.stop()
             self.setMaximumHeight(QWIDGETSIZE_MAX if self._open else 0)
+            # ⚠ Opened with no animation, so there is no fade to wait for.
+            if self._open:
+                self._drop_fade()
             return
         self._anim.stop()
         self._anim.setStartValue(self.height())
@@ -924,9 +960,14 @@ class Accordion(Styled):
         self._anim.start()
 
     def _settle(self):
-        u"""[*] Release the ceiling once open, so later growth is not clipped."""
+        u"""[*] Release the ceiling once open, so later growth is not clipped.
+
+        ⭐ AND DROP THE OPACITY EFFECT. See `_drop_fade` -- leaving it
+        attached is what made a hovered candidate render as nothing.
+        """
         if self._open:
             self.setMaximumHeight(QWIDGETSIZE_MAX)
+            self._drop_fade()
 
 
 class Clickable(Styled):
@@ -1379,7 +1420,21 @@ class PickHead(Clickable):
         line = QHBoxLayout(who)
         line.setContentsMargins(0, 0, 0, 0)
         line.setSpacing(5)
-        title = Elide(row.get(u"title") or row.get(u"name") or u"", who, u"who")
+        # 🚨 THE FILE, NOT THE SHOW. Sonic, 2026-09-19, on the published
+        # 1.0.0: *"i cannot see the actual name of the file in the 'needs
+        # you' which makes it impossible to sort. it should show the actual
+        # video one."*
+        #
+        # ⛔ This read `title or name`, and `title` is the SHOW -- so every
+        # episode of one series rendered the same sentence and the rows were
+        # indistinguishable except by the number in the left column. A tab
+        # whose whole job is *"these need a person"* has to say which file.
+        #
+        # ⚠ MIDDLE elision, not right. A release name carries its group at
+        # the front and its episode, resolution and extension at the end;
+        # cutting the tail throws away the half that identifies it.
+        title = Elide(row.get(u"name") or row.get(u"title") or u"", who,
+                      u"who", mode=Qt.TextElideMode.ElideMiddle)
         #: [!] NO STRETCH ON THE TITLE, and the stretch goes AFTER the season.
         #: Given the stretch, the title expanded to the full 560px column and
         #: shoved *"· 3rd Season"* to the far right, 600px from the show it
@@ -1749,9 +1804,27 @@ class HatoWindow(Styled):
         self.tab_buttons[TAB_PICK].set_count(tallies[gui_run.NEEDS_YOU])
         self.body.setCurrentWidget(self.panes[state.tab])
 
-        self._render_subs()
-        self._render_pick()
-        self._render_settings()
+        # 🚨 ONLY THE PANE IN FRONT OF THE PERSON. Sonic, 2026-09-19, on the
+        # published 1.0.0: *"while it's running, the settings tab glitches
+        # HARD ... they look all glitchy like they're collapsing."*
+        #
+        # ⛔ ALL THREE USED TO REBUILD ON EVERY RENDER, AND `_drain` RENDERS
+        # EVERY 120 ms WHILE A RUN IS IN FLIGHT. So a tab nobody was looking
+        # at -- and one they WERE -- was torn down and rebuilt about eight
+        # times a second, and every expanding row inside it was recreated at
+        # `maximumHeight 0` with `opacity 0.0` and animated open again from
+        # scratch. That is the collapsing.
+        #
+        # ⭐ Switching tabs calls `render()`, which builds whichever pane is
+        # now current, so a hidden pane is never stale when it comes forward.
+        # ⚠ The badge above is updated separately and still counts while the
+        # Needs-you pane is hidden.
+        if state.tab == TAB_SUBS:
+            self._render_subs()
+        elif state.tab == TAB_PICK:
+            self._render_pick()
+        else:
+            self._render_settings()
 
         self.live_label.setText(footer_status(state))
         self.dot.set_running(state.running)
@@ -1782,6 +1855,16 @@ class HatoWindow(Styled):
         if not state.folders:
             column.addStretch(1)
             column.addWidget(self._no_folders())
+            column.addStretch(1)
+            return
+
+        # ⭐ FOLDERS BUT NO KEY -- the second thing that stops hato dead, and
+        # it used to stop it SILENTLY. ⛔ Only when there is nothing to show:
+        # a person who has run before keeps their results on screen, because
+        # replacing real rows with a nag would be worse than the nag is worth.
+        if not state.key_hint and not state.rows:
+            column.addStretch(1)
+            column.addWidget(self._no_key())
             column.addStretch(1)
             return
 
@@ -1902,6 +1985,58 @@ class HatoWindow(Styled):
         drop = label(u"or drop a folder anywhere on this window", u"hint", host)
         drop.setAlignment(Qt.AlignmentFlag.AlignCenter)
         box.addWidget(drop, 0, Qt.AlignmentFlag.AlignHCenter)
+        return host
+
+    def _no_key(self):
+        u"""Folders are set, but hato has no key. -> a centred widget
+
+        🚨 THE STATE THAT SHIPPED AS SILENCE. Sonic, 2026-09-19, on the
+        published 1.0.0: *"I gave it a new folder to look at, and ran it, it
+        doesn't do anything ... I THINK that behavior happened because i
+        didn't have the API key in."* He diagnosed it himself, which is the
+        part that should not have been necessary.
+
+        ⛔ EVERY request hato makes needs the key, so without one there is no
+        run to be had -- this is not a quiet precondition, it is the whole
+        difference between working and not. And it is the FIRST thing a new
+        person meets, because nobody arrives with a key already set.
+
+        ⭐ So it names the problem, offers the control, and says where to get
+        one. *"There then needs to be another button to add the api key with
+        instructions to get them there as well."*
+        """
+        host = QWidget(self.panes[TAB_SUBS].widget())
+        box = QVBoxLayout(host)
+        box.setContentsMargins(PAD, 0, PAD, 0)
+        box.setSpacing(14)
+
+        mark = QLabel(host)
+        pixmap = branding.mark_pixmap(96, host.devicePixelRatioF())
+        if not pixmap.isNull():
+            mark.setPixmap(pixmap)
+        mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        box.addWidget(mark, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        lead = label(u"No jimaku key yet", u"emptylead", host)
+        lead.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        box.addWidget(lead, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        why = label(u"hato needs a free key from your jimaku.cc account "
+                    u"before it can find anything.", u"hint", host)
+        why.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        why.setWordWrap(True)
+        box.addWidget(why, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        add = button(u"Add your jimaku key", host, accent=True)
+        add.clicked.connect(self.choose_key)
+        box.addWidget(add, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        # ⭐ WHERE TO GET ONE, not merely that one is needed. A refusal that
+        # does not say how to satisfy it is a dead end.
+        box.addWidget(
+            link_label(u"Get a key at jimaku.cc/account",
+                       u"https://jimaku.cc/account", u"hint", host),
+            0, Qt.AlignmentFlag.AlignHCenter)
         return host
 
     def _empty(self, lead, tail):
@@ -2271,7 +2406,13 @@ class HatoWindow(Styled):
             note = (u"The startup entry points somewhere else — "
                     u"switch it off and on to repoint it here.")
         if note:
-            column.addWidget(label(note, u"hint", text))
+            # ⚠ WRAPPED. Qt does not wrap a label unless told to, and an
+            # unwrapped one does not overflow -- it silently truncates. Both
+            # strings here are full sentences that say what to do about a
+            # problem, so losing their second half loses the instruction.
+            said = label(note, u"hint", text)
+            said.setWordWrap(True)
+            column.addWidget(said)
 
         line.addWidget(text, 1)
         return row
@@ -3148,6 +3289,26 @@ class HatoWindow(Styled):
         """
         if self.state.running or not self.state.folders:
             return None
+
+        # 🚨 NO KEY IS A REFUSAL, NOT A RUN. Sonic, 2026-09-19, on the
+        # published 1.0.0: *"I gave it a new folder to look at, and ran it, it
+        # doesn't do anything ... I THINK that behavior happened because i
+        # didn't have the API key in."*
+        #
+        # ⛔ Every request hato makes needs the key, so a keyless run cannot
+        # do anything at all -- and spawning one produced a child that wrote
+        # its explanation to a stderr this window does not read, exited, and
+        # left the footer saying "done". A person cannot tell that apart from
+        # "there was nothing to fetch".
+        #
+        # ⭐ Refused HERE, before anything is spawned, so the reason is the
+        # thing on screen rather than an exit code nobody sees.
+        if not self.state.key_hint:
+            self.state.live = u"no jimaku key — add one in Settings"
+            self.state.tab = TAB_SUBS
+            self.render()
+            return None
+
         argv = gui_run.argv_for(self.state.folders, progress=True)
         self.state.running = True
         self.state.rows = []

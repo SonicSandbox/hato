@@ -208,6 +208,20 @@ QToolTip {
 }
 
 #window { background: %(SURFACE)s; }
+
+/* 🚨 EVERY DIALOG, NOT JUST THE NAMED WINDOW. Sonic, 2026-09-19, on the
+ * published 1.0.0: *"the API key window was white and ugly on this version."*
+ *
+ * ⛔ THE RULE ABOVE SETS LIGHT TEXT ON EVERY QWidget AND A BACKGROUND ON ONE
+ * OBJECT NAME. A dialog is a top-level window of its own, so it matched the
+ * colour rule and not the background one -- light ink on Qt's default light
+ * grey, which is why its heading was invisible rather than merely wrong.
+ *
+ * ⚠ AND IT WAS NEVER FROZEN-SPECIFIC. It reproduces from source, and it was
+ * "verified" earlier by asserting the dialog HAD a stylesheet -- 16,440
+ * characters of one. Nothing asserted what those characters produced.
+ * `tests/test_gui_widgets.py` now samples the rendered pixel. */
+QDialog { background: %(SURFACE)s; }
 #shell  { background: %(BG)s; }
 
 /* ---- title bar --------------------------------------------------------- */

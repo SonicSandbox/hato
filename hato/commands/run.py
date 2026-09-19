@@ -441,7 +441,24 @@ def run(args):
 
     try:
         world = build_world(args)
-    except (credentials.KeyMissing, paths.PathError, NoRecording) as exc:
+    except (credentials.KeyMissing, paths.PathError) as exc:
+        # 🚨 EXIT 2, NOT 1 -- AND A PERSON FOUND THIS THE HARD WAY.
+        # Sonic, 2026-09-19, on the published 1.0.0: *"I gave it a new folder
+        # to look at, and ran it, it doesn't do anything ... I THINK that
+        # behavior happened because i didn't have the API key in."*
+        #
+        # ⛔ Exit 1 is *"it could not do what was asked"* and it is the NORMAL
+        # code for a run where something needs a pick. So the window, which
+        # treats only exit 2 as "could not run", read a keyless run as an
+        # ordinary finished one and said **done** -- with nothing on screen
+        # and the explanation on a stderr nobody was reading.
+        #
+        # ⭐ No key is *"the asking was wrong"* (`_usage_fail`): the setup is
+        # incomplete, hato is not broken, and the two are different sentences.
+        return _usage_fail(str(exc))
+    except NoRecording as exc:
+        # ⚠ Different thing: a recorded session was asked for and is not
+        # there. That IS "could not do what was asked".
         return _fail(str(exc))
     except OSError as exc:
         return _fail(u"the run could not be set up: %s" % exc)

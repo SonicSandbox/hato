@@ -300,8 +300,18 @@ def _drive(bundle, cli, gui, watch, env, store):
     # an unhandled exception here is the first thing a new person would see.
     code, out, err = run([cli, empty], env, timeout=180)
     blob = (out or u"") + (err or u"")
+    # 🚨 EXIT 2, AND THE NUMBER IS THE POINT. This asserted `code == 1` until
+    # 2026-09-19, when a keyless run in the published 1.0.0 was reported as
+    # doing nothing at all: exit 1 is *"could not do what was asked"* and is
+    # the NORMAL code for a run where something needs a pick, so the window
+    # read a keyless run as an ordinary finished one and said "done".
+    #
+    # ⭐ No key is *"the asking was wrong"* -- the setup is incomplete, hato
+    # is not broken. ⚠ This check went red on the first build after the CLI
+    # changed, which is the check doing its job: two things disagreed and it
+    # said so rather than tracking the code silently.
     check(u"no key: refuses with an instruction",
-          code == 1 and u"Traceback" not in blob
+          code == 2 and u"Traceback" not in blob
           and u"HATO_JIMAKU_KEY" in blob,
           u"exit %d, %s" % (code, u"names the fix"
                             if u"HATO_JIMAKU_KEY" in blob else blob[-120:]))
