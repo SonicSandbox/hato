@@ -211,14 +211,53 @@ SCAN_SECRETS = ["-m", "hato.dev", "scan-secrets"]
 #: ⚠ Written with six entries first; the stale-exemption report immediately
 #: showed three of them were never there. Over-listing an exemption is the
 #: quiet version of switching the check off.
+#:
+#: 🚨 AND THEN IT HAD THE OPPOSITE PROBLEM, WHICH IS THE WORSE ONE. Until
+#: 2026-09-19 this register had three entries and the gate said `3 hit(s), 3
+#: known planted fixture(s)` -- over a tree holding EIGHT. It was reading the
+#: scanner's sentence, which names only the first three. ⭐ Five literals had
+#: never been looked at by anybody, through the entire 1.0.0 release. All five
+#: turned out to be synthetic, which is luck, not a process. The five below
+#: carry the date they were first actually READ.
 KNOWN_SHAPED = {
-    ("packaging/test_sync_audit.py", "api_key"),      # this folder's own break-check
+    # ⭐ This folder's own break-check: one fake value written in each of the
+    # four shapes `_KEY_SHAPED` claims to recognise, so every one of them has a
+    # case proving it can fire -- plus two it must SKIP. Read 2026-09-19.
+    ("packaging/test_sync_audit.py", "api_key"),
+    ("packaging/test_sync_audit.py", "jimaku_api_key"),
+    ("packaging/test_sync_audit.py", "HATO_JIMAKU_KEY"),
+    ("packaging/test_sync_audit.py", "auth_token"),
     ("tests/test_devtools.py", "api_key"),            # R2's planted-secret fixtures
     ("tests/test_devtools.py", "jimaku_api_key"),     #   "
+    # ⭐ The same `@pytest.mark.parametrize` list as the two above -- one fake
+    # value written five ways, so that each SHAPE the scanner claims to catch
+    # has a case proving it can fail. Read 2026-09-19.
+    ("tests/test_devtools.py", "HATO_JIMAKU_KEY"),
+    ("tests/test_devtools.py", "secret"),
+    ("tests/test_devtools.py", "authToken"),
+    # ⭐ The probe asserting the test runner STRIPS the key from a child's
+    # environment; its value says so in words. Read 2026-09-19.
+    ("tests/test_runner.py", "HATO_JIMAKU_KEY"),
+    # ⭐ A fake env key for `config --check-key`, proving the env route is read
+    # and that only the last four characters are shown. Read 2026-09-19.
+    ("tests/test_wiring.py", "HATO_JIMAKU_KEY"),
 }
 
-#: `<path> field '<name>' at byte N` -- the shape half of the tool's report.
-SHAPED_HIT = re.compile(r"([^\s;]+\.[A-Za-z0-9_]+) field '([^']+)'")
+#: ⭐ THIS FOLDER'S OWN BREAK-CHECKS, AND THIS LIST IS THEIR ONLY RUNNER.
+#:
+#: 🚨 Both files sat here unrun until 2026-09-19, and `test_sync_audit.py` had
+#: been RED since before 1.0.0 -- three of its cases asserted on the second
+#: return value of `audit_staged()`, which that function never populates, so
+#: they read `[]` for a planted leak and `[]` for a clean tree alike. ⛔ A
+#: check nothing runs is not a check, and this gate is the last thing standing
+#: between a mistake and an irreversible public push.
+SELF_CHECKS = ("test_copy_list.py", "test_sync_audit.py")
+
+#: ⚠ How many the scanner SAYS it found, which is NOT how many it names --
+#: `scan.py` formats `shaped[:3]`. This count is the second instrument: it is
+#: compared against `shaped_hits()`, and the two must agree before the register
+#: is consulted at all. It is never used to identify a hit.
+SHAPED_COUNT = re.compile(r"(\d+) key-shaped literal\(s\)")
 
 TEXTISH = (".py", ".md", ".json", ".toml", ".cmd", ".yml", ".yaml", ".txt", ".cfg", ".ini")
 
@@ -477,6 +516,70 @@ def scan_secrets():
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 
+def shaped_hits(root=None):
+    u"""EVERY key-shaped literal under `root`, as (relpath, field) pairs.
+
+    ⛔ THE VALUE IS NEVER RETURNED, PRINTED OR STORED -- only where it is and
+    what the field is called. The caller compares these against KNOWN_SHAPED.
+
+    ⭐ In-process, over `hato.dev.scan`'s own walker, because the subprocess
+    report names only the first three. See the comment at the call site; that
+    truncation is what let five unregistered literals sit in a tree this gate
+    called clean.
+
+    ⚠ THE IMPORT ROOT IS THIS FILE'S REPOSITORY, NOT `root`. They are the same
+    thing in the real run, and deliberately different in the break-check, which
+    points the walk at a temp tree with no `hato` in it. Deriving the import
+    from `root` would make the test unable to call the function it is testing.
+
+    ⭐ And it is the CLONE's `hato` either way -- the clone is what is about to
+    be pushed, so the clone's own scanner is what must read it.
+    """
+    root = CLONE if root is None else root
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    try:
+        from hato.dev import scan as _scan
+    except ImportError as exc:                    # ⛔ refuse, never pass
+        raise SystemExit(u"🚨 cannot import the clone's hato.dev.scan (%s). "
+                         u"The shape half of the audit cannot run, so NOTHING "
+                         u"is pushed." % exc)
+    marker = root.replace("\\", "/") + "/"
+    out = []
+    for label, data in _scan.artifacts(root):
+        for hit_label, name, _at, _len in _scan._shaped_hits(label, data):
+            rel = str(hit_label).replace("\\", "/")
+            if marker in rel:
+                rel = rel.split(marker, 1)[1]
+            out.append((rel, name))
+    return out
+
+
+def self_check():
+    u"""Run this folder's break-checks. -> [] when every one of them passes.
+
+    ⛔ BEFORE the audit, never after. The audit is the thing they prove, and a
+    scanner that cannot fail is indistinguishable from a clean tree -- which is
+    the exact sentence this project's ledger already carries about auditing
+    through a walk that filters for the thing being audited.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    bad = []
+    for name in SELF_CHECKS:
+        path = os.path.join(here, name)
+        if not os.path.isfile(path):
+            bad.append((name, u"missing -- it is named in SELF_CHECKS"))
+            continue
+        proc = subprocess.run([sys.executable, path], cwd=CLONE,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if proc.returncode != 0:
+            lines = proc.stdout.decode("utf-8", "replace").rstrip().splitlines()
+            bad.append((name, u"exit %d -- %s"
+                        % (proc.returncode, u" | ".join(lines[-4:]))))
+    return bad
+
+
 def apply_copy():
     for item in COPIED:
         src, dst = os.path.join(VAULT, item), os.path.join(CLONE, item)
@@ -508,6 +611,17 @@ def main():
         if bad in COPIED:
             print(u"FAIL  %s is in both COPIED and NEVER -- refusing to guess" % bad)
             return 2
+
+    # ⛔ FIRST: can this tool's own checks still fail? Everything below is a
+    # claim made BY the thing they test.
+    broken = self_check()
+    if broken:
+        print(u"\nFAIL  this folder's break-checks do not pass, so nothing this "
+              u"tool reports about the tree can be believed:")
+        for name, why in broken:
+            print(u"    %s  %s" % (name, why))
+        return 2
+    print(u"  self-check: %d break-check(s) green" % len(SELF_CHECKS))
 
     # ⛔ BEFORE the copy, so a forgotten file is named instead of silently skipped
     gaps = audit_copy_list()
@@ -568,14 +682,43 @@ def main():
             break
 
     # the shape half, against the register
-    hits = set()
-    for path, field in SHAPED_HIT.findall(output):
-        rel = path.replace("\\", "/")
-        marker = CLONE.replace("\\", "/") + "/"
-        if marker in rel:
-            rel = rel.split(marker, 1)[1]
-        hits.add((rel, field))
+    #
+    # 🚨 THIS USED TO READ THE SUBPROCESS'S SENTENCE, AND THE SENTENCE IS
+    # TRUNCATED. `hato/dev/scan.py` formats `shaped[:3]`: it says "8 key-shaped
+    # literal(s)" and then names three. This gate checks NAMES against the
+    # register, so for as long as it read that line it could only ever see
+    # three -- and it printed `3 hit(s), 3 known planted fixture(s)` and
+    # `audit clean` over a tree holding EIGHT. Five key-shaped literals had
+    # never been looked at by anybody, across the whole 1.0.0 release.
+    #
+    # ⭐ MEASURED 2026-09-19, and the symptom arrived first as an ACCUSATION:
+    # a fourth shape (a key-shaped line in a MANIFEST.in COMMENT, of all
+    # things) pushed a registered fixture out of the three, and this tool
+    # reported that fixture as a *stale exemption* -- the register accusing a
+    # file nobody had touched. ⛔ The false stale was the symptom. The missed
+    # hits were the defect, and the first fix written here was ALSO wrong: it
+    # compared the declared count against the number of `field '<name>'`
+    # matches in the report -- 9, because the scanner prints its three-hit
+    # summary three times. So the check read `8 > 9`, which is false, and the
+    # guard sat there doing nothing. ⭐ A gate that reads a REPORT is measuring
+    # the report.
+    #
+    # ⭐ So enumerate in-process, over the same walker the tool uses, and stop
+    # parsing prose. The subprocess is still what makes the `key_bytes_absent`
+    # claim -- it resolves the real key, and this must not -- but the shape
+    # half is now counted here, uncapped, and the two counts must AGREE.
+    declared = [int(n) for n in SHAPED_COUNT.findall(output)]
+    pairs = shaped_hits()
+    expect = max(declared) if declared else 0
+    if expect != len(pairs):
+        print(u"\n🚨 FAIL  two instruments disagree about how many key-shaped "
+              u"literals are in this tree: the scanner says %d, this walk found "
+              u"%d." % (expect, len(pairs)))
+        print(u"  Neither number can be trusted until they agree. NOTHING is "
+              u"pushed.")
+        return 1
 
+    hits = set(pairs)
     unexpected = sorted(h for h in hits if h not in KNOWN_SHAPED)
     stale = sorted(k for k in KNOWN_SHAPED if k not in hits)
 

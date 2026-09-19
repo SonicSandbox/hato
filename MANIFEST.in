@@ -50,5 +50,28 @@ include hato-gui.cmd
 # 🚨 GPL-3.0 CORRESPONDING SOURCE for the Windows standalone: §1 includes
 # "the scripts used to control compilation and installation".
 recursive-include packaging *.py
+# ⛔ ...BUT NOT THE PUBLISH CLONE'S OWN BREAK-CHECKS. This is the SAME RULING
+# as `prune tests` above; it just arrived through a different door, and the
+# door was this very line.
+#
+# 🚨 MEASURED, NOT GUESSED, AND IT WAS RED ON THE PUBLISHED 1.0.0.
+# `packaging/test_sync_audit.py` exists only in the publish clone, and it
+# plants a twenty-character fake under an `api_key` field to prove that
+# `scan-secrets` can actually fail. The Corresponding Source line above then
+# swept it into the sdist, and `scan-secrets dist/` failed on it -- correctly:
+#
+#   dist/hato-1.0.1.tar.gz!hato-1.0.1/packaging/test_sync_audit.py
+#   field 'api_key' at byte 2893, 20 chars
+#
+# ⚠ It went unseen for a release because the job that reports it is
+# `continue-on-error` (the parked pip job), so the RUN said success while a
+# job inside it said failure. `release.yml` runs the same scan and is NOT
+# parked -- it simply never reached the step, dying at the stamp gate first.
+#
+# ⚠ AND THESE ARE NOT CORRESPONDING SOURCE. They test `sync_from_vault.py`, a
+# publishing tool; they control neither compilation nor installation, and they
+# stay in the repository, which is hato's actual delivery route -- exactly the
+# argument `prune tests` already makes.
+recursive-exclude packaging test_*.py
 include packaging/hato.spec
 recursive-include spec *.md

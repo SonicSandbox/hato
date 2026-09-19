@@ -51,27 +51,101 @@ s, k = case("pycache", lambda t: (os.makedirs(os.path.join(t, "hato", "__pycache
 print(u"planted __pycache__ strays=%r" % (s,))
 if not any("__pycache__" in x for x in s): fails.append(u"__pycache__ NOT caught")
 
-# 3. key-shaped strings -- three plausible shapes of the real thing
-def plant_key(text):
-    def go(t):
-        with open(os.path.join(t, "hato", "leak.py"), "w", encoding="utf-8") as fh:
-            fh.write(u'KEY = "%s"\n' % text)
-    return go
+# 3. key-shaped strings -- the shapes the tool actually claims to catch.
+#
+# 🚨 THE THREE CASES THAT USED TO BE HERE WERE RED THROUGH THE WHOLE 1.0.0
+# RELEASE AND NOBODY KNEW, because nothing ran this file. It is wired into
+# `sync_from_vault.py`'s gate now, which is the only runner it will ever have.
+#
+# ⛔ They asserted on `audit_staged()`'s SECOND return value -- and that
+# function never populates it. The shape half lives in the gate, not in the
+# stray walk. So `secrets` came back `[]` for a planted leak and `[]` for a
+# clean tree alike, and three checks named after three shapes could not tell
+# the two apart.
+#
+# ⛔ Two of them were also asking for something the tool has never claimed.
+# `no_key_shaped_literal` is about a credential-shaped ASSIGNMENT: a known
+# field NAME and a value. A bare `KEY = "AAAAAbcdefghijklmnop"` is neither,
+# and no amount of running this file would have made it become one.
+def shaped(text):
+    u"""-> the field names `shaped_hits()` finds for one planted line."""
+    tmp = tempfile.mkdtemp(prefix="hato-shape-")
+    try:
+        os.makedirs(os.path.join(tmp, "hato"), exist_ok=True)
+        with open(os.path.join(tmp, "hato", "leak.py"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(text)
+        return sorted(f for _path, f in mod.shaped_hits(tmp))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
-for label, text in (
-    (u"AAAAA-prefixed", u"AAAAAbcdefghijklmnop"),
-    (u"dashed triple",  u"abcdefgh-ijkl-mnop"),
-    (u"api_key= form",  u"placeholder"),
+for label, line, want in (
+    (u"assignment", u'api_key = "abcdefghijklmnopqrst"\n', [u"api_key"]),
+    (u"json field", u'"jimaku_api_key": "abcdefghijklmnopqrst"\n',
+     [u"jimaku_api_key"]),
+    (u"env form",   u'HATO_JIMAKU_KEY=abcdefghijklmnopqrst\n',
+     [u"HATO_JIMAKU_KEY"]),
+    (u"bearer",     u'auth_token: abcdefghijklmnopqrst\n', [u"auth_token"]),
+    # ⭐ AND THE TWO FILTERS. Both measured 2026-09-19, and both of them made a
+    # planted positive silently useless before they were understood: a
+    # break-check whose fixture the scanner deliberately skips is a green run
+    # that proves nothing. `len(set(value)) <= 2` and `_PLACEHOLDER`.
+    (u"one repeated char", u'api_key = "zzzzzzzzzzzzzzzzzzzz"\n', []),
+    (u"a placeholder",     u'api_key = "your_key_goes_here_xx"\n', []),
 ):
-    if label == u"api_key= form":
-        def go(t):
-            with open(os.path.join(t, "hato", "leak.py"), "w", encoding="utf-8") as fh:
-                fh.write(u'api_key = "abcdefghijklmnopqrst"\n')
-        s, k = case(label, go)
-    else:
-        s, k = case(label, plant_key(text))
-    print(u"planted %-16s secrets=%r" % (label, k))
-    if not k: fails.append(u"key shape %r NOT caught" % label)
+    got = shaped(line)
+    print(u"shape %-18s -> %r" % (label, got))
+    if got != want:
+        fails.append(u"shape %s: expected %r, got %r" % (label, want, got))
+
+# 4. ⭐ THE SHAPE ENUMERATION -- the half that was blind, and the reason this
+#    section exists at all.
+#
+# 🚨 MEASURED 2026-09-19. The gate used to read `scan-secrets`' SENTENCE, and
+# `hato/dev/scan.py` formats `shaped[:3]`: it says how many it found and then
+# names three. So the gate printed `3 hit(s), 3 known planted fixture(s)` and
+# `audit clean` over a tree holding EIGHT, and five key-shaped literals rode
+# through the entire 1.0.0 release without anybody looking at them.
+#
+# ⛔ FOUR is the number that matters here. Three would have passed the old
+# code unchanged, which is exactly how the defect stayed invisible.
+def shapes_tree(fields):
+    tmp = tempfile.mkdtemp(prefix="hato-shapes-")
+    os.makedirs(os.path.join(tmp, "hato"), exist_ok=True)
+    for n, field in enumerate(fields):
+        with open(os.path.join(tmp, "hato", "leak%d.py" % n), "w",
+                  encoding="utf-8") as fh:
+            fh.write(u'%s = "abcdefghijklmnopqrst"\n' % field)
+    return tmp
+
+PLANTED = (u"api_key", u"jimaku_api_key", u"secret", u"authToken")
+tmp = shapes_tree(PLANTED)
+try:
+    pairs = mod.shaped_hits(tmp)
+    got = sorted(f for _path, f in pairs)
+    print(u"planted four shapes  enumerated=%r" % (got,))
+    if got != sorted(PLANTED):
+        fails.append(u"shaped_hits() returned %r, not all four -- it is reading "
+                     u"a truncated report again" % (got,))
+    # ⛔ and it must hand back WHERE and WHAT-IT-IS-CALLED, never the value
+    if any(u"abcdefghijklmnopqrst" in repr(p) for p in pairs):
+        fails.append(u"shaped_hits() returned the VALUE, not just the field name")
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+
+# ⭐ and the control: an enumerator that flags everything would pass the case
+#    above without being able to tell a fixture from a leak.
+tmp = shapes_tree(())
+try:
+    with open(os.path.join(tmp, "hato", "ok.py"), "w", encoding="utf-8") as fh:
+        fh.write(u"# nothing interesting\nX = 1\n")
+    left = mod.shaped_hits(tmp)
+    print(u"clean tree           enumerated=%r" % (left,))
+    if left:
+        fails.append(u"a clean tree enumerated %r -- shaped_hits() flags "
+                     u"everything" % (left,))
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
 
 print()
 if fails:
