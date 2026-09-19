@@ -1,0 +1,22 @@
+{
+ "body_kept": false,
+ "bytes": 0,
+ "captured_at": "2026-09-17T08:36:39+00:00",
+ "captured_by": "hato/0.1.0.dev0 (doctor)",
+ "content_type": null,
+ "final_url": "https://jimaku.cc/entry/999999/download/hato-doctor-probe.srt",
+ "first_bytes": "(not kept: not an HTML page)",
+ "method": "GET",
+ "note": "trap 4 on the unmetered route: status, final URL and what came back, so the client can tell an error page from a subtitle",
+ "provenance": "hato doctor --capture (spec/RUNBOOK.md 0b). Real response bytes; never hand-edited -- re-capture instead (spec/07-test-plan.md).",
+ "response_headers": {
+  "access-control-allow-origin": "*",
+  "access-control-expose-headers": "*",
+  "content-length": "0",
+  "date": "Thu, 17 Sep 2026 08:36:40 GMT"
+ },
+ "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+ "sniffed": "empty",
+ "status": 404,
+ "url": "https://jimaku.cc/entry/999999/download/hato-doctor-probe.srt"
+}

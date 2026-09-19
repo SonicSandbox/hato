@@ -1,0 +1,26 @@
+{
+ "body_kept": false,
+ "bytes": 19652,
+ "captured_at": "2026-09-17T08:36:29+00:00",
+ "captured_by": "hato/0.1.0.dev0 (doctor)",
+ "final_url": "https://jimaku.cc/entry/11446/download/%5BNanakoRaws%5D%20Sousou%20no%20Frieren%20S2%20-%2004%20(AT-X%201920x1080%20x265%20AAC).srt",
+ "method": "GET",
+ "name": "[NanakoRaws] Sousou no Frieren S2 - 04 (AT-X 1920x1080 x265 AAC).srt",
+ "note": "METADATA ONLY -- the body is third-party subtitle content and is never written into the repo.",
+ "provenance": "hato doctor --capture (spec/RUNBOOK.md 0b). Real response bytes; never hand-edited -- re-capture instead (spec/07-test-plan.md).",
+ "response_headers": {
+  "access-control-allow-origin": "*",
+  "access-control-expose-headers": "*",
+  "content-encoding": "gzip",
+  "content-type": "application/x-subrip",
+  "date": "Thu, 17 Sep 2026 08:36:30 GMT",
+  "etag": "\"69892c09.23ddf5a4-4cc4\"",
+  "last-modified": "Mon, 09 Feb 2026 00:36:25 GMT",
+  "transfer-encoding": "chunked",
+  "vary": "accept-encoding"
+ },
+ "sha256": "4483163de54702a95eeac9eda03b006dc948fca27faad65fd714579541505c5a",
+ "sniffed_encoding": "utf-8 (BOM)",
+ "status": 200,
+ "url": "https://jimaku.cc/entry/11446/download/%5BNanakoRaws%5D%20Sousou%20no%20Frieren%20S2%20-%2004%20(AT-X%201920x1080%20x265%20AAC).srt"
+}

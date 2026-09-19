@@ -1,0 +1,2694 @@
+# -*- coding: utf-8 -*-
+u"""
+The window's widgets -- RUNBOOK 7c, `spec/05-interface.md` §The window.
+
+The window is built against FIXTURE NDJSON and asserted on widget state. No
+child process is ever started: `HatoWindow.spawn` is the one place a process
+could begin and every check here replaces it with a recorder, so *"what does
+this click commit"* is answered by an argv, not by a run.
+
+===========================================================================
+[!] WHAT THIS FILE IS STRUCTURALLY BLIND TO
+===========================================================================
+
+State assertions cannot see a render bug. In this project's own history:
+status chips overflowed their column so the episode number vanished from
+exactly the row that needed attention; a 900px gap opened between a filename
+and its match rate; fifty green checks sat over a header running off the
+screen. Every one of those passed every assertion that existed.
+
+So `gui-shots/shoot.py` photographs every tab and every state, and the shots
+are LOOKED AT. These checks pin what a picture cannot: that the count in two
+places is one number, that a click commits the pair it names, and that the
+engine's vocabulary never escapes.
+
+===========================================================================
+OFFSCREEN
+===========================================================================
+
+`QT_QPA_PLATFORM=offscreen` is set BEFORE PyQt6 is imported -- afterwards is
+too late, the platform plugin is chosen at import. Verified on this machine:
+PyQt6 6.11.0, Python 3.10.0, and `widget.grab().save(path)` writes a real PNG.
+"""
+import os
+import re
+import time
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import pytest
+
+from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtGui import QEnterEvent, QMouseEvent, QPalette
+from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton
+
+from hato.gui import app as gui_app
+from hato.gui import branding, theme
+from hato.gui import run as gui_run
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+GUI_DIR = os.path.join(os.path.dirname(HERE), "hato", "gui")
+
+
+# ---------------------------------------------------------------------------
+# one QApplication for the whole module
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def qapp():
+    application = QApplication.instance() or QApplication([])
+    yield application
+
+
+# ---------------------------------------------------------------------------
+# fixtures -- the shapes `run.py` reads, with `mock2.html`'s real content
+# ---------------------------------------------------------------------------
+
+def tsu(match_rate=0.82, verdict=u"locked", segments=((None, -33.07),),
+        subtitle=None):
+    return {u"video": u"D:\\Anime\\x.mkv", u"subtitle": subtitle or u"",
+            u"outcome": u"CONFIDENT", u"match_rate": match_rate,
+            u"verdict_word": verdict, u"segments": [list(s) for s in segments],
+            u"reference_kind": u"text track", u"runtime_check": u"held",
+            u"write_failed": False, u"lang": u"ja", u"lang_tag": u"ja"}
+
+
+def added(episode=1, title=u"\u846c\u9001\u306e\u30d5\u30ea\u30fc\u30ec\u30f3",
+          season=u"S2", rate=0.82, name=None, entry=11446):
+    u"""One CONFIDENT row that really was written. [!] `output_path` is what
+    makes it *added*: a CONFIDENT row with no path is a dry run."""
+    filename = name or (u"[NanakoRaws] Sousou no Frieren S2 - %02d "
+                        u"(NTV 1080p).ass" % episode)
+    return {u"type": u"video",
+            u"video": u"D:\\Anime\\Sousou no Frieren S2\\ep%02d.mkv" % episode,
+            u"name": u"ep%02d.mkv" % episode, u"title": title,
+            u"season": season, u"episode": episode, u"outcome": u"CONFIDENT",
+            u"skip": None, u"reason": u"", u"jimaku_entry": entry,
+            u"jimaku_filename": filename, u"candidates_tried": 1,
+            u"candidates_offered": 3, u"tsubasa": tsu(rate),
+            u"nothing_written": None,
+            u"output_path": u"D:\\Anime\\Sousou no Frieren S2\\ep%02d.ja.ass"
+                            % episode,
+            u"kept_path": u"C:\\hato\\subs\\ep%02d.ja.ass" % episode,
+            u"api_calls": 2, u"bytes_downloaded": 38912, u"retry_after": None,
+            u"attempts": []}
+
+
+#: \u26a0 ONE POOL PER SHOW, AND THAT IS NOT TIDINESS -- IT IS THE PICTURE.
+#: `needs_you` took a single hard-coded Re:Zero pool, so the FRIEREN row was
+#: built from `pool[:1]` and the screenshot sent for review showed a Frieren
+#: episode whose only candidate was an `[Erai-raws] Re Zero 3rd - 54` file at
+#: 57% -- where the ruled mock has its own NanakoRaws file at 31%.
+#: \ud83d\udea8 Every check still passed: they assert the row's SHAPE, and the shape was
+#: right. Found by opening the PNG.
+#: \u2b50 `build-ui.md` names this exactly: *a mock's seed data is shipped content,
+#: because the picture is the deliverable* -- and the sibling case it records
+#: is a seed that printed the literal word "chosen" where a filename belongs.
+REZERO_POOL = [
+    (u"[Erai-raws] Re Zero 3rd - 54 [1080p][Multiple Subtitle].ass", 0.57, 29696),
+    (u"[SubsPlease] Re Zero kara Hajimeru Isekai Seikatsu S3 - 54.srt", 0.41, 22528),
+    (u"Re.Zero.S03E54.1080p.WEB.ja[cc].srt", 0.38, 19456)]
+FRIEREN_POOL = [
+    (u"[NanakoRaws] Sousou no Frieren S2 - 03 (NTV 1080p HEVC).ass", 0.31, 36864)]
+
+
+def needs_you(episode=54,
+              title=u"Re:\u30bc\u30ed\u304b\u3089\u59cb\u3081\u308b\u7570\u4e16\u754c\u751f\u6d3b",
+              season=u"3rd Season", how_many=3, pool=None):
+    u"""One REFUSED row -- which the interface calls *needs a pick*.
+
+    [!] The engine's `reason` DELIBERATELY carries the alarming word, because
+    that is what the real engine writes and the whole point of `safe()` is
+    that a verbatim field cannot put it on screen.
+
+    \u26a0 `pool` defaults to Re:Zero's. Pass the show's OWN candidates for any
+    other row -- see the note on REZERO_POOL.
+    """
+    pool = REZERO_POOL if pool is None else pool
+    attempts = []
+    for name, rate, size in pool[:how_many]:
+        attempts.append({
+            u"name": name, u"outcome": u"REFUSED",
+            u"reason": u"the pair was refused: 57% is under the floor",
+            u"bytes": size, u"match_rate": rate,
+            u"tsubasa": tsu(rate, verdict=None,
+                            subtitle=u"C:\\hato\\subs\\" + name)})
+    return {u"type": u"video",
+            u"video": u"D:\\Anime\\ReZero S03\\ep%02d.mkv" % episode,
+            u"name": u"ep%02d.mkv" % episode, u"title": title,
+            u"season": season, u"episode": episode, u"outcome": u"REFUSED",
+            u"skip": None,
+            u"reason": u"every candidate was refused; the timing did not hold",
+            u"jimaku_entry": 9921, u"jimaku_filename": None,
+            u"candidates_tried": how_many, u"candidates_offered": how_many,
+            u"tsubasa": None, u"nothing_written": u"nothing was written",
+            u"output_path": None, u"kept_path": None, u"api_calls": 1,
+            u"bytes_downloaded": 71680, u"retry_after": None,
+            u"attempts": attempts}
+
+
+def skipped(episode=7,
+            title=u"\u7247\u7530\u820e\u306e\u304a\u3063\u3055\u3093\u3001\u5263\u8056\u306b\u306a\u308b"):
+    return {u"type": u"video",
+            u"video": u"D:\\Anime\\Katainaka II\\ep%02d.mkv" % episode,
+            u"name": u"ep%02d.mkv" % episode, u"title": title,
+            u"season": None, u"episode": episode, u"outcome": u"CONFIDENT",
+            u"skip": u"already has a Japanese subtitle", u"reason": u"",
+            u"jimaku_entry": None, u"jimaku_filename": None,
+            u"candidates_tried": 0, u"candidates_offered": 0,
+            u"tsubasa": None, u"nothing_written": None, u"output_path": None,
+            u"kept_path": None, u"api_calls": 0, u"bytes_downloaded": 0,
+            u"retry_after": None, u"attempts": []}
+
+
+def not_yet(episode=24, title=u"\u846c\u9001\u306e\u30d5\u30ea\u30fc\u30ec\u30f3"):
+    return {u"type": u"video",
+            u"video": u"D:\\Anime\\Sousou no Frieren S2\\ep%02d.mkv" % episode,
+            u"name": u"ep%02d.mkv" % episode, u"title": title,
+            u"season": u"S2", u"episode": episode, u"outcome": u"NOT_FOUND",
+            u"skip": None, u"reason": u"nothing on jimaku yet; retry 19 Sep",
+            u"jimaku_entry": 11446, u"jimaku_filename": None,
+            u"candidates_tried": 0, u"candidates_offered": 0,
+            u"tsubasa": None, u"nothing_written": None, u"output_path": None,
+            u"kept_path": None, u"api_calls": 1, u"bytes_downloaded": 0,
+            u"retry_after": u"2026-09-19", u"attempts": []}
+
+
+def broke(episode=1, title=u"Tetsunabe no Jan"):
+    u"""ERROR. [!] Its reason carries the engine's word too."""
+    return {u"type": u"video",
+            u"video": u"D:\\Anime\\Tetsunabe no Jan\\ep%02d.mkv" % episode,
+            u"name": u"ep%02d.mkv" % episode, u"title": title,
+            u"season": None, u"episode": episode, u"outcome": u"ERROR",
+            u"skip": None,
+            u"reason": u"the container would not open, so the pair was refused",
+            u"jimaku_entry": None, u"jimaku_filename": None,
+            u"candidates_tried": 0, u"candidates_offered": 0,
+            u"tsubasa": None, u"nothing_written": u"nothing was written",
+            u"output_path": None, u"kept_path": None, u"api_calls": 0,
+            u"bytes_downloaded": 0, u"retry_after": None, u"attempts": []}
+
+
+def summary(api_calls=6, seconds=41.2):
+    return {u"type": u"run", u"api_calls": api_calls, u"seconds": seconds,
+            u"videos": 7, u"stopped": False, u"dry_run": False,
+            u"folders": [u"D:\\Anime"], u"lang": u"ja", u"notes": [],
+            u"shows": []}
+
+
+FRIEREN = u"\u846c\u9001\u306e\u30d5\u30ea\u30fc\u30ec\u30f3"
+REZERO = u"Re:\u30bc\u30ed\u304b\u3089\u59cb\u3081\u308b\u7570\u4e16\u754c\u751f\u6d3b"
+KATAINAKA = (u"\u7247\u7530\u820e\u306e\u304a\u3063\u3055\u3093\u3001"
+             u"\u5263\u8056\u306b\u306a\u308b")
+
+
+def rezero_added(episode, rate, verdict=u"locked"):
+    row = added(episode, REZERO, u"3rd Season", rate,
+                name=u"[Erai-raws] Re Zero kara Hajimeru Isekai Seikatsu "
+                     u"3rd - %d.ass" % episode, entry=9921)
+    row[u"tsubasa"][u"verdict_word"] = verdict
+    return row
+
+
+def one_piece(episode=1121, rate=0.79):
+    return added(episode, u"ONE PIECE", None, rate,
+                 name=u"[Erai-raws] One Piece - %d [1080p]"
+                      u"[Multiple Subtitle].ass" % episode, entry=41)
+
+
+def full_rows():
+    u"""The 2026-09-17 test-bed run, in the shapes the wire uses.
+
+    Deliberately the mock's own content: three shows with added rows, one show
+    that was wholly skipped, episodes skipped INSIDE an added show, two that
+    need a pick, one not on jimaku yet and one that broke -- so a shot
+    exercises every branch of the render rather than the easy one.
+    """
+    strong = added(4, rate=0.91)
+    strong[u"tsubasa"][u"verdict_word"] = u"strong"
+    weak = rezero_added(55, 0.63, verdict=u"fair")
+    return [added(1, rate=0.82), added(2, rate=0.96), strong,
+            skipped(11, FRIEREN), skipped(12, FRIEREN), skipped(13, FRIEREN),
+            rezero_added(52, 0.80), weak,
+            one_piece(),
+            needs_you(54),
+            needs_you(3, FRIEREN, u"S2", how_many=1, pool=FRIEREN_POOL),
+            skipped(7), skipped(8), not_yet(24), broke(1)]
+
+
+def test_every_candidate_offered_belongs_to_the_row_that_offers_it():
+    u"""🚨 FOUND BY OPENING THE PNG, AND NO CHECK COULD SEE IT.
+
+    `needs_you` carried ONE hard-coded Re:Zero candidate pool, so the Frieren
+    row -- built as `pool[:1]` -- offered `[Erai-raws] Re Zero 3rd - 54` at
+    57%, where the ruled mock has its own NanakoRaws file at 31%. Every check
+    passed, because they all assert the row's SHAPE and the shape was right.
+
+    ⭐ `build-ui.md`: *a mock's seed data is shipped content, because the
+    picture is the deliverable.* A screenshot that misreports the product is
+    worse than no screenshot -- it is a wrong answer somebody rules on.
+
+    ⚠ The assertion is deliberately about the EPISODE NUMBER rather than the
+    show's name: a candidate for a different episode of the right show is the
+    same defect wearing better clothes.
+    """
+    for row in full_rows():
+        episode = row.get(u"episode")
+        for attempt in row.get(u"attempts") or ():
+            assert u"%02d" % episode in attempt[u"name"] \
+                or u"%d" % episode in attempt[u"name"], (
+                u"%s is offered as a candidate for episode %s, which is not "
+                u"its episode -- the picture would show one show's file under "
+                u"another show's row" % (attempt[u"name"], episode))
+
+
+SETTINGS = dict(
+    folders=[u"D:\\Anime\\Sousou no Frieren S2", u"D:\\Anime\\ReZero S03",
+             u"D:\\Anime\\One Piece", u"D:\\Anime\\Katainaka II",
+             u"D:\\Anime\\Tetsunabe no Jan"],
+    # ⛔ NO REAL ACCOUNT NAMES IN A FIXTURE. These strings are rendered into
+    # the screenshots the README embeds and into a public test file, so they
+    # stay invented. Corrected 2026-09-18 after the first push.
+    skip_folders=[u"D:\\Downloads\\in progress", u"D:\\Anime\\_incoming"],
+    blacklist=[{u"name": u"Tetsunabe no Jan - 01.mkv",
+                u"note": u"a commentary track, no subs exist",
+                u"when": u"17 Sep", u"gone": False},
+               {u"name": u"ONE PIECE - 1089.mkv", u"note": u"recap",
+                u"when": u"17 Sep", u"gone": False},
+               {u"name": u"Frieren S1 - 12.mkv",
+                u"note": u"not on this machine any more",
+                u"when": u"2 Aug", u"gone": True},
+               {u"name": u"Bocchi the Rock - 07.mkv",
+                u"note": u"not on this machine any more",
+                u"when": u"28 Jul", u"gone": True}],
+    key_hint=u"JyQ", schedule=u"03:00", next_run=u"next run in 4 hours",
+    last_run=u"03:00", video_total=68, live=u"Tetsunabe no Jan",
+    running=True)
+
+
+def make(rows=None, **over):
+    u"""A window over fixture rows, with `spawn` recording instead of running."""
+    settings = dict(SETTINGS)
+    settings.update(over)
+    state = gui_app.build_state_from(
+        full_rows() if rows is None else rows, summary(), **settings)
+    window = gui_app.HatoWindow(state)
+    window.spawned = []
+    window.spawn = window.spawned.append
+    return window
+
+
+def click(widget):
+    u"""A real left click on a `Clickable`, through Qt's own event path."""
+    centre = widget.rect().center()
+    for kind in (QMouseEvent.Type.MouseButtonPress,
+                 QMouseEvent.Type.MouseButtonRelease):
+        event = QMouseEvent(kind, centre.toPointF() if hasattr(centre, "toPointF")
+                            else QPoint(centre), Qt.MouseButton.LeftButton,
+                            Qt.MouseButton.LeftButton,
+                            Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(widget, event)
+
+
+def source(name):
+    with open(os.path.join(GUI_DIR, name), encoding="utf-8") as handle:
+        return handle.read()
+
+
+def lay_out(window, width=gui_app.WIN_W, height=gui_app.WIN_H):
+    u"""Give the window a real geometry, so a check can measure one.
+
+    [!] WITHOUT THIS EVERY WIDGET IS AT ITS DEFAULT SIZE and a geometry
+    assertion measures nothing. The three checks below exist because three
+    layout defects shipped past a hundred green state assertions and were
+    caught by opening a PNG; they are only checks at all if the layout has
+    actually run.
+    """
+    window.resize(width, height)
+    window.show()
+    for _ in range(4):
+        window.layout().activate()
+        QApplication.processEvents()
+    return window
+
+
+# ===========================================================================
+# 0 -- [!] what a control paints when you are not looking
+# ===========================================================================
+
+def test_setting_a_switch_does_not_animate_to_its_own_value(qapp):
+    u"""🚨 REPORTED BY SONIC, 2026-09-18: *"when i click on settings, the
+    toggles go from nothing to what they were toggled. Just slightly visually
+    jarring as if it was changing right then."*
+
+    `super().setChecked()` EMITS `toggled`, which starts the slide from wherever
+    the knob is -- and on a freshly built tab that is 0. So opening Settings
+    played every switch turning itself on: the animation for *a value just
+    changed*, used for *here is the value*.
+
+    ⛔ THE ASSERTION IS THAT THE ANIMATION IS STOPPED, not that the knob has
+    landed. With the defect the knob is ALSO at 1.0 for this instant -- it is
+    set right after the signal -- and the animation then drags it back to 0 on
+    its first tick. A check on the position alone is green against the bug.
+    """
+    from PyQt6.QtCore import QAbstractAnimation
+
+    switch = gui_app.Switch()
+    switch.setChecked(True)
+    assert switch._travel == 1.0
+    assert switch._anim.state() == QAbstractAnimation.State.Stopped, (
+        u"the switch is animating to the value it was just told to hold, so "
+        u"opening the tab plays it turning itself on")
+
+    # ⭐ And a real INTERACTION still animates -- the fix must not flatten the
+    # thing that made it feel alive.
+    switch.click()
+    assert switch._anim.state() == QAbstractAnimation.State.Running
+
+
+def test_no_button_in_the_window_is_inert(qapp):
+    u"""🚨 THREE BUTTONS SHIPPED DEAD, AND SONIC FOUND THEM (2026-09-18):
+    *"nothing happens when i click on add a folder."*
+
+    *Add a folder…*, *Add a folder to skip…* and the key's *Replace* were all
+    built, all rendered perfectly, and none was connected to anything. The
+    method behind the first one **already existed, was correct, and documented
+    itself as "the one Settings' 'Add a folder...' reaches"** -- so the prose
+    asserted a wiring that was not there, and 122 checks proved the API
+    without ever clicking a button.
+
+    ⭐ `build-ui.md` records this exact failure shipping THREE times in one
+    build for the same reason, and its rule is a static wiring check. This is
+    that rule for Qt: a control with no connection is not a styling problem or
+    a logic problem, it is a control that does nothing, and nothing else in a
+    suite notices.
+
+    ⚠ EVERY TAB IS SHOWN FIRST. Settings' widgets do not exist until the tab
+    has been rendered once, so a check that skipped that would walk a window
+    holding only the buttons that were already fine.
+
+    ⚠ `QAbstractButton`, NOT `QPushButton` -- WIDENED 2026-09-18 AFTER IT MISSED
+    ONE. The first version walked push buttons only, so the *"Watch for new
+    videos and run"* TICK BOX sailed past it, and Sonic found that one himself:
+    *"I didn't see hato enter the windows tray."* A checkbox is a control like
+    any other, and the base class covers every kind at once.
+    """
+    window = make()
+    for tab in gui_app.TABS:
+        window.show_tab(tab)
+
+    inert = []
+    for widget in window.findChildren(gui_app.QAbstractButton):
+        if widget.receivers(widget.clicked) == 0:
+            inert.append(u"%s(%s)" % (type(widget).__name__,
+                                      widget.text() or widget.objectName()
+                                      or u"no label"))
+    assert not inert, (
+        u"these controls are rendered and connected to nothing, so using them "
+        u"does nothing at all: %s" % u", ".join(sorted(inert)))
+
+
+def test_a_setting_written_by_the_window_is_there_when_it_reopens(qapp, tmp_path,
+                                                                  monkeypatch):
+    u"""🚨 THE ROUND TRIP WAS NEVER CLOSED, AND THAT IS WHAT SONIC SAW.
+
+    *"i don't think my settings are being saved."* They were -- every one,
+    correctly, through `hato config`. What was missing is the other half:
+    `main()` built the window with no arguments, so every session opened on
+    DEFAULTS. Add a folder, close, reopen, and it is gone from the list while
+    sitting in `config.toml` the whole time.
+
+    ⭐ THE HARDEST SHAPE TO SEE FROM THE INSIDE. The write path was built,
+    checked and genuinely working; every check asserted what the window SENT.
+    Not one of them asked what a NEW window would show, so the missing loader
+    was invisible to a suite that never reopened anything.
+
+    ⚠ This drives the real writer and the real reader -- no stubbing -- so it
+    fails if either end breaks, which is the only way a round trip is proved.
+    """
+    from hato import config as config_module
+
+    monkeypatch.setenv("HATO_CONFIG", str(tmp_path / "config.toml"))
+    folder = tmp_path / "Anime"
+    folder.mkdir()
+
+    cfg = config_module.load()
+    config_module.save(config_module.with_changes(
+        cfg, folders=[str(folder)], recurse=False, watch=True,
+        schedule=u"05:30"))
+
+    fresh = gui_app.settings_from_disk()
+    assert [os.path.normcase(f) for f in fresh.folders] == \
+        [os.path.normcase(str(folder))]
+    assert fresh.recurse is False
+    assert fresh.watch is True
+    assert fresh.schedule == u"05:30"
+    assert not fresh.config_error
+
+
+def test_a_config_the_reader_refuses_is_reported_not_swallowed(qapp, tmp_path,
+                                                               monkeypatch):
+    u"""⛔ A window that opened on silent defaults would be telling somebody
+    their settings had vanished. The refusal is what explains an empty list."""
+    bad = tmp_path / "config.toml"
+    bad.write_text(u"candidates = 0\n", encoding="utf-8")
+    monkeypatch.setenv("HATO_CONFIG", str(bad))
+
+    fresh = gui_app.settings_from_disk()
+    assert fresh.config_error
+    assert u"at least 1" in fresh.config_error
+
+
+def test_a_second_launch_finds_the_first_window_instead_of_stacking(qapp,
+                                                                    monkeypatch):
+    u"""🚨 SONIC: *"we also need to ensure that only one hato is ever open at a
+    time."* He named the tray; the WINDOW had it too, and this session's own
+    testing proved it by leaving FIVE stacked window processes behind.
+
+    ⭐ RAISE, DON'T REFUSE. A second launch that merely exits looks like a
+    broken shortcut -- you double-click and nothing happens.
+
+    ⚠ The check drives the REAL local socket, so it fails if either half
+    breaks: nothing listening must read as *nobody there*, and a listener must
+    be found.
+
+    🚨 ON A NAME OF ITS OWN, AND THAT IS A FIX. Written against the product's
+    real name it passed alone and went RED in the full run -- because an actual
+    hato window was open on this machine and answered. The check was asserting
+    a fact about the DESKTOP, not about the code. ⛔ This project has been here
+    before: its first public CI run was red on all twelve jobs and not one
+    failure was functional. A check that needs the machine to be in a
+    particular state is a check that fails for reasons its name does not
+    mention.
+    """
+    from PyQt6.QtNetwork import QLocalServer
+
+    name = u"hato-window-test-%d" % os.getpid()
+    monkeypatch.setattr(gui_app, "instance_name", lambda: name)
+
+    QLocalServer.removeServer(name)
+    assert gui_app.raise_existing_window(timeout_ms=150) is False, (
+        u"something answered when no window was listening")
+
+    window = make()
+    server = gui_app.listen_for_second_launch(window)
+    assert server is not None, u"the window could not listen at all"
+    try:
+        assert gui_app.raise_existing_window(timeout_ms=800) is True, (
+            u"a running window was not found, so a second launch would stack")
+    finally:
+        server.close()
+        QLocalServer.removeServer(name)
+
+
+def test_a_name_held_by_something_that_cannot_ANSWER_does_not_swallow_a_launch(
+        qapp, monkeypatch):
+    u"""🚨 SONIC'S BUG, 2026-09-18: *"close hato... then go to the tray to open
+    it, it doesn't do anything... I have to close hato from the tray."*
+
+    A window process was found ALIVE WITH NO WINDOW, still holding the
+    single-instance name. Every later launch connected, concluded a window was
+    there, and exited -- so nothing opened and nothing said why.
+
+    ⛔ A CONNECTION PROVES THE NAME IS HELD, NOT THAT ANYBODY IS LISTENING.
+    This stands up a server that accepts and never replies -- exactly that
+    wedged state -- and requires the launch to decide *nobody is there* and
+    open its own window. ⭐ The failure becomes a second window, which is
+    visible and harmless, instead of silence.
+
+    ⚠ Four attempts failed to reproduce the lingering process on demand, so
+    this check does not depend on knowing why it lingered.
+    """
+    from PyQt6.QtNetwork import QLocalServer
+
+    name = u"hato-window-mute-%d" % os.getpid()
+    monkeypatch.setattr(gui_app, "instance_name", lambda: name)
+    QLocalServer.removeServer(name)
+
+    mute = QLocalServer()
+    # ⛔ Deliberately NO `newConnection` handler: it accepts and never answers.
+    assert mute.listen(name), u"the mute server could not take the name"
+    try:
+        assert gui_app.raise_existing_window(timeout_ms=300) is False, (
+            u"a launch believed a wedged process was a live window, so it "
+            u"would exit and nothing would open")
+    finally:
+        mute.close()
+        QLocalServer.removeServer(name)
+
+
+def test_closing_the_window_releases_the_name_for_the_next_launch(qapp,
+                                                                  monkeypatch):
+    u"""⭐ The other half: the name must be free the moment the window closes,
+    so a later launch always opens something."""
+    from PyQt6.QtNetwork import QLocalServer
+
+    name = u"hato-window-close-%d" % os.getpid()
+    monkeypatch.setattr(gui_app, "instance_name", lambda: name)
+    QLocalServer.removeServer(name)
+
+    window = make()
+    window._instance_server = gui_app.listen_for_second_launch(window)
+    assert gui_app.raise_existing_window(timeout_ms=800) is True
+
+    window.close()
+    assert gui_app.raise_existing_window(timeout_ms=300) is False, (
+        u"the closed window still holds the name, so the next launch would "
+        u"exit and nothing would open")
+
+
+def test_the_instance_name_is_per_user(qapp):
+    u"""⚠ Two people signed into one machine each get their own hato. A shared
+    name would have one person's launch raise a window on a desktop they
+    cannot see."""
+    import getpass
+    assert getpass.getuser() in gui_app.instance_name()
+
+
+def test_the_footer_says_a_queued_run_is_coming(qapp):
+    u"""🚨 SONIC REPORTED AUTO-FETCH AS BROKEN AND IT WAS NOT. He dropped a
+    video into a watched subfolder and nothing appeared; the whole chain worked
+    when measured. What he hit was the settle minute -- his own ruling -- with
+    nothing anywhere saying a run was coming.
+
+    ⭐ AN INVISIBLE WAIT IS INDISTINGUISHABLE FROM BROKEN. The delay was right;
+    the silence was the defect.
+    """
+    state = gui_app.State()
+    assert gui_app.footer_status(state) == u"idle"
+
+    state.queued_in, state.queued_names = 47.0, [u"D:\\A\\frieren S2 - 01.mkv"]
+    line = gui_app.footer_status(state)
+    assert u"frieren S2 - 01.mkv" in line, line   # the FILE, not a count
+    assert u"47s" in line
+
+    # ⚠ Under five seconds a number that keeps changing reads as noise.
+    state.queued_in = 3.0
+    assert u"in a moment" in gui_app.footer_status(state)
+
+    # ⛔ A run in progress outranks a queued one -- it is what is happening NOW.
+    state.running, state.live = True, u"running — Frieren"
+    assert gui_app.footer_status(state) == u"running — Frieren"
+
+
+def test_several_queued_videos_are_counted_rather_than_listed(qapp):
+    state = gui_app.State()
+    state.queued_in = 30.0
+    state.queued_names = [u"a.mkv", u"b.mkv", u"c.mkv"]
+    assert u"3 new videos" in gui_app.footer_status(state)
+
+
+def test_a_stale_countdown_is_not_shown(qapp, tmp_path, monkeypatch):
+    u"""⛔ A tray killed mid-wait leaves its file behind. Believed, the window
+    would count down for ever to a run nothing will ever start."""
+    from hato import watch
+
+    memory = tmp_path / "watch-pending.json"
+    monkeypatch.setattr(watch, "pending_path", lambda: memory)
+    watch.write_pending(time.time() - 30.0, [u"old.mkv"])   # already due
+    assert watch.read_pending() == (0.0, [])
+
+
+def test_the_window_picks_up_a_run_it_did_not_start(qapp, tmp_path, monkeypatch):
+    u"""🚨 SONIC: *"I dragged a video into a folder, it worked but the ui didn't
+    update -- it was until i hit run."* The tray, the scheduler and a terminal
+    are all other processes; hato now records every run and the window watches
+    that file.
+
+    ⚠ THE TIMER IS DRIVEN BY HAND. A check that slept three seconds to see a
+    poll fire would be slow AND flaky; calling the callback directly tests the
+    decision, which is the part that can be wrong.
+    """
+    from hato import lastrun
+
+    memory = tmp_path / "last-run.json"
+    monkeypatch.setattr(gui_run, "last_run_stamp",
+                        lambda path=None: lastrun.stamp(path=memory))
+    monkeypatch.setattr(gui_run, "load_last_run",
+                        lambda path=None: lastrun.load(path=memory))
+
+    # ⚠ `running=False` IS THE PRECONDITION, SAID OUT LOUD. The shared fixture
+    # defaults to a run in progress, and the window deliberately stands aside
+    # then -- so without this the check fails against correct code, which is
+    # how it first failed.
+    window = make(rows=[], running=False)
+    window.follow_other_runs(every_ms=60000)          # ⛔ never fires on its own
+    look = window._others_timer.timeout
+
+    lastrun.save([added(7, rate=0.88)], {u"type": u"run", u"api_calls": 2},
+                 path=memory)
+    look.emit()
+
+    assert [r.get(u"episode") for r in window.state.rows] == [7], (
+        u"a run started elsewhere left the window showing nothing")
+
+
+def test_a_run_this_window_is_painting_is_not_overwritten(qapp, tmp_path,
+                                                          monkeypatch):
+    u"""⛔ The window's own run paints LIVE rows off the stream. Reloading the
+    file underneath it would replace them with a snapshot taken a moment
+    earlier -- rows appearing and then vanishing mid-run."""
+    from hato import lastrun
+
+    memory = tmp_path / "last-run.json"
+    monkeypatch.setattr(gui_run, "last_run_stamp",
+                        lambda path=None: lastrun.stamp(path=memory))
+    monkeypatch.setattr(gui_run, "load_last_run",
+                        lambda path=None: lastrun.load(path=memory))
+
+    window = make(rows=[added(1)])
+    window.follow_other_runs(every_ms=60000)
+    window.state.running = True
+
+    lastrun.save([added(99)], {u"type": u"run"}, path=memory)
+    window._others_timer.timeout.emit()
+
+    assert [r.get(u"episode") for r in window.state.rows] == [1], (
+        u"the live run's rows were replaced by a stale snapshot")
+
+
+def test_the_surasura_card_is_last_and_carries_its_mark(qapp):
+    u"""⭐ SONIC: *"Not everyone's going to want this so I don't want it to be
+    the headliner. I want it to be down below in settings."*
+
+    ⚠ The ORDER is the requirement, so the check is on the order -- not merely
+    on the card existing, which would stay green if it drifted to the top.
+    """
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+
+    titles = [w.text() for w in window.findChildren(gui_app.QLabel)
+              if w.objectName() == u"cardtitle"]
+    assert titles, u"the settings tab built no cards at all"
+    assert titles[-1].lower() == u"surasura", (
+        u"the integration is not the last card: %s" % u", ".join(titles))
+
+    marks = [w for w in window.findChildren(gui_app.QLabel)
+             if w.pixmap() is not None and not w.pixmap().isNull()]
+    assert marks, u"the integration card shows no mark"
+
+
+def test_choosing_a_surasura_folder_saves_it_and_turning_it_off_clears_it(qapp):
+    u"""⛔ Empty means off, and the same key carries both -- so there is no
+    second setting that could disagree about whether it is on."""
+    window = make()
+    sent = []
+    window.spawn = lambda argv, **kw: sent.append(argv) or None
+
+    window.state.surasura_dir = u""
+    window.clear_surasura()
+    assert any(u"surasura_dir=" in u" ".join(a) for a in sent)
+    assert window.state.surasura_dir == u""
+
+
+def test_surasura_is_a_real_setting_the_schema_knows(qapp):
+    u"""⚠ The window writes `surasura_dir`; a key the schema refuses is
+    silently never saved. The general guard covers this too -- this names it,
+    because it is the newest one."""
+    from hato import config as config_module
+    assert u"surasura_dir" in config_module.SCHEMA
+
+
+def test_the_key_dialog_is_hatos_own_and_hides_what_is_typed(qapp):
+    u"""🚨 SONIC, 2026-09-18: *"when you hit add a key for the jimaku key it is
+    white and ugly."* It was a `QInputDialog` -- a NATIVE control, themed by Qt
+    and not by hato, in the middle of a dark coral app.
+
+    ⭐ Third time this project has paid for the same rule: **a control's
+    appearance is decided somewhere you are not looking.** The Windows-blue
+    radio, the circular checkbox, and now a white modal.
+
+    ⚠ And the field hides what is typed, because a key is a secret going onto a
+    screen somebody may be sharing.
+    """
+    dialog = gui_app.KeyDialog(None, replacing=False)
+    assert dialog.styleSheet(), u"the dialog wears no stylesheet at all"
+    fields = dialog.findChildren(gui_app.QLineEdit)
+    assert fields, u"the dialog has no field to type a key into"
+    assert fields[0].echoMode() == gui_app.QLineEdit.EchoMode.Password
+    labels = u" ".join(w.text() for w in dialog.findChildren(gui_app.QLabel)
+                       if w.text())
+    assert u"jimaku.cc" in labels, u"it never says where to get a key"
+
+
+def test_the_key_dialog_says_swap_when_one_is_already_set(qapp):
+    u"""⭐ *"if there is a key the swap for a different key or something."*"""
+    adding = gui_app.KeyDialog(None, replacing=False)
+    swapping = gui_app.KeyDialog(None, replacing=True)
+
+    def words(dialog):
+        return u" ".join(
+            [w.text() for w in dialog.findChildren(gui_app.QLabel) if w.text()]
+            + [b.text() for b in dialog.findChildren(gui_app.QPushButton)])
+
+    assert u"Swap" in words(swapping)
+    assert u"Swap" not in words(adding)
+
+
+def test_a_key_that_saves_is_checked_against_jimaku(qapp):
+    u"""⭐ SONIC: *"if it works it should test run it to see if connected, and
+    show that it is connected just fine."*
+
+    ⚠ A KEY THAT RESOLVES IS NOT A KEY THAT WORKS, and that gap is exactly what
+    somebody pasting one is worried about. `hato key --show` answers the first
+    question; only jimaku can answer the second.
+
+    ⛔ The check spends ONE metered request and happens on ENTRY only -- never
+    on launch, never on render: *"just on the key entry, not another time."*
+    """
+    window = make()
+    sent = []
+
+    class Answer(object):
+        def communicate(self, timeout=None):
+            return (b'{"ok": true, "connected": true, "hint": "\\u2026ab12"}',
+                    b"")
+
+    window.spawn = lambda argv, **kw: sent.append(argv) or Answer()
+    ok, message = window.verify_key()
+
+    assert ok is True
+    assert u"Connected" in message
+    assert sent and sent[0][-3:] == [u"key", u"--test", u"--json"]
+
+
+def test_a_key_jimaku_refuses_says_so_rather_than_claiming_success(qapp):
+    window = make()
+
+    class Answer(object):
+        def communicate(self, timeout=None):
+            return (b'{"ok": false, "connected": false, '
+                    b'"error": "jimaku refused the key"}', b"")
+
+    window.spawn = lambda argv, **kw: Answer()
+    ok, message = window.verify_key()
+    assert ok is False
+    assert u"refused" in message
+
+
+def test_the_key_itself_never_reaches_a_command_line(qapp):
+    u"""🚨 A COMMAND LINE IS READABLE BY EVERY OTHER PROCESS on the machine
+    through the process table. The key goes in on STDIN and nowhere else."""
+    window = make()
+    sent = []
+    window.spawn = lambda argv, **kw: sent.append((argv, kw)) or None
+    window.set_key(u"supersecretkey99")
+
+    for argv, kwargs in sent:
+        assert all(u"supersecretkey99" not in str(part) for part in argv), argv
+        assert kwargs.get(u"stdin_text", u"").strip() == u"supersecretkey99"
+
+
+# ---------------------------------------------------------------------------
+# 🚨 the write must LAND before the connection test asks about it
+#
+# `set_key` used to spawn `hato key --set-from -` and `return True` without
+# waiting. `choose_key` then ran `hato key --test`, which reads the KEYSTORE --
+# so on the SWAP path the test could read the OLD, still-valid key and report
+# "Connected" about a brand-new bad one. Adversarial pass, 2026-09-18.
+# ---------------------------------------------------------------------------
+
+def test_a_key_that_FAILS_to_save_is_not_reported_as_saved(qapp):
+    window = make()
+    window.state.key_hint = u"…old1"
+
+    class Refused(object):
+        returncode = 1
+
+        def communicate(self, timeout=None):
+            return (b"", b"hato: the key could not be written\n")
+
+    window.spawn = lambda argv, **kw: Refused()
+
+    assert window.set_key(u"a-brand-new-key-9999") is False
+    # ⛔ and the card must still show the OLD hint. Showing the new key's last
+    # four would tell the person a key is in place that is not.
+    assert window.state.key_hint == u"…old1"
+
+
+def test_the_window_WAITS_for_the_write_before_it_returns(qapp):
+    window = make()
+    order = []
+
+    class Written(object):
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            order.append(u"waited")
+            return (b"{}", b"")
+
+    def spawn(argv, **kw):
+        order.append(u"spawned")
+        return Written()
+
+    window.spawn = spawn
+
+    assert window.set_key(u"key-1234") is True
+    assert order == [u"spawned", u"waited"], order
+
+
+def test_a_failed_save_NEVER_reaches_the_connection_test(qapp, monkeypatch):
+    u"""⛔ THE WHOLE POINT. A test that runs after a failed write asks the
+    keystore, and the keystore still holds the previous key."""
+    window = make()
+    tested = []
+
+    class FakeDialog(object):
+        def __init__(self, *a, **kw):
+            pass
+
+        def exec(self):
+            return gui_app.QDialog.DialogCode.Accepted
+
+        def value(self):
+            return u"a-new-key-0000"
+
+    monkeypatch.setattr(gui_app, "KeyDialog", FakeDialog)
+    monkeypatch.setattr(window, "set_key", lambda *a, **kw: False)
+    monkeypatch.setattr(
+        window, "verify_key",
+        lambda *a, **kw: (tested.append(1), (True, u"Connected"))[1])
+
+    assert window.choose_key() is False
+    assert tested == [], "the connection test ran after the write failed"
+    assert window.state.key_ok is False
+
+
+# ---------------------------------------------------------------------------
+# the way OUT -- feedback and the repository, on the tab line
+# Sonic, 2026-09-18: *"can we add something like this on the right side on the
+# settings line? That brings them to the github issues page as well as the
+# github?"*
+# ---------------------------------------------------------------------------
+
+def test_the_tab_line_offers_feedback_and_the_repository(qapp):
+    window = make()
+    links = [w for w in window.findChildren(gui_app.QLabel)
+             if w.objectName() == u"tablink"]
+    assert len(links) == 2, u"expected two links on the tab strip"
+
+    joined = u" ".join(w.text() for w in links)
+    assert u"Send feedback" in joined
+    assert u"Star on GitHub" in joined
+    # ⭐ Asserted against the CONSTANTS, never a second copy of the URL here.
+    assert gui_app.ISSUES_URL in joined
+    assert gui_app.REPO_URL in joined
+    assert gui_app.ISSUES_URL.startswith(gui_app.REPO_URL)
+
+
+def test_those_links_actually_OPEN(qapp):
+    u"""⛔ A themed link that does nothing when clicked is the same defect as
+    an inert button, and the button check cannot see it: these are QLabels,
+    and that walk is over `QAbstractButton`."""
+    links = [w for w in make().findChildren(gui_app.QLabel)
+             if w.objectName() == u"tablink"]
+    assert links
+    for widget in links:
+        assert widget.openExternalLinks(), \
+            u"the link is styled, placed, and goes nowhere"
+        assert widget.textFormat() == Qt.TextFormat.RichText, \
+            u"without RichText the anchor renders as literal markup"
+
+
+def test_a_link_takes_its_colour_from_the_PALETTE_not_the_sheet(qapp):
+    u"""🚨 THE FOURTH CONTROL IN THIS WINDOW PAINTED BY SOMETHING OTHER THAN
+    THE STYLESHEET -- after the Windows-blue radio, the circular checkbox and
+    the separator that drew its own frame.
+
+    ⛔ Qt renders `<a href>` from the palette. A `color:` rule in `theme.py`
+    is ignored, and the toolkit's own blue and visited-PURPLE win -- which is
+    exactly what Sonic reported on the surasura link (*"the purple used for
+    github is too dark"*).
+    """
+    links = [w for w in make().findChildren(gui_app.QLabel)
+             if w.objectName() == u"tablink"]
+    assert links
+    for widget in links:
+        palette = widget.palette()
+        for role in (QPalette.ColorRole.Link, QPalette.ColorRole.LinkVisited):
+            assert palette.color(role).name().lower() == theme.LINK.lower(), \
+                u"%s is not the theme's link colour" % role
+    # ⛔ AND THE SHEET MUST NOT PRETEND TO OWN IT. A `color:` on #tablink would
+    # read as the thing doing the work and would not be.
+    sheet = theme.qss()
+    assert u"#tablink" in sheet
+    rule = sheet.split(u"#tablink", 1)[1].split(u"}", 1)[0]
+    assert u"color" not in rule, \
+        u"#tablink sets a colour the palette actually decides"
+
+
+def test_no_link_in_the_window_is_UNDERLINED(qapp):
+    u"""⛔ Sonic, 2026-09-18: *"remove the underlines."* Qt underlines every
+    anchor by default and NO palette role turns it off -- it comes only from
+    the anchor's own style, which is why `theme.LINK_CSS` exists."""
+    assert u"text-decoration:none" in theme.LINK_CSS.replace(u" ", u"")
+    window = make()
+    anchors = [w for w in window.findChildren(QLabel) if u"<a href" in w.text()]
+    assert anchors, u"no links found at all -- this check would pass vacuously"
+    for widget in anchors:
+        body = widget.text()
+        assert u"text-decoration" in body.replace(u" ", u""), \
+            u"an anchor with no decoration rule renders underlined: %s" % body
+
+
+# ---------------------------------------------------------------------------
+# ⭐ open the VIDEO from an expanded row
+# Sonic, 2026-09-18: *"if you click somewhere on the newly synced subs it opens
+# up the file ... Not the sub file but the video file ... simple as a simple
+# option. Without messing with the ux."*
+# ---------------------------------------------------------------------------
+
+def test_an_expanded_row_offers_to_open_the_video(qapp, tmp_path, monkeypatch):
+    u"""🚨 THIS CLICKS THE BUTTON, AND THE FIRST VERSION DID NOT.
+
+    ⛔ It used to assert only that a button existed and had a receiver -- and
+    a mutant that handed the SUBTITLE to the shell instead of the video
+    SURVIVED it, because `output_path` is truthy too, so a button still
+    appeared and the helper's own check never went through this panel at all.
+    The seam between the row and the helper was the one thing untested.
+
+    ⭐ So the two paths are given DIFFERENT values and the click is driven.
+    """
+    video = tmp_path / u"ep01.mkv"
+    video.write_text(u"", encoding=u"utf-8")
+    subtitle = tmp_path / u"ep01.ja.ass"
+    subtitle.write_text(u"", encoding=u"utf-8")
+
+    opened = []
+    monkeypatch.setattr(gui_app, u"open_in_player",
+                        lambda path: opened.append(path) or True)
+
+    panel = gui_app.detail_panel({u"video": str(video),
+                                  u"output_path": str(subtitle)})
+    found = [b for b in panel.findChildren(QPushButton)
+             if u"Open video" in b.text()]
+    assert found, u"no way to open the video"
+    assert found[0].receivers(found[0].clicked) > 0, u"the button is inert"
+
+    found[0].click()
+    assert opened, u"the button is connected to nothing that opens anything"
+    assert opened[0] == str(video), \
+        u"the row opened %r -- it must hand over the VIDEO" % opened[0]
+
+
+def test_a_video_that_is_NOT_ON_DISK_offers_no_button(qapp, tmp_path):
+    u"""🚨 THIS CHECK USED TO BE A LIE, AND SO WAS THE CODE IT GUARDED.
+
+    It passed a hand-made row carrying `gone: True` and asserted no button --
+    green, and meaningless. ⛔ `report.as_dict()` is the only thing that
+    builds a real row and it has NO `gone` key, so in the product the guard
+    never evaluated to anything and the button appeared on every row,
+    including videos that had been moved or deleted.
+
+    ⭐ The row now asks the DISK, and so does this: a path that is not there
+    gets no button, and `gone` is not involved at all.
+    """
+    missing = tmp_path / u"x.mkv"                # deliberately never created
+    panel = gui_app.detail_panel({u"video": str(missing)})
+    assert not [b for b in panel.findChildren(QPushButton)
+                if u"Open video" in b.text()]
+
+    # ⛔ AND THE OLD FLAG MUST NOT RESURRECT THE BUTTON. A row carrying the
+    # fictional key, for a file that IS there, still gets one -- proving the
+    # decision comes from the filesystem and not from a key nothing sets.
+    real = tmp_path / u"there.mkv"
+    real.write_text(u"", encoding=u"utf-8")
+    panel = gui_app.detail_panel({u"video": str(real), u"gone": True})
+    assert [b for b in panel.findChildren(QPushButton)
+            if u"Open video" in b.text()]
+
+
+def test_opening_hands_the_VIDEO_to_the_shell_never_the_subtitle(qapp, tmp_path,
+                                                                 monkeypatch):
+    u"""🚨 THE WHOLE POINT OF THE FEATURE. *"Not the sub file but the video
+    file."* Handing over `output_path` would open a text editor."""
+    video = tmp_path / u"ep01.mkv"
+    video.write_text(u"", encoding=u"utf-8")
+    seen = []
+
+    class FakeShell(object):
+        @staticmethod
+        def openUrl(url):
+            seen.append(url.toLocalFile())
+            return True
+
+    monkeypatch.setattr(gui_app, u"QDesktopServices", FakeShell)
+    assert gui_app.open_in_player(str(video)) is True
+    assert seen and seen[0].endswith(u"ep01.mkv"), seen
+    assert not seen[0].endswith(u".ass")
+
+
+def test_a_file_that_moved_is_a_quiet_no(qapp, tmp_path):
+    u"""⛔ Never raises. The person clicked a convenience, not a command, and a
+    dialog saying *"the file you moved is moved"* is noise."""
+    assert gui_app.open_in_player(None) is False
+    assert gui_app.open_in_player(u"") is False
+    assert gui_app.open_in_player(str(tmp_path / u"not-here.mkv")) is False
+
+
+# ---------------------------------------------------------------------------
+# ⭐ start with Windows
+# ---------------------------------------------------------------------------
+
+def test_settings_offers_a_start_with_windows_switch(qapp, monkeypatch):
+    from hato import startup
+    monkeypatch.setattr(startup, u"supported", lambda: True)
+    monkeypatch.setattr(startup, u"is_enabled", lambda: False)
+    monkeypatch.setattr(startup, u"is_stale", lambda: False)
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    assert u"Start with Windows" in u" ".join(gui_app.texts(window))
+
+
+def test_where_it_cannot_work_the_switch_is_ABSENT(qapp, monkeypatch):
+    u"""⛔ *"Controls vanish when they would be meaningless."* There is no
+    login-items registry outside Windows, and a switch that cannot do anything
+    is worse than no switch."""
+    from hato import startup
+    monkeypatch.setattr(startup, u"supported", lambda: False)
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    assert u"Start with Windows" not in u" ".join(gui_app.texts(window))
+
+
+def _startup_box(window):
+    u"""The Check beside *Start with Windows*, found by its own label.
+
+    ⚠ Walks UP from the text to the first ancestor holding exactly one Check,
+    so it cannot accidentally return the *Watch for new videos* box.
+    """
+    for lab in window.findChildren(QLabel):
+        if lab.text() != u"Start with Windows":
+            continue
+        node = lab.parentWidget()
+        while node is not None:
+            boxes = node.findChildren(gui_app.Check)
+            if len(boxes) == 1:
+                return boxes[0]
+            node = node.parentWidget()
+    return None
+
+
+def test_CLICKING_the_startup_switch_actually_toggles_it(qapp, monkeypatch):
+    u"""🚨 NOTHING CLICKED THIS BOX. Disconnect `box.clicked` and all the other
+    checks stayed green -- the identical defect this project already shipped
+    once, in its own words: *"THIS BUTTON WAS INERT AND SHIPPED."*"""
+    from hato import startup
+    live = {u"on": False}
+    monkeypatch.setattr(startup, u"supported", lambda: True)
+    monkeypatch.setattr(startup, u"is_stale", lambda: False)
+    monkeypatch.setattr(startup, u"is_enabled", lambda: live[u"on"])
+    monkeypatch.setattr(startup, u"set_enabled",
+                        lambda on: live.__setitem__(u"on", bool(on)))
+
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    box = _startup_box(window)
+    assert box is not None, u"no switch to click"
+
+    box.click()
+    assert live[u"on"] is True, u"the switch is connected to nothing"
+
+    window.show_tab(gui_app.TAB_SET)
+    _startup_box(window).click()
+    assert live[u"on"] is False, u"it turns on but never off"
+
+
+def test_the_switch_is_DRAWN_the_way_windows_has_it(qapp, monkeypatch):
+    u"""⛔ Nothing asserted the drawn state. `setChecked(not on)` survived every
+    check -- a switch that is both inert and inverted passed."""
+    from hato import startup
+    monkeypatch.setattr(startup, u"supported", lambda: True)
+    monkeypatch.setattr(startup, u"is_stale", lambda: False)
+
+    monkeypatch.setattr(startup, u"is_enabled", lambda: True)
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    assert _startup_box(window).isChecked() is True
+
+    monkeypatch.setattr(startup, u"is_enabled", lambda: False)
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    assert _startup_box(window).isChecked() is False
+
+
+def test_a_registry_error_does_not_take_the_window_down(qapp, monkeypatch):
+    u"""⚠ Neither the StartupError branch nor the note it writes was covered."""
+    from hato import startup
+    monkeypatch.setattr(startup, u"supported", lambda: True)
+    monkeypatch.setattr(startup, u"is_stale", lambda: False)
+    monkeypatch.setattr(startup, u"is_enabled", lambda: False)
+
+    def refuse(_on):
+        raise startup.StartupError(u"a policy says no")
+
+    monkeypatch.setattr(startup, u"set_enabled", refuse)
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    _startup_box(window).click()                 # must not raise
+    assert u"a policy says no" in u" ".join(gui_app.texts(window))
+
+
+def test_the_switch_reads_WINDOWS_not_a_file_hato_wrote(qapp, monkeypatch):
+    u"""🚨 The registry is the only state. If this ever reads a config key
+    instead, the switch can show ON while nothing runs."""
+    from hato import startup
+    asked = []
+    monkeypatch.setattr(startup, u"supported", lambda: True)
+    monkeypatch.setattr(startup, u"is_stale", lambda: False)
+    monkeypatch.setattr(startup, u"is_enabled",
+                        lambda: asked.append(1) or True)
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    assert asked, u"the card never asked Windows what the state was"
+
+
+def test_every_setting_the_window_writes_actually_EXISTS(qapp):
+    u"""🚨 THIS CHECK FOUND A DEFECT NOBODY HAD REPORTED, WHILE BEING WRITTEN.
+
+    Sonic reported the tray never appearing. The tick was sending
+    `hato config --set watch=true`, `config.py`'s schema refused the key by
+    name, and the window never reads a child's exit code -- so the box ticked,
+    nothing saved, nothing said so.
+
+    ⭐ Going to write this guard turned up `schedule` doing exactly the same
+    thing: the *"every day at 03:00"* time field had never once saved, and
+    nobody had noticed because the field keeps showing what you typed.
+
+    ⛔ THE REAL HOLE IS THAT A REFUSED CHILD IS SILENT, and this does not fix
+    that -- it makes the one consequence that has bitten twice impossible.
+    Static, so it needs no clicking and cannot be fooled by which control
+    happened to be exercised.
+    """
+    import re
+    from hato import config as config_module
+
+    source = open(gui_app.__file__, encoding="utf-8").read()
+    keys = sorted(set(re.findall(r'--set"\s*,\s*u?"(\w+)=', source)))
+    assert keys, (
+        u"no `--set` call was found in app.py at all, so this check is "
+        u"vacuous -- the pattern it greps for must have changed")
+    unknown = [k for k in keys if k not in config_module.SCHEMA]
+    assert not unknown, (
+        u"the window writes settings config.py's schema refuses by name, so "
+        u"they are silently never saved: %s. Known: %s"
+        % (u", ".join(unknown), u", ".join(sorted(config_module.SCHEMA))))
+
+
+def test_the_no_folders_state_offers_the_control_and_not_a_signpost(qapp):
+    u"""⭐ SONIC'S RULING, 2026-09-18: the Subtitles tab with no folders shows
+    the mark, *No folders selected*, and a button that adds one.
+
+    ⚠ It replaced a line of prose pointing at Settings. A tool that cannot
+    start should show the way to start it, not the address of the way.
+    """
+    window = make(folders=[])
+    window.show_tab(gui_app.TAB_SUBS)
+
+    texts = [w.text() for w in window.findChildren(gui_app.QLabel) if w.text()]
+    assert any(u"No folders selected" in t for t in texts), texts
+
+    buttons = [b for b in window.findChildren(gui_app.QPushButton)
+               if u"Add folders" in b.text()]
+    assert buttons, u"the no-folders state has no button to add one"
+    assert buttons[0].receivers(buttons[0].clicked) > 0
+
+    # ⛔ And the mark is really there -- an empty state whose picture failed to
+    # load is a blank page with one line on it.
+    marks = [w for w in window.findChildren(gui_app.QLabel)
+             if w.pixmap() is not None and not w.pixmap().isNull()]
+    assert marks, u"the no-folders state drew no mark"
+
+
+def test_no_separator_is_painted_brighter_than_the_theme_allows(qapp):
+    u"""🚨 REPORTED BY SONIC OFF A SHIPPED SCREENSHOT, 2026-09-18:
+    *"the white border separating each on the needs you tab ... stands out too
+    much. Yes it needs to be separated but this is too much."*
+
+    He was exactly right and it was a defect, not a taste call. `hrule()` set
+    `QFrame.Shape.HLine`, and **a QFrame with a shape paints its own 3D frame
+    from the widget PALETTE, over whatever the stylesheet set** -- so every
+    separator was TWO lines: Qt's, at `#e7e9ec` (`--ink`, the brightest token
+    there is), stacked on the correct `--line`. Measured off the shipped PNG:
+    a row 100% of the window's width at `--ink`.
+
+    ⭐ This asserts the CLASS, not the instance. It does not look for
+    `setFrameShape`; it looks at the PIXELS, so any control that paints a
+    too-bright full-width rule -- a frame, a splitter handle, a group box, a
+    default focus rect -- fails it, whether or not anybody thought of it.
+
+    ⚠ Offscreen is fine HERE even though it has no fonts: a themed QFrame is a
+    filled rectangle and renders identically either way. ⛔ It would NOT be
+    fine for judging type or layout -- see the note at the top of this file.
+    """
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    window.resize(1100, 660)
+    image = window.grab().toImage()
+    width, height = image.width(), image.height()
+    assert width > 200 and height > 200, u"nothing was rendered to inspect"
+
+    ceiling = sum(int(theme.LINE_HI[i:i + 2], 16) for i in (1, 3, 5))
+    offenders = []
+    for y in range(height):
+        counts = {}
+        for x in range(0, width, 3):
+            rgb = image.pixelColor(x, y).getRgb()[:3]
+            counts[rgb] = counts.get(rgb, 0) + 1
+        rgb, n = max(counts.items(), key=lambda kv: kv[1])
+        # a RULE is a row that is overwhelmingly ONE colour, edge to edge
+        if n / float(len(range(0, width, 3))) >= 0.90 and sum(rgb) > ceiling:
+            offenders.append((y, u"#%02x%02x%02x" % rgb))
+    assert not offenders, (
+        u"a full-width rule is painted brighter than --line-hi (%s), which is "
+        u"the ceiling for a divider on this theme: %s. A QFrame with a "
+        u"frameShape paints its own palette-coloured frame over the "
+        u"stylesheet -- see hrule()."
+        % (theme.LINE_HI, u", ".join(u"y=%d %s" % o for o in offenders[:6])))
+
+
+# ===========================================================================
+# 1 -- [!] the engine's vocabulary never reaches a person
+# ===========================================================================
+
+def test_the_alarming_word_is_nowhere_in_the_built_window(qapp):
+    u"""[!] THE CHECK THE WHOLE TAB LAYOUT EXISTS TO PASS.
+
+    `05-interface.md`: *"when it says 'refused' it's quite alarming."* The
+    fixtures deliberately carry it in `reason` on two rows and on every
+    attempt, because that is what the real engine writes -- so this walks what
+    was BUILT, not what this file happens to contain.
+    """
+    window = make()
+    for tab in gui_app.TABS:
+        window.show_tab(tab)
+        for pick in window.state.of(gui_run.NEEDS_YOU):
+            window.state.open_pick = window.state.key(pick)
+            window.render()
+            for text in gui_app.texts(window):
+                assert u"refus" not in text.lower(), \
+                    u"the engine's word reached the interface: %r" % text
+
+
+def test_safe_replaces_every_inflection_with_the_ruled_phrase():
+    for before in (u"REFUSED", u"refused", u"the pair was refusing",
+                   u"hato refuses this"):
+        assert u"refus" not in gui_app.safe(before).lower()
+    assert gui_app.safe(u"it was REFUSED") == u"the timing did not hold"
+
+
+def test_safe_replaces_the_SENTENCE_so_the_result_is_readable():
+    u"""[!] SUBSTITUTING THE WORD IN PLACE PRODUCED *"the pair was did not
+    hold"* -- caught by reading a shot, not by the check, which was perfectly
+    happy because the forbidden word was gone. A sanitiser that emits broken
+    English has moved the problem, not solved it."""
+    out = gui_app.safe(u"every candidate was refused; the timing did not hold")
+    assert out == u"the timing did not hold"
+    assert u"was did not" not in out
+
+
+def test_safe_can_be_given_hatos_own_words_for_the_place_it_is_used():
+    assert gui_app.safe(u"it was refused", u"see the log") == u"see the log"
+    assert gui_app.safe(u"", u"see the log") == u""
+
+
+def test_safe_leaves_ordinary_prose_alone():
+    u"""[X] A sanitiser that rewrites everything is not a sanitiser."""
+    text = u"[Erai-raws] Re Zero 3rd - 54.ass"
+    assert gui_app.safe(text) == text
+
+
+def test_a_row_only_ever_says_one_of_the_five_interface_words():
+    u"""`run.interface_words()` is the whole permitted vocabulary."""
+    words = gui_run.interface_words()
+    assert gui_run.REFUSED not in words
+    for row in full_rows():
+        assert gui_app.State.word(row) in words
+
+
+# ===========================================================================
+# 2 -- [*] the badge and the footer are ONE number
+# ===========================================================================
+
+def _badge_text(window):
+    return window.tab_buttons[gui_app.TAB_PICK].badge.text()
+
+
+def _footer_need(window):
+    return window.tally_labels[1].text()
+
+
+def test_the_badge_and_the_footer_start_agreeing(qapp):
+    window = make()
+    assert _badge_text(window) == u"2"
+    assert _footer_need(window) == u"2 need you"
+
+
+def test_pairing_one_moves_the_badge_AND_the_footer(qapp):
+    u"""[*] THE DEFECT THE MOCK RECORDED AGAINST ITSELF.
+
+    The badge was hardcoded to 2, and so -- separately, in another element --
+    was the footer. Pairing an episode left the tab claiming two needed a
+    person while the list under it showed one. `State.tallies()` is one call
+    and both read it, so a mutant that pins either goes red here.
+    """
+    window = make()
+    row = window.state.of(gui_run.NEEDS_YOU)[0]
+    window.state.picked[window.state.key(row)] = u"whatever.ass"
+    window.render()
+    assert _badge_text(window) == u"1"
+    assert _footer_need(window) == u"1 needs you"
+
+
+def test_pairing_both_takes_the_badge_quiet_rather_than_to_a_garnet_nought(qapp):
+    window = make()
+    for row in window.state.of(gui_run.NEEDS_YOU):
+        window.state.picked[window.state.key(row)] = u"x.ass"
+    window.render()
+    assert _badge_text(window) == u"0"
+    assert _footer_need(window) == u"0 need you"
+    badge = window.tab_buttons[gui_app.TAB_PICK].badge
+    assert badge.property(u"zero") == u"true"
+
+
+def test_the_badge_is_not_zero_flagged_while_something_waits(qapp):
+    window = make()
+    assert window.tab_buttons[gui_app.TAB_PICK].badge.property(u"zero") == u"false"
+
+
+def test_the_counts_partition_over_every_row(qapp):
+    u"""[!] `added + needs_you + errored + skipped == len(rows)`.
+
+    A subset presented as a sibling is how eight files became eleven on the
+    one line a person reads at a glance.
+    """
+    window = make()
+    tallies = window.state.tallies()
+    picked = len(window.state.picked)
+    assert sum(tallies.values()) + picked == len(window.state.rows)
+
+
+def test_the_added_tally_does_not_climb_on_a_pick(qapp):
+    u"""[X] THE WINDOW DECIDES NOTHING. A pick is handed to the engine and the
+    engine rules on it; claiming the file was added before it came back is the
+    window deciding."""
+    window = make()
+    before = window.state.tallies()[gui_run.ADDED]
+    row = window.state.of(gui_run.NEEDS_YOU)[0]
+    window.commit_pair(window.state.key(row), row[u"attempts"][0])
+    assert window.state.tallies()[gui_run.ADDED] == before
+
+
+# ===========================================================================
+# 3 -- [!] a candidate click commits THAT pair
+# ===========================================================================
+
+def test_clicking_a_candidate_commits_exactly_that_pair(qapp):
+    u"""[!] CLICKING IS THE ACTION -- and the argv is the whole claim.
+
+    Asserted against `run.argv_for_pair`, so a second argv builder in `app.py`
+    cannot quietly disagree with the one `run.py` owns. Nothing is spawned.
+    """
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    row = window.state.of(gui_run.NEEDS_YOU)[0]
+    key = window.state.key(row)
+    attempt = row[u"attempts"][1]           # the SECOND one, not the best
+    argv = window.commit_pair(key, attempt)
+    expected = gui_run.argv_for_pair(row[u"video"],
+                                     gui_app.candidate_path(attempt))
+    assert argv == expected
+    assert window.spawned == [expected]
+
+
+def test_the_committed_pair_names_the_file_that_was_clicked(qapp):
+    window = make()
+    row = window.state.of(gui_run.NEEDS_YOU)[0]
+    attempt = row[u"attempts"][2]
+    window.commit_pair(window.state.key(row), attempt)
+    #: argv is [..., "sync", <video>, <subtitle>, "--json"].
+    assert attempt[u"name"] in window.spawned[0][-2]
+    # ⚠ ABSOLUTISED ON BOTH SIDES. `run.argv_for_pair` calls `abspath` on
+    # purpose -- a GUI's working directory is wherever the shortcut pointed --
+    # so comparing against the raw fixture value only held on Windows, where
+    # these fixture paths are already absolute. On a POSIX runner `abspath`
+    # prefixes the checkout, and the two differed. CI found it on the first
+    # run that reached Linux.
+    assert window.spawned[0][-2] == os.path.abspath(
+        gui_app.candidate_path(attempt))
+
+
+def test_a_relative_candidate_path_is_made_absolute_before_it_is_run(qapp):
+    u"""[!] A GUI'S WORKING DIRECTORY IS WHEREVER THE SHORTCUT POINTED -- on
+    Windows routinely `C:\\Windows\\System32` -- and hato reads any token
+    starting with `-` as a flag, which an absolute path cannot do.
+    `run.argv_for_pair` absolutises both paths for exactly that reason.
+
+    [!] THIS CHECK EXISTS BECAUSE A MUTANT SURVIVED. A hand-rolled argv in the
+    window that skipped `abspath` was byte-identical to `argv_for_pair` under
+    the old fixtures, because every path in them was already absolute -- so
+    the check agreed with a defect it was written to catch. A RELATIVE path is
+    the only input that can tell the two apart.
+    """
+    row = needs_you(54)
+    row[u"video"] = u"anime/rezero/ep54.mkv"
+    row[u"attempts"][0][u"tsubasa"][u"subtitle"] = u"subs/ep54.ja.ass"
+    window = make(rows=[row])
+    argv = window.commit_pair(window.state.key(row), row[u"attempts"][0])
+    assert argv == gui_run.argv_for_pair(u"anime/rezero/ep54.mkv",
+                                         u"subs/ep54.ja.ass")
+    assert os.path.isabs(argv[-2]), u"the subtitle path is still relative"
+    assert os.path.isabs(argv[-3]), u"the video path is still relative"
+
+
+def test_a_candidate_with_no_file_on_disk_commits_nothing(qapp):
+    u"""[X] Better no file than the wrong one -- Rule 1, from the other side."""
+    window = make()
+    row = window.state.of(gui_run.NEEDS_YOU)[0]
+    argv = window.commit_pair(window.state.key(row),
+                              {u"name": u"ghost.ass", u"match_rate": 0.9})
+    assert argv is None
+    assert window.spawned == []
+    assert window.state.picked == {}
+
+
+def test_a_click_on_the_card_reaches_commit(qapp):
+    u"""[!] A HANDLER THAT IS NEVER REACHED RENDERS PERFECTLY AND IS INERT.
+
+    This drives Qt's real mouse path rather than calling the method, which is
+    the only way to catch a card that was built but never connected.
+    """
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    cards = [w for w in window.findChildren(gui_app.CandidateCard)]
+    assert cards, u"no candidate cards were built"
+    click(cards[0])
+    assert len(window.spawned) == 1
+    assert window.spawned[0][-4] == u"sync"
+
+
+def test_the_row_collapses_to_green_naming_the_file_it_used(qapp):
+    u"""[*] A COLLAPSED ROW STILL SAYS WHAT HAPPENED TO IT. That is what makes
+    an accordion safe to collapse."""
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    row = window.state.of(gui_run.NEEDS_YOU)[0]
+    attempt = row[u"attempts"][0]
+    window.commit_pair(window.state.key(row), attempt)
+    heads = window.findChildren(gui_app.PickHead)
+    done = [h for h in heads if h.property(u"done") == u"true"]
+    assert len(done) == 1
+    assert done[0].best.text().startswith(u"paired \u00b7 ")
+    assert attempt[u"name"] in done[0].best.text()
+
+
+def test_the_next_unresolved_row_opens_as_this_one_closes(qapp):
+    u"""Sonic: *"after selecting one, the next one opens as it closes."*"""
+    window = make()
+    rows = window.state.of(gui_run.NEEDS_YOU)
+    first, second = window.state.key(rows[0]), window.state.key(rows[1])
+    window.state.open_pick = first
+    window.render()
+    window.commit_pair(first, rows[0][u"attempts"][0])
+    assert window.state.open_pick == second
+
+
+def test_the_last_pick_leaves_nothing_open(qapp):
+    window = make()
+    rows = window.state.of(gui_run.NEEDS_YOU)
+    for row in rows:
+        window.commit_pair(window.state.key(row), row[u"attempts"][0])
+    assert window.state.open_pick is None
+
+
+def test_only_one_pick_row_is_ever_open(qapp):
+    u"""[*] The accordion's open row is a SINGLE VALUE, not a set.
+
+    [!] AND CLICKING THE OPEN ROW AGAIN MUST CLOSE IT. Toggling two different
+    rows cannot tell a toggle from a plain assignment -- both leave the second
+    row open and only one panel expanded -- so a mutant that replaced the
+    toggle with `open_pick = key` SURVIVED. The second half of this check is
+    the half that fails.
+    """
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    rows = window.state.of(gui_run.NEEDS_YOU)
+    first, second = window.state.key(rows[0]), window.state.key(rows[1])
+    window._toggle_pick(first)
+    window._toggle_pick(second)
+    assert window.state.open_pick == second
+    assert len([a for a in window._accordions.values() if a.is_open()]) == 1
+    window._toggle_pick(second)
+    assert window.state.open_pick is None, \
+        u"clicking the open row again did not close it"
+    assert [a for a in window._accordions.values() if a.is_open()] == []
+
+
+def test_blacklist_is_a_different_gesture_from_choosing(qapp):
+    u"""[*] It must not be reachable by the same reflex as picking a file."""
+    window = make()
+    row = window.state.of(gui_run.NEEDS_YOU)[0]
+    argv = window.blacklist(window.state.key(row))
+    assert u"blacklist" in argv
+    assert u"sync" not in argv
+    assert window.state.picked == {}
+    #: [!] AND IT IS THE REAL COMMAND SHAPE. `hato/commands/blacklist.py`
+    #: takes the video POSITIONALLY; the first version of this invented an
+    #: `add` verb and the window would have asked hato to blacklist a file
+    #: literally named "add". Asserting only that the word appeared was what
+    #: let that through.
+    assert u"add" not in argv
+    assert argv[argv.index(u"blacklist") + 1] == row[u"video"]
+
+
+# ===========================================================================
+# 4 -- [X] the accordion has no hard-coded ceiling
+# ===========================================================================
+
+def test_the_accordion_animates_to_the_contents_own_height(qapp):
+    u"""[X] A CAP MEANS A SCROLLBAR, and with six candidates the case that
+    most needs every option visible is the case that scrolls."""
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    key = window.state.key(window.state.of(gui_run.NEEDS_YOU)[0])
+    accordion = window._accordions[key]
+    accordion.set_open(True)
+    assert accordion._anim.endValue() == accordion.target_height()
+    assert accordion.target_height() == accordion.content.sizeHint().height()
+    assert accordion.target_height() > 0
+
+
+def test_a_taller_candidate_list_gets_a_taller_target(qapp):
+    u"""The end value is READ, not guessed: three candidates must target more
+    than one."""
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    rows = window.state.of(gui_run.NEEDS_YOU)
+    three = window._accordions[window.state.key(rows[0])].target_height()
+    one = window._accordions[window.state.key(rows[1])].target_height()
+    assert three > one
+
+
+def test_no_literal_maximum_height_anywhere_in_the_window(qapp):
+    u"""[X] The mock's 420px ceiling was a guess and six candidates overflowed
+    it. A number here would be the same guess in Python."""
+    text = source("app.py")
+    #: [X] Zero is not a ceiling, it is *closed*. Any POSITIVE literal is the
+    #: 420px guess coming back in Python.
+    literal = re.findall(r"setMaximumHeight\(\s*[1-9]\d*\s*\)", text)
+    assert literal == [], u"a guessed ceiling is back: %r" % literal
+    assert u"QWIDGETSIZE_MAX" in text
+    assert u"sizeHint().height()" in text
+
+
+def test_the_accordion_releases_its_ceiling_once_open(qapp):
+    u"""Otherwise later growth -- *"try 3 more candidates"* -- is clipped."""
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    accordion = list(window._accordions.values())[0]
+    accordion.set_open(True)
+    accordion._settle()
+    assert accordion.maximumHeight() > 10 ** 6
+
+
+def test_a_closed_accordion_is_flat(qapp):
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    accordion = list(window._accordions.values())[0]
+    accordion.set_open(False, animate=False)
+    assert accordion.maximumHeight() == 0
+    assert not accordion.is_open()
+
+
+# ===========================================================================
+# 5 -- every tab renders with zero rows
+# ===========================================================================
+
+@pytest.mark.parametrize("tab", list(gui_app.TABS))
+def test_every_tab_renders_with_no_rows_at_all(qapp, tab):
+    u"""[!] AN EMPTY LIBRARY IS A REAL STATE and must not look broken --
+    and it is THREE states, not one: a settled library, an empty folder, or
+    nothing pairable."""
+    window = make(rows=[])
+    window.show_tab(tab)
+    assert window.body.currentWidget() is window.panes[tab]
+    assert gui_app.texts(window), u"an empty tab rendered nothing at all"
+    assert _badge_text(window) == u"0"
+
+
+def test_the_window_really_accepts_the_folder_drop_its_copy_promises(qapp,
+                                                                     tmp_path):
+    u"""[!] THE EMPTY STATE PROMISES THIS IN WORDS. Copy describing a
+    capability the build does not have is worse than either shipping it or not
+    saying it.
+
+    [!] And `setAcceptDrops` is load-bearing: without it Qt never delivers a
+    drag, so the handlers would be present, correct and completely inert.
+
+    ⚠ THIS CHECK WENT RED ON THE 2026-09-18 REDESIGN AND WAS RIGHT TO. The
+    no-folders state was rebuilt around the mark and an *Add folders* button,
+    and the rewrite dropped the only sentence that told anybody a folder could
+    be dropped -- silently removing the discoverability of a feature that still
+    worked. The line came back, quiet, under the button. ⛔ The assertion is on
+    the word *drop* rather than the old sentence, so the copy can be reworded
+    without the capability going quiet again.
+    """
+    window = make(rows=[], folders=[], running=False)
+    assert window.acceptDrops(), u"the window refuses drags outright"
+    joined = u" ".join(gui_app.texts(window))
+    assert u"drop a folder" in joined
+
+    folder = tmp_path / "Anime"
+    folder.mkdir()
+    added_now = window.add_folders([str(folder)])
+    assert added_now == [os.path.abspath(str(folder))]
+    assert os.path.abspath(str(folder)) in window.state.folders
+    assert u"--add-folder" in window.spawned[0]
+    assert u"config" in window.spawned[0]
+
+
+def test_a_dropped_FILE_is_ignored_because_hato_watches_folders(qapp,
+                                                                tmp_path):
+    u"""[X] Guessing which folder a dropped video meant is the window
+    deciding."""
+    video = tmp_path / "ep01.mkv"
+    video.write_bytes(b"not really a video")
+    window = make(rows=[], folders=[], running=False)
+    assert window.add_folders([str(video)]) == [] or \
+        str(video) not in window.state.folders
+    assert gui_app.HatoWindow._folders_in(None) == []
+
+
+def test_adding_a_folder_that_is_already_watched_changes_nothing(qapp):
+    window = make(running=False)
+    before = list(window.state.folders)
+    assert window.add_folders([before[0]]) == []
+    assert window.state.folders == before
+    assert window.spawned == []
+
+
+def test_with_no_folders_the_empty_subtitles_tab_says_what_to_do(qapp):
+    u"""*"Instruction, not refusal"* -- an unavailable state renders what
+    would make it available.
+
+    ⭐ REWRITTEN 2026-09-18 TO ASSERT MORE, NOT LESS. It used to pin the words
+    *"No folders yet."* and a pointer to Settings; Sonic ruled the state should
+    carry the mark, *No folders selected*, and **the control itself**. A
+    signpost to the place where the button lives is worse than the button, so
+    the check now requires the button and its wiring -- which the old text
+    assertion could never have noticed was missing.
+    """
+    window = make(rows=[], folders=[])
+    window.show_tab(gui_app.TAB_SUBS)
+    joined = u" ".join(gui_app.texts(window))
+    assert u"No folders selected" in joined
+    adders = [b for b in window.findChildren(gui_app.QPushButton)
+              if u"Add folders" in b.text()]
+    assert adders, u"the state names the problem and offers no way out of it"
+    assert adders[0].receivers(adders[0].clicked) > 0, u"the button is inert"
+
+
+def test_with_folders_but_nothing_added_it_does_not_say_there_are_no_folders(qapp):
+    window = make(rows=[])
+    joined = u" ".join(gui_app.texts(window))
+    assert u"Nothing added yet." in joined
+    assert u"No folders yet." not in joined
+
+
+def test_an_empty_needs_you_tab_says_so(qapp):
+    window = make(rows=[added(1)])
+    window.show_tab(gui_app.TAB_PICK)
+    assert u"Nothing needs you." in u" ".join(gui_app.texts(window))
+
+
+def test_settings_renders_with_no_folders_no_key_and_no_blacklist(qapp):
+    window = make(rows=[], folders=[], skip_folders=[], blacklist=[],
+                  key_hint=None)
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window))
+    assert u"FOLDERS" in joined
+    assert u"JIMAKU KEY" in joined
+
+
+# ===========================================================================
+# 6 -- [X] no colour literal outside theme.py
+# ===========================================================================
+
+HEX = re.compile(r"#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})\b")
+RGB = re.compile(r"\b(?:rgba?|QColor)\s*\(\s*\d")
+
+
+@pytest.mark.parametrize("name", ["app.py", "branding.py", "__main__.py"])
+def test_no_colour_literal_outside_theme(name):
+    u"""[X] A literal is a SECOND PALETTE that drifts from the measured one.
+
+    The whole point of `gui-mock/theme.css` is that the values were measured,
+    not chosen; a hex typed into a widget file is outside that arithmetic and
+    nothing will ever re-measure it.
+    """
+    text = source(name)
+    assert HEX.findall(text) == [], \
+        u"%s carries a colour literal: %r" % (name, HEX.findall(text))
+    assert RGB.findall(text) == [], \
+        u"%s builds a colour from numbers: %r" % (name, RGB.findall(text))
+
+
+def test_every_colour_app_uses_comes_from_theme():
+    u"""Every `theme.X` reference in `app.py` must be a real token."""
+    text = source("app.py")
+    used = set(re.findall(r"theme\.([A-Z_]+)", text))
+    # ⚠ The non-colour tokens. `LINK_CSS` is a whole anchor STYLE rather than a
+    # colour -- it carries `text-decoration:none`, which no palette role can
+    # express, so it cannot live in `colors()`.
+    known = set(theme.colors()) | {"FAST", "SLOW", "EASE", "LIFT", "GLOW",
+                                   "MARK_PX", "ICON_SIZES", "LINK_CSS"}
+    assert used <= known, u"app.py names a token theme.py does not have: %r" \
+                          % sorted(used - known)
+
+
+def test_the_measured_values_are_the_ones_in_the_palette():
+    u"""[!] These came out of `color-kit`, not out of taste. A drift here is a
+    contrast floor moving without anyone measuring it again."""
+    assert theme.ACCENT == u"#f8a890"
+    assert theme.REFUSED_FILL == u"#c02040"
+    assert theme.REFUSED_TYPE == u"#f8f0e0"
+    assert theme.REFUSED_INK == u"#ef4d6d"
+    assert theme.OK == u"#7fc8a0"
+    assert theme.BG == u"#15171b"
+
+
+def test_the_deep_garnet_is_only_ever_a_fill(qapp):
+    u"""[!] AS TEXT IT MEASURES 2.77 AGAINST A 4.5 FLOOR. Every appearance of
+    `REFUSED_FILL` in the sheet must be a `background` or a `border`, never a
+    `color:`."""
+    for line in theme.qss().splitlines():
+        if theme.REFUSED_FILL in line:
+            assert not re.search(r"(?<!-)\bcolor\s*:\s*" + theme.REFUSED_FILL,
+                                 line), \
+                u"the garnet is being used as an ink: %r" % line
+
+
+def test_the_garnet_appears_in_exactly_two_places(qapp):
+    u"""[*] A 2px LEFT EDGE AND THE COUNT BADGE, and nowhere else. Separating
+    the failures into their own tab is what removed the need for it to shout;
+    a third appearance is the loudness creeping back."""
+    sheet = theme.qss()
+    blocks = [line for line in sheet.splitlines()
+              if theme.REFUSED_FILL in line]
+    assert len(blocks) == 2, u"the garnet spread: %r" % blocks
+
+
+# ===========================================================================
+# 7 -- each outcome word reaches the right tab
+# ===========================================================================
+
+def test_added_rows_are_on_the_subtitles_tab(qapp):
+    window = make(rows=[added(1), added(2)])
+    window.show_tab(gui_app.TAB_SUBS)
+    rows = window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow)
+    assert len(rows) == 2
+    assert window.panes[gui_app.TAB_PICK].findChildren(gui_app.SubRow) == []
+
+
+def test_a_wholly_skipped_show_is_one_quiet_line_not_a_row_each(qapp):
+    u"""*"so that's visible but not the focus"* -- a line, not nineteen pills."""
+    window = make(rows=[added(1), skipped(7), skipped(8)])
+    window.show_tab(gui_app.TAB_SUBS)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SUBS]))
+    assert u"already subtitled" in joined
+    assert len(window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow)) == 1
+
+
+def test_episodes_skipped_inside_an_added_show_are_counted_under_it(qapp):
+    u"""The nineteen that already had subtitles belong to the show they are
+    part of, not to a list of their own."""
+    title = u"葬送のフリーレン"
+    window = make(rows=[added(1), skipped(7, title), skipped(8, title)])
+    window.show_tab(gui_app.TAB_SUBS)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SUBS]))
+    assert u"2 episodes already had subtitles" in joined
+    assert u"nothing was requested for them" in joined
+
+
+def test_needs_you_rows_are_on_the_needs_you_tab_and_nowhere_else(qapp):
+    u"""[*] FAILURES LIVE IN THEIR OWN TAB. Being there IS the signal."""
+    window = make()
+    assert len(window.panes[gui_app.TAB_PICK].findChildren(gui_app.PickHead)) == 2
+    assert window.panes[gui_app.TAB_SUBS].findChildren(gui_app.PickHead) == []
+
+
+def test_not_yet_rows_are_a_quiet_line_on_the_needs_you_tab(qapp):
+    u"""[*] A NOT_FOUND ROW IS NOT SOMETHING A PERSON CAN PAIR -- there is
+    nothing there yet, only a retry date. So it is a line, not a row with
+    candidates."""
+    window = make(rows=[not_yet(24)])
+    window.show_tab(gui_app.TAB_PICK)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_PICK]))
+    assert u"not on jimaku yet" in joined
+    assert window.panes[gui_app.TAB_PICK].findChildren(gui_app.PickHead) == []
+
+
+def test_a_broken_row_is_on_the_needs_you_tab_not_among_the_successes(qapp):
+    window = make(rows=[added(1), broke(1)])
+    window.show_tab(gui_app.TAB_PICK)
+    assert u"1 had a problem" in u" ".join(
+        gui_app.texts(window.panes[gui_app.TAB_PICK]))
+    assert len(window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow)) == 1
+
+
+def test_a_confident_row_with_no_written_file_is_not_called_added(qapp):
+    u"""[!] A DRY RUN LEAVES `outcome == CONFIDENT` WITH NO `output_path`, and
+    the outcome field cannot see the difference. tsubasa's GUI reported
+    *"1 synced"* for both until an adversarial pass caught it."""
+    dry = added(1)
+    dry[u"output_path"] = None
+    window = make(rows=[dry])
+    assert window.state.tallies()[gui_run.ADDED] == 0
+    assert window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow) == []
+
+
+# ===========================================================================
+# the row carries THREE things
+# ===========================================================================
+
+def test_a_subtitles_row_carries_exactly_episode_percent_and_the_filename(qapp):
+    u"""[*] *"only show the %, the ones that were paired."* Six columns of
+    evidence read as noise even when every column was true."""
+    window = make(rows=[added(1, rate=0.82)])
+    row = window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow)[0]
+    assert row.ep.text() == u"01"
+    assert row.pc.text() == u"82%"
+    assert row.nm.text().startswith(u"[NanakoRaws]")
+    labels = [w for w in row.findChildren(QLabel)]
+    visible = [w.text() for w in labels if w.text() and w is not row.chev]
+    assert len(visible) == 3, u"the row grew a fourth thing: %r" % visible
+
+
+def test_the_evidence_is_behind_the_row_not_gone(qapp):
+    u"""[*] THE INFORMATION WAS NOT CUT, IT WAS MOVED."""
+    window = make(rows=[added(1)])
+    key = window.state.key(window.state.rows[0])
+    window._toggle_row(key)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SUBS]))
+    assert u"shifted" in joined and u"verdict" in joined and u"written" in joined
+    assert u"locked" in joined
+
+
+def test_a_row_starts_closed_and_its_detail_is_hidden(qapp):
+    window = make(rows=[added(1)])
+    key = window.state.key(window.state.rows[0])
+    assert not window._details[key].isVisibleTo(window)
+    window._toggle_row(key)
+    assert window._details[key].isVisibleTo(window)
+
+
+def test_the_chevron_is_invisible_until_the_pointer_arrives(qapp):
+    u"""Eight static markers down a calm list is eight things to look at for
+    no information."""
+    window = make(rows=[added(1), added(2)])
+    rows = window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow)
+    assert rows[0]._chev_fade.opacity() == 0.0
+    rows[0].set_expanded(True)
+    assert rows[0]._chev_fade.opacity() == 1.0
+
+
+def test_the_hue_comes_from_the_verdict_word_not_the_percentage(qapp):
+    u"""[!] READING THE RULED DESIGN AS A THRESHOLD WAS WRONG. In
+    `gui-mock/shots-final`, 91% is AMBER and 79% is GREEN -- no percentage
+    rule produces that. It is tsubasa's own confidence ladder, shown:
+    `locked` is green and every weaker word is *worth a look*."""
+    assert gui_app.tier(added(1, rate=0.79)) == u"ok"              # locked
+    strong = added(1, rate=0.91)
+    strong[u"tsubasa"][u"verdict_word"] = u"strong"
+    assert gui_app.tier(strong) == u"look"
+    fair = added(1, rate=0.63)
+    fair[u"tsubasa"][u"verdict_word"] = u"fair"
+    assert gui_app.tier(fair) == u"look"
+    untimed = added(1)
+    untimed[u"tsubasa"] = None
+    assert gui_app.tier(untimed) == u"none"
+
+
+def test_a_high_percentage_with_a_weak_verdict_is_still_amber(qapp):
+    u"""The exact pair the mock shows: 91%, `strong`, amber."""
+    row = added(4, rate=0.91)
+    row[u"tsubasa"][u"verdict_word"] = u"strong"
+    window = make(rows=[row])
+    cell = window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow)[0].pc
+    assert cell.text() == u"91%"
+    assert cell.property(u"tier") == u"look"
+
+
+def test_the_engines_strongest_word_is_the_one_this_file_names():
+    u"""[X] A second copy of a vocabulary drifts. `locked` is tsubasa's, and
+    if it were ever renamed every row would silently turn amber."""
+    import tsubasa.verdict as verdict
+    assert gui_app.LOCKED in verdict.CONFIDENCE_WORDS
+    assert gui_app.LOCKED == u"locked"
+
+
+def test_episode_numbers_are_padded_the_way_the_design_shows_them():
+    u"""A column of `1 2 4` reads as quantities; `01 02 04` reads as episodes.
+    [X] And padding is not truncation -- One Piece is at 1121."""
+    assert gui_app.episode_text(1) == u"01"
+    assert gui_app.episode_text(54) == u"54"
+    assert gui_app.episode_text(1121) == u"1121"
+    assert gui_app.episode_text(None) == u""
+
+
+def test_a_row_that_was_never_timed_shows_a_dash_not_a_zero(qapp):
+    u"""[X] `0` IS A REAL ANSWER -- it means *it matched nothing* -- so the
+    absent case must not become zero."""
+    row = added(1)
+    row[u"tsubasa"] = None
+    window = make(rows=[row])
+    assert window.panes[gui_app.TAB_SUBS].findChildren(
+        gui_app.SubRow)[0].pc.text() == u"\u2014"
+    assert gui_app.rate_text(0.0) == u"0%"
+    assert gui_app.rate_text(None) == u"\u2014"
+
+
+# ===========================================================================
+# [!] every interactive control is themed -- a shape is a claim
+# ===========================================================================
+
+@pytest.mark.parametrize("selector", [
+    "QCheckBox::indicator", "QRadioButton::indicator", "QComboBox",
+    "QLineEdit", "QScrollBar:vertical", "QScrollBar:horizontal",
+    "QPushButton", "QToolTip"])
+def test_every_native_control_is_styled_explicitly(selector):
+    u"""[!] A NATIVE CONTROL IS THEMED BY ITS HOST, NOT BY YOU.
+
+    An unstyled radio paints Windows blue -- the one hue this palette does not
+    contain -- inside a panel about *"colours utilised with high integrity"*.
+    Caught in the mock by LOOKING at a shot, not by any assertion.
+
+    [!] AND IT ASSERTS A RULE HEAD, NOT A SUBSTRING. `"QComboBox" in qss()` is
+    still true after the `QComboBox { ... }` block is deleted, because
+    `QComboBox:hover` mentions it -- a check that cannot fail is not a check.
+    """
+    assert re.search(r"(?m)^" + re.escape(selector) + r"\s*\{", theme.qss()), \
+        u"%s has no rule of its own" % selector
+
+
+@pytest.mark.parametrize("selector", ["QPushButton:focus", "QLineEdit:focus",
+                                      "QComboBox:focus"])
+def test_focus_is_visible_and_is_the_accent(selector):
+    u"""[X] A control that can take focus and does not show it is a control
+    nobody can drive from the keyboard."""
+    found = re.search(r"(?m)^" + re.escape(selector) + r"\s*\{([^}]*)\}",
+                      theme.qss())
+    assert found, u"%s has no rule of its own" % selector
+    assert theme.ACCENT in found.group(1)
+
+
+def test_the_info_marker_is_a_circle_not_a_rounded_square(qapp):
+    u"""[!] QT CLAMPS A RADIUS THAT EXCEEDS HALF THE BOX. The dot is 15px and
+    the radius said 8, so it drew a rounded SQUARE -- a shape that reads as a
+    button rather than as the quiet marker the design uses."""
+    found = re.search(r"(?m)^#info\s*\{([^}]*)\}", theme.qss())
+    assert found
+    radius = re.search(r"border-radius:\s*(\d+)px", found.group(1))
+    assert radius, u"#info has no radius at all"
+    dot = gui_app.info_dot(u"anything")
+    assert dot.width() == dot.height()
+    assert int(radius.group(1)) * 2 <= dot.width(), \
+        u"a radius Qt will clamp: %spx on a %dpx box" % (radius.group(1),
+                                                         dot.width())
+    assert int(radius.group(1)) * 2 >= dot.width() - 1, \
+        u"a radius too small to be a circle"
+
+
+def test_the_font_stack_names_a_japanese_face_that_windows_actually_has():
+    u"""[!] MEASURED on this machine 2026-09-18: `Segoe UI Variable Text` is
+    ABSENT (Windows 10 LTSC 2019) and so is `Meiryo`. Every show title in this
+    corpus is Japanese, so a stack naming only fonts that are not installed is
+    how the headings become tofu."""
+    #: Scoped to the DECLARATION -- a comment mentioning the font is not the
+    #: font being requested, and the first version of this check matched one.
+    stack = re.search(r"font-family:([^;]*);", theme.qss())
+    assert stack, u"no font-family declaration at all"
+    stack = stack.group(1)
+    assert u"Yu Gothic UI" in stack, \
+        u"no installed Japanese face is named in the font stack: %r" % stack
+    assert stack.index(u"Segoe UI\"") < stack.index(u"Yu Gothic UI")
+
+
+def test_the_checkbox_is_square_and_the_radio_is_round():
+    u"""[!] A CHECKBOX IS NOT A RADIO. The mock's radio rule caught its one
+    checkbox and rendered it as a circle -- a shape that says *pick one of
+    these* about a thing that is simply on or off."""
+    sheet = theme.qss()
+    check = sheet[sheet.index(u"QCheckBox::indicator {"):]
+    check = check[:check.index(u"}")]
+    radio = sheet[sheet.index(u"QRadioButton::indicator {"):]
+    radio = radio[:radio.index(u"}")]
+    assert u"border-radius: 4px" in check
+    assert u"border-radius: 8px" in radio
+
+
+def test_the_card_rule_belongs_to_the_card_and_not_to_its_four_words(qapp):
+    u"""[!] THE LABEL AND ITS CONTAINER SHARED ONE OBJECT NAME, so one
+    `border-bottom` rule drew a long line across the card AND a short one
+    under the heading text. Two widgets, one id, two lines.
+
+    The first witness for this was the colour-literal grep, which of course
+    said nothing about it -- the mutant SURVIVED and this check replaced it.
+    """
+    sheet = theme.qss()
+    head = re.search(r"(?m)^#cardhead\s*\{([^}]*)\}", sheet)
+    title = re.search(r"(?m)^#cardtitle\s*\{([^}]*)\}", sheet)
+    assert head and title, u"the card heading lost one of its two rules"
+    assert u"border-bottom" in head.group(1), \
+        u"the card lost the rule under its heading"
+    assert u"border" not in title.group(1).replace(u"border: 0", u""), \
+        u"the heading words carry a border of their own: %r" % title.group(1)
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    names = set(w.objectName() for w in window.findChildren(QLabel))
+    assert u"cardtitle" in names
+    #: [X] And the container must not be a QLabel wearing the same id.
+    assert not [w for w in window.findChildren(QLabel)
+                if w.objectName() == u"cardhead"]
+
+
+def test_the_switch_and_the_checkbox_are_different_widgets(qapp):
+    u"""A switch is on/off over time; a checkbox is on/off now. Same answer,
+    different gesture -- and neither may borrow the other's shape."""
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    assert window.findChildren(gui_app.Switch)
+    assert window.findChildren(gui_app.Check)
+    assert not issubclass(gui_app.Check, gui_app.Switch)
+
+
+def test_the_stylesheet_substitutes_every_token():
+    u"""[!] A `%(NAME)s` left in the sheet is a rule Qt silently discards."""
+    sheet = theme.qss()
+    assert u"%(" not in sheet
+    assert theme.ACCENT in sheet and theme.INK in sheet
+
+
+def test_a_styled_container_paints_its_own_background(qapp):
+    u"""[!] A plain `QWidget` IGNORES its stylesheet background. Without the
+    `PE_Widget` paintEvent every container rule is inert, and the symptom is
+    identical to a sheet that never loaded."""
+    assert "PE_Widget" in source("app.py")
+    window = make()
+    for name in (u"titlebar", u"footer", u"tabstrip"):
+        assert window.findChild(gui_app.Styled, name) is not None \
+            or window.findChildren(gui_app.Styled), name
+
+
+# ===========================================================================
+# branding -- [X] never raises
+# ===========================================================================
+
+def test_every_icon_size_the_window_claims_is_really_on_disk():
+    u"""[X] Only the sizes the window uses; the 1024 master stays out."""
+    assert branding.available_sizes() == theme.ICON_SIZES
+    for size in theme.ICON_SIZES:
+        assert os.path.isfile(branding.icon_path(size))
+
+
+def test_the_masters_are_not_in_the_package():
+    folder = branding.data_dir()
+    assert not os.path.isfile(os.path.join(folder, "hato-1024.png"))
+    assert not os.path.isfile(os.path.join(folder, "hato-512.png"))
+
+
+def test_the_path_resolves_off_the_package_not_the_repository(monkeypatch,
+                                                              tmp_path):
+    u"""[!] Three hosts disagree about where the package sits, and resolving
+    through the repository shipped a broken release on tsubasa once.
+
+    [!] AND THE CHECK HAS TO MOVE THE WORKING DIRECTORY. Asserting the answer
+    from the repo root passes for `os.getcwd()` too, because in a test run the
+    repo root IS the working directory -- so the check agreed with the defect.
+    A mutant that swapped the package for the cwd SURVIVED until this chdir
+    was added. The point of the rule is that the answer does not depend on
+    where somebody clicked, so the check has to click somewhere else.
+    """
+    import hato
+    expected = os.path.join(os.path.dirname(os.path.abspath(hato.__file__)),
+                            "data")
+    assert branding.data_dir() == expected
+    monkeypatch.chdir(str(tmp_path))
+    assert branding.data_dir() == expected, \
+        u"data_dir moved when the working directory did"
+    assert os.path.isfile(branding.icon_path(64))
+
+
+def test_branding_never_raises_when_the_folder_is_gone(qapp, monkeypatch):
+    u"""[X] A MISSING ICON IS A PLAINER WINDOW, not a reason the app will not
+    open.
+
+    [!] `qapp` IS LOAD-BEARING HERE AND WAS MISSING. Building a `QPixmap` with
+    no `QGuiApplication` alive kills the interpreter on Windows -- exit
+    0xC0000409, not an exception. It passed for weeks because some earlier
+    test in the file had always made the application first; the mutation
+    harness runs ONE node id alone and found it in the first pass.
+    """
+    monkeypatch.setattr(branding, "data_dir", lambda: "Z:\\nowhere")
+    assert branding.icon_path(64) is None
+    assert branding.ico_path() is None
+    assert branding.available_sizes() == ()
+    assert branding.best_size(40) is None
+    assert branding.mark_pixmap(40).isNull()
+    assert branding.app_icon() is not None
+
+
+def test_the_tray_icon_file_is_on_disk_and_carries_every_real_export():
+    u"""RUNBOOK 7f. The tray takes an `HICON`, and `LoadImageW` reads a `.ico`
+    in one call -- so one file has to carry every size the shell may ask for.
+
+    🚨 THE FIRST ONE HAD A SINGLE ENTRY AND NOTHING SAID SO. Pillow emits no
+    entry larger than the image it is saving, so building it from the 16px
+    export produced a valid, plausible, **one-entry** `.ico` -- no error, no
+    warning, six sizes missing. ⛔ The entry list alone would not have caught
+    the other half either: it cannot tell a real export from a downscale, and
+    this pack has no vector source, so a resampled 16 is mush where a drawn one
+    is legible. The pixels are what settle it.
+
+    ⚠ READ WITH `struct`, NOT WITH PILLOW. Pillow is BUILD tooling here -- it
+    is in no extra and no CI job installs it -- and `doctrine/release` is blunt
+    that *"a permanently-red check is one people learn to scroll past"*. The
+    ICO directory is a 6-byte header and a 16-byte entry each, so the count and
+    the declared sizes need no decoder at all.
+
+    ⚠ The pixel-identity half (that each entry IS the real export rather than a
+    downscale) was verified once, by hand, at build time and is recorded in
+    `branding.ico_path()`. ⛔ It is not asserted here, because asserting it
+    needs a decoder this suite must not depend on.
+    """
+    import struct
+
+    path = branding.ico_path()
+    assert path, u"hato/data/hato.ico is missing -- the tray has no icon"
+    with open(path, "rb") as handle:
+        blob = handle.read()
+    reserved, kind, count = struct.unpack_from("<HHH", blob, 0)
+    assert (reserved, kind) == (0, 1), u"%s is not an .ico" % path
+    sizes = []
+    for index in range(count):
+        width, height = struct.unpack_from("<BB", blob, 6 + index * 16)
+        sizes.append((width or 256, height or 256))   # 0 means 256 in an ICO
+    assert sorted(sizes) == [(s, s) for s in (16, 24, 32, 48, 64, 128, 256)], (
+        u"hato.ico carries %d entr(ies) %s. Built from the SMALLEST export it "
+        u"silently gets one, because no writer emits an entry larger than the "
+        u"image it was given -- base it on the largest and check the output."
+        % (count, sorted(sizes)))
+
+
+def test_a_mark_is_never_upscaled_from_a_smaller_export():
+    u"""Asked for 100 device pixels it answers 128, not 64."""
+    assert branding.best_size(40) == 48
+    assert branding.best_size(100) == 128
+    assert branding.best_size(16) == 16
+    assert branding.best_size(5000) == 256
+
+
+def test_the_window_really_gets_a_mark(qapp):
+    window = make()
+    pixmap = window.mark_label.pixmap()
+    assert pixmap is not None and not pixmap.isNull()
+
+
+# ===========================================================================
+# the title bar, the footer and the shell
+# ===========================================================================
+
+def test_the_tabs_are_in_sonics_priority_order(qapp):
+    u"""[X] RULED. *"the view should be in priority."*"""
+    window = make()
+    order = [b.text() for b in window.findChildren(gui_app.TabButton)]
+    assert order == [u"Subtitles", u"Needs you", u"Settings"]
+    assert list(gui_app.TABS) == [gui_app.TAB_SUBS, gui_app.TAB_PICK,
+                                 gui_app.TAB_SET]
+
+
+def test_the_title_line_derives_from_the_state(qapp):
+    window = make()
+    assert window.titlesub.text() == u"5 folders \u00b7 68 videos \u00b7 last run 03:00"
+    window.state.folders = window.state.folders[:1]
+    window.state.video_total = 1
+    window.render()
+    assert window.titlesub.text() == u"1 folder \u00b7 1 video \u00b7 last run 03:00"
+
+
+def test_run_now_is_in_the_title_bar_and_not_buried_in_settings(qapp):
+    u"""[*] A CONTROL, NOT A SETTING. *"If a decision's answer will change over
+    time, ship a control."* It replaced an option that did nothing."""
+    window = make()
+    titlebar = window.findChild(gui_app.Styled, u"titlebar")
+    assert u"Run now" in [b.text() for b in titlebar.findChildren(QPushButton)]
+
+
+def test_the_footer_carries_the_credit_and_the_cost(qapp):
+    window = make()
+    joined = u" ".join(gui_app.texts(window))
+    assert u"Created by SonicSandbox" in joined
+    assert u"GitHub" in joined
+    assert window.right_label.text() == u"6 API calls \u00b7 41.2 s"
+
+
+def test_the_api_cost_derives_from_the_run_object(qapp):
+    u"""*"a user who cannot see the cost cannot notice a runaway loop."*"""
+    window = make()
+    window.state.summary = summary(api_calls=1, seconds=3.0)
+    window.render()
+    assert window.right_label.text() == u"1 API call \u00b7 3.0 s"
+
+
+def test_the_live_dot_stops_when_the_run_does(qapp):
+    u"""[X] NO DECORATION THAT DOES NOT REPORT -- a ring pulsing over a
+    finished run says *working* about a thing that is not."""
+    window = make()
+    assert window.dot._anim.state() == window.dot._anim.State.Running
+    window.state.running = False
+    window.render()
+    assert window.dot._anim.state() != window.dot._anim.State.Running
+
+
+def test_switching_tabs_changes_what_is_shown(qapp):
+    window = make()
+    for tab in gui_app.TABS:
+        window.show_tab(tab)
+        assert window.body.currentWidget() is window.panes[tab]
+        assert window.tab_buttons[tab].property(u"selected") == u"true"
+
+
+def test_an_unknown_tab_name_changes_nothing(qapp):
+    window = make()
+    window.show_tab(u"nonsense")
+    assert window.state.tab == gui_app.TAB_SUBS
+
+
+# ===========================================================================
+# settings -- and [X] it writes through the CLI, never the file
+# ===========================================================================
+
+def test_every_settings_edit_goes_out_through_hato_config(qapp):
+    u"""[X] THE WINDOW NEVER EDITS `config.toml`. `hato/config.py` owns a
+    closed schema, and a second writer means two programs disagreeing about
+    one file."""
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    window._remove_folder(window.state.folders[0])
+    window._remove_skip(window.state.skip_folders[0])
+    window._toggle_recurse()
+    assert len(window.spawned) == 3
+    for argv in window.spawned:
+        assert u"config" in argv and u"--json" in argv
+    assert u"--remove-folder" in window.spawned[0]
+    assert u"--remove-skip" in window.spawned[1]
+
+
+def test_removing_a_folder_removes_it_from_the_list_too(qapp):
+    u"""⚠ SCOPED TO THE SETTINGS PANE, AND THAT IS THE POINT OF THE CHECK.
+
+    It used to walk the WHOLE window, which also contains the Subtitles rows
+    — and those legitimately name files inside the folder that was just
+    removed, because they are the last run's results. ⛔ It passed on Windows
+    only because those row labels are `Elide` widgets whose text was elided at
+    that font width; CI's first Linux run has a narrower default font, more
+    text fitted, the full path survived in `.text()`, and the check went red.
+    A check that holds because a font is wide enough is not checking anything.
+    """
+    window = make()
+    gone = window.state.folders[0]
+    window._remove_folder(gone)
+    assert gone not in window.state.folders
+    window.show_tab(gui_app.TAB_SET)
+    settings = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SET]))
+    assert gone not in settings, \
+        u"the folder is gone from state but still drawn in Settings"
+
+
+def test_the_schedule_is_a_field_not_a_hardcoded_hour(qapp):
+    u"""*"They need to be able to configure the computer timing."*"""
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    assert window.time_field.text() == u"03:00"
+    window.time_field.setText(u"04:30")
+    window._set_schedule()
+    assert window.state.schedule == u"04:30"
+    assert window.autotime.text() == u"04:30"
+    assert u"schedule=04:30" in window.spawned[0]
+
+
+def test_the_blacklist_offers_to_clean_itself(qapp):
+    u"""[*] hato CLEANS IT, NOT THE PERSON. *"it's likely they will not clean
+    it as videos get rotated from there."* If you can tell which entries are
+    dead, offering to remove them is the feature."""
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window))
+    assert u"2 of these are no longer on this machine" in joined
+    assert u"Remove those 2" in joined
+
+
+def test_a_rotated_out_row_is_dimmed_and_labelled_never_removed(qapp):
+    u"""[X] DEEMPHASISE, DON'T DELETE."""
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window))
+    assert u"Frieren S1 - 12.mkv" in joined
+    gone = [w for w in window.findChildren(gui_app.Elide)
+            if w.property(u"gone") == u"true"]
+    assert len(gone) == 2
+    assert all(w.font().strikeOut() for w in gone)
+
+
+def test_the_blacklist_carries_a_date_a_count_and_a_filter(qapp):
+    u"""*"ensure you have the day it was blacklisted and do what is possible
+    to make that length not a burden."*"""
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window))
+    assert u"4 videos" in joined
+    assert u"17 Sep" in joined
+    fields = [w for w in window.findChildren(QLineEdit)
+              if w.objectName() == u"filter"]
+    assert fields and fields[0].placeholderText()
+
+
+def test_the_key_is_only_ever_shown_as_a_hint(qapp):
+    u"""[X] `hato key --show` prints the last four characters and never more."""
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window))
+    assert u"set, ending JyQ" in joined
+    assert u"never in a config file" in joined
+
+
+def test_with_no_key_settings_says_what_would_fix_it(qapp):
+    window = make(key_hint=None)
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window))
+    assert u"Add a key" in joined
+    assert u"cannot fetch anything" in joined
+
+
+def test_the_resident_cost_is_stated_because_it_was_measured(qapp):
+    u"""[!] A NUMBER IN A UI IS A CLAIM. This line said *"~12 MB"* when nothing
+    had measured it."""
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window))
+    assert u"13 MB" in joined
+    assert u"13.4 MB resident" in joined
+
+
+# ===========================================================================
+# the run -- [X] and exit 1 is not an error
+# ===========================================================================
+
+def test_run_now_builds_the_argv_run_py_owns(qapp, monkeypatch):
+    u"""[X] `--json` IS NOT A DISPLAY CHOICE -- it is what gives the window an
+    outcome field to count instead of prose."""
+    window = make(running=False)
+    started = {}
+
+    def record(**kw):
+        started["argv"] = kw.get("argv")
+        return _NullRunner()
+
+    monkeypatch.setattr(gui_run, "Runner", record)
+    window.start_run()
+    assert started["argv"] == gui_run.argv_for(window.state.folders,
+                                               progress=True)
+    assert u"--json" in started["argv"]
+    assert u"--progress" in started["argv"]
+
+
+class _NullRunner(object):
+    def start(self):
+        return self
+
+    def drain(self):
+        return []
+
+    def finished(self):
+        return None
+
+
+def test_run_now_does_nothing_without_a_folder(qapp):
+    u"""[X] `argv_for` RAISES on an empty list, and a window that lets the
+    click through would show the traceback instead of the reason."""
+    window = make(folders=[], running=False)
+    assert window.start_run() is None
+    assert not window.state.running
+
+
+def test_a_second_run_now_while_one_is_going_does_nothing(qapp):
+    u"""[X] Two children writing the same folder is the one thing a run lock
+    exists to prevent, and the window must not be the thing that arms it."""
+    window = make(running=True)
+    assert window.start_run() is None
+    assert window.spawned == []
+
+
+def test_a_finished_run_with_exit_one_is_not_an_error(qapp):
+    u"""[!] EXIT 1 MEANS SOMETHING NEEDS A PICK -- the whole value
+    proposition. Only exit 2 means the command could not be run."""
+    window = make()
+    window.state.running = True
+    window._runner = _FinishedRunner(gui_run.EXIT_ATTENTION)
+    window._drain()
+    assert window.state.live == u"done"
+    assert not window.state.running
+
+
+def test_exit_two_says_it_could_not_run(qapp):
+    window = make()
+    window.state.running = True
+    window._runner = _FinishedRunner(gui_run.EXIT_CANNOT_RUN)
+    window._drain()
+    assert window.state.live == u"could not run"
+
+
+class _FinishedRunner(object):
+    def __init__(self, code):
+        self.code = code
+
+    def drain(self):
+        return []
+
+    def finished(self):
+        return gui_run.Run(self.code, [], {u"api_calls": 0}, [], u"")
+
+
+def test_progress_lines_reach_the_footer_sanitised(qapp):
+    window = make()
+    window._runner = _EventRunner([{u"type": u"progress",
+                                    u"name": u"the pair was REFUSED"}])
+    window._drain()
+    assert u"refus" not in window.state.live.lower()
+    assert u"refus" not in window.live_label.text().lower()
+
+
+def test_video_objects_off_the_wire_become_rows(qapp):
+    window = make(rows=[])
+    window._runner = _EventRunner([added(1), summary()])
+    window._drain()
+    assert len(window.state.rows) == 1
+    assert window.state.summary.get(u"api_calls") == 6
+
+
+class _EventRunner(object):
+    def __init__(self, events):
+        self.events = list(events)
+
+    def drain(self):
+        out, self.events = self.events, []
+        return out
+
+    def finished(self):
+        return None
+
+
+# ===========================================================================
+# the port itself
+# ===========================================================================
+
+def test_the_window_never_reimplements_what_run_py_owns():
+    u"""[X] No second argv builder, no second NDJSON parse, no second outcome
+    word. `run.py` owns all four and `app.py` calls it."""
+    text = source("app.py")
+    assert u"json.loads" not in text
+    assert u"subprocess.Popen" in text          # exactly one, in `_spawn`
+    assert text.count(u"subprocess.Popen") == 1
+    for owned in (u"argv_for_pair", u"argv_for_config", u"outcome_word",
+                  u"counts", u"match_percent"):
+        assert u"gui_run." + owned in text
+
+
+def test_importing_the_data_layer_still_costs_no_qt():
+    u"""[X] `hato.gui.run` must stay importable on a machine with no display,
+    so `hato/gui/__init__.py` may not import the window at module scope."""
+    with open(os.path.join(GUI_DIR, "__init__.py"), encoding="utf-8") as handle:
+        head = handle.read().split(u"def main")[0]
+    assert u"from hato.gui.app" not in head
+    assert u"PyQt6" not in source("run.py")
+    assert u"PyQt6" not in source("theme.py")
+
+
+def test_the_module_entry_point_exits_with_the_windows_code():
+    u"""[!] A frozen bundle that returns `None` exits 0 no matter what."""
+    text = source("__main__.py")
+    assert u"sys.exit(main())" in text
+
+
+def test_group_and_size_read_the_way_the_mock_shows_them():
+    assert gui_app.group_of(u"[Erai-raws] Re Zero - 54.ass") == u"Erai-raws"
+    assert gui_app.group_of(u"Re.Zero.S03E54.ja[cc].srt") == u"unknown group"
+    assert gui_app.kb(29696) == u"29 KB"
+    assert gui_app.kb(None) == u""
+    assert gui_app.kb(0) == u"0 KB"
+
+
+def test_a_long_filename_elides_rather_than_pushing_the_row_open(qapp):
+    u"""[!] QSS HAS NO `text-overflow`. Without `Elide` a 90-character release
+    name pushes the other columns out of the window -- the same class of fault
+    that once hid an episode number behind an overflowing chip."""
+    long_name = u"[SomeVeryLongReleaseGroupName] " + (u"x" * 120) + u".ass"
+    window = make(rows=[added(1, name=long_name)])
+    row = window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow)[0]
+    assert row.nm.text() == long_name
+    assert row.nm.width() <= gui_app.COL_NAME
+    assert row.nm.minimumSizeHint().width() == 0
+
+
+def test_the_content_column_is_capped_so_a_number_sits_beside_its_subject(qapp):
+    u"""[!] A DEFECT FOUND BY LOOKING: stretched across the full width, a
+    right-aligned number ended up ~900px from the text it described."""
+    assert gui_app.COL_NAME == 640
+    window = make(rows=[added(1)])
+    window.resize(1600, 700)
+    row = window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow)[0]
+    row.adjustSize()
+    assert row.nm.maximumWidth() <= gui_app.COL_NAME + 1
+
+
+def test_one_easing_curve_for_the_whole_window():
+    u"""[X] ONE accent, ONE curve, ONE distance. A second curve is the first
+    step towards effects."""
+    curve = gui_app.ease()
+    assert 0.0 < curve.valueForProgress(0.5) < 1.0
+    assert theme.EASE == ((0.2, 0.7), (0.3, 1.0))
+    assert source("app.py").count(u"addCubicBezierSegment") == 1
+
+
+# ===========================================================================
+# [!] THE THREE LAYOUT DEFECTS A HUNDRED STATE ASSERTIONS DID NOT SEE
+# ===========================================================================
+# Each of these shipped, passed every check that existed, and was caught by
+# opening a PNG. They are checks now so the next one is caught by the suite.
+
+def test_no_two_things_in_a_blacklist_row_are_drawn_on_top_of_each_other(qapp):
+    u"""[!] MEASURED, 2026-09-18: the note ran to x=630 inside a 576px row
+    while the date started at x=490, so *"a commentary track"*, *"17 Sep"* and
+    the remove button rendered as one unreadable smear.
+
+    The cause was a size policy: `Ignored` tells Qt the hint is irrelevant and
+    the widget may take whatever is going, so the eliding name claimed the row
+    and Qt had nothing left for its fixed-width siblings.
+    """
+    window = lay_out(make())
+    window.show_tab(gui_app.TAB_SET)
+    lay_out(window)
+    rows = [w for w in window.findChildren(gui_app.Styled)
+            if w.objectName() == u"blrow"]
+    assert rows, u"no blacklist rows were built"
+    for row in rows:
+        layout = row.layout()
+        boxes = [layout.itemAt(i).widget().geometry()
+                 for i in range(layout.count())
+                 if layout.itemAt(i).widget() is not None]
+        assert len(boxes) >= 3
+        for left, right in zip(boxes, boxes[1:]):
+            assert left.right() <= right.left(), \
+                u"two cells overlap: %s then %s" % (left.getRect(),
+                                                    right.getRect())
+        assert boxes[-1].right() <= row.width(), \
+            u"the last cell runs off the row"
+
+
+def test_an_explanatory_paragraph_wraps_instead_of_being_truncated(qapp):
+    u"""[!] MEASURED: *"...nothing sits running in the background. Each run
+    finds whatever is new."* rendered as *"...Each run finds"* and stopped --
+    no ellipsis, nothing to suggest anything was missing. Qt does not wrap a
+    label unless told to, and an unwrapped label does not overflow, it
+    silently truncates."""
+    window = lay_out(make())
+    window.show_tab(gui_app.TAB_SET)
+    lay_out(window)
+    long_ones = [w for w in window.findChildren(QLabel)
+                 if w.objectName() == u"hint" and len(w.text()) > 80]
+    assert long_ones, u"no paragraph-length hint was built"
+    for widget in long_ones:
+        assert widget.wordWrap(), \
+            u"this paragraph will be truncated: %r" % widget.text()[:60]
+        #: A wrapped label is taller than one line; an unwrapped one is not.
+        #
+        # 🚨 MEASURED AT A WIDTH THE TEXT CANNOT POSSIBLY FIT IN, not at the
+        # design column. CI found this on the first run that reached Linux:
+        # `heightForWidth(560)` returned 13 and one line IS 13, because the
+        # runner's default font is narrower than this machine's and the
+        # paragraph simply fitted. ⛔ The old assertion was really asking
+        # *"is this font wide enough"*, which is not the thing the check is
+        # named after -- and on a narrow font NOT wrapping is correct.
+        metrics = widget.fontMetrics()
+        natural = metrics.horizontalAdvance(widget.text())
+        narrow = max(120, natural // 3)
+        assert widget.heightForWidth(narrow) > metrics.height(), (
+            u"an 80+ character paragraph did not wrap even at %dpx, so it "
+            u"will be truncated rather than flowed: %r"
+            % (narrow, widget.text()[:60]))
+
+
+COL_HINT = 560
+
+
+def test_the_count_badge_does_not_sit_on_top_of_its_tab_label(qapp):
+    u"""[!] MEASURED: the tab read *"Needs yo(2)"* -- the badge was placed by
+    maths that assumed Qt centres the text-plus-badge group, when Qt centres
+    the TEXT. Every assertion about the count was green, because the count was
+    right."""
+    window = lay_out(make())
+    tab = window.tab_buttons[gui_app.TAB_PICK]
+    text_width = tab.fontMetrics().horizontalAdvance(tab.text())
+    text_right = (tab.width() - text_width) / 2.0 + text_width
+    assert tab.badge.x() >= text_right, \
+        u"the badge overlaps the label by %dpx" % (text_right - tab.badge.x())
+    assert tab.badge.x() + tab.badge.width() <= tab.width(), \
+        u"the badge runs off the tab"
+
+
+def test_a_hovered_control_answers_the_pointer(qapp):
+    u"""Sonic: *"When hovering over buttons, there is action."* [X] And nothing
+    that looks clickable may sit inert."""
+    window = make()
+    effect = window.run_now.graphicsEffect()
+    assert effect is not None
+    assert effect.blurRadius() == 0
+    #: A REAL `QEnterEvent` through Qt's own path -- a stand-in object would
+    #: prove only that the wrapper was called, not that Qt can deliver to it.
+    spot = QPointF(2.0, 2.0)
+    window.run_now.enterEvent(QEnterEvent(spot, spot, spot))
+    #: The glow is ANIMATED, so it is mid-flight here; what this pins is that
+    #: the hover reached the effect and gave it somewhere to go.
+    assert window.run_now.graphicsEffect() is effect
+    assert effect.color().alphaF() > 0
+
+
+def test_every_clickable_thing_has_a_pointer_cursor(qapp):
+    u"""[X] NOTHING THAT LOOKS CLICKABLE MAY SIT INERT -- and the cursor is
+    the cheapest promise the window makes."""
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    for widget in window.findChildren(gui_app.Clickable):
+        assert widget.cursor().shape() == Qt.CursorShape.PointingHandCursor
+    for widget in window.findChildren(QPushButton):
+        assert widget.cursor().shape() == Qt.CursorShape.PointingHandCursor

@@ -1,0 +1,24 @@
+{
+ "body_kept": true,
+ "bytes": 3837,
+ "captured_at": "2026-09-17T08:36:34+00:00",
+ "captured_by": "hato/0.1.0.dev0 (doctor)",
+ "final_url": "https://jimaku.cc/api/entries/search?query=Kamen+Rider+Decade&anime=false",
+ "method": "GET",
+ "note": "the retry with anime=false that finds it.",
+ "provenance": "hato doctor --capture (spec/RUNBOOK.md 0b). Real response bytes; never hand-edited -- re-capture instead (spec/07-test-plan.md).",
+ "response_headers": {
+  "access-control-allow-credentials": "true",
+  "content-encoding": "gzip",
+  "content-type": "application/json",
+  "date": "Thu, 17 Sep 2026 08:36:35 GMT",
+  "transfer-encoding": "chunked",
+  "vary": "origin, accept-encoding",
+  "x-ratelimit-limit": "25",
+  "x-ratelimit-remaining": "23",
+  "x-ratelimit-reset": "1789634200"
+ },
+ "sha256": "9fdeb926fbb1dda2d3bbafd009a63ee62dec704701cc65af1c50b04b0fcbf61a",
+ "status": 200,
+ "url": "https://jimaku.cc/api/entries/search?query=Kamen+Rider+Decade&anime=false"
+}

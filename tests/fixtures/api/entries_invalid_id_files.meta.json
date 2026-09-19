@@ -1,0 +1,24 @@
+{
+ "body_kept": true,
+ "bytes": 50,
+ "captured_at": "2026-09-17T08:36:39+00:00",
+ "captured_by": "hato/0.1.0.dev0 (doctor)",
+ "final_url": "https://jimaku.cc/api/entries/999999/files",
+ "method": "GET",
+ "note": "trap 4: what an invalid entry id returns through the API",
+ "provenance": "hato doctor --capture (spec/RUNBOOK.md 0b). Real response bytes; never hand-edited -- re-capture instead (spec/07-test-plan.md).",
+ "response_headers": {
+  "access-control-allow-credentials": "true",
+  "content-encoding": "gzip",
+  "content-type": "application/json",
+  "date": "Thu, 17 Sep 2026 08:36:40 GMT",
+  "transfer-encoding": "chunked",
+  "vary": "origin, accept-encoding",
+  "x-ratelimit-limit": "25",
+  "x-ratelimit-remaining": "22",
+  "x-ratelimit-reset": "1789634200"
+ },
+ "sha256": "2fb49149a08037e2cb013d3e0e794e321d4ec5bfc23651a96beddb558565847e",
+ "status": 404,
+ "url": "https://jimaku.cc/api/entries/999999/files"
+}

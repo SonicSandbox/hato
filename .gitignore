@@ -1,0 +1,114 @@
+# ---------------------------------------------------------------------------
+# run artefacts and caches
+# ---------------------------------------------------------------------------
+# `_runs/` is where run_tests.py writes every failing suite's FULL output,
+# named for the run, plus any diagnostic script a builder wrote. It is
+# regenerated on every run and must never be committed.
+_runs/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# The mutation engine's restore payloads and any half-written temp file. A run
+# killed between mutate and restore leaves one of these behind; committing it
+# would commit a deliberately broken source file.
+mutbak
+mutbak*
+*.mutbak
+*.tmp
+*.tmp-*
+
+# build output
+build/
+dist/
+*.egg-info/
+.eggs/
+*.whl
+*.tar.gz
+
+# environments
+.venv/
+venv/
+env/
+.python-version
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# MEDIA AND SUBTITLE CONTENT - NEVER, UNDER ANY PATH
+# ---------------------------------------------------------------------------
+# Two separate rules live here and only one of them is about disk space.
+#
+# 1. No real media in this workspace. The suites generate zero-byte stubs and
+#    build real videos in a temp dir (spec/07-test-plan.md).
+#
+# 2. No subtitle CONTENT, ever. jimaku's files carry no stated licence and are
+#    not ours to redistribute (LEDGER-HOT.md, THIRD_PARTY_LICENSES.md). hato
+#    downloads them to the user's own machine and mirrors nothing - and the
+#    quickest way to break that would be one stray `git add -A` from a folder
+#    holding a run's output. Extension rules, not path rules: a path rule only
+#    protects the directory somebody thought of.
+#
+# Nothing legitimate is blocked: every subtitle the suites touch is built in a
+# temp dir, and the committed API fixtures are .json metadata.
+*.mkv
+*.mp4
+*.m4v
+*.avi
+*.ts
+*.m2ts
+*.webm
+*.mov
+*.mka
+*.opus
+*.flac
+*.aac
+*.wav
+*.mp3
+*.srt
+*.ass
+*.ssa
+*.vtt
+*.sub
+*.idx
+*.sup
+*.7z
+*.zip
+*.rar
+*.tar
+*.tgz
+
+# ---------------------------------------------------------------------------
+# SECRETS - and this file is NOT what protects them
+# ---------------------------------------------------------------------------
+# The jimaku key lives at InfiniteVoid/keystore/hato-jimaku.txt, OUTSIDE every
+# repository BY CONSTRUCTION - not by a rule in a file anyone can edit, and
+# not by remembering. hato reads it at runtime from there or from
+# $HATO_JIMAKU_KEY, and prints at most its last four characters.
+#
+# These lines are a second net, and they would not have saved the reference
+# project's key: a `.gitignore` cannot un-commit anything, this workspace
+# auto-commits every few minutes, and git history has no undo.
+*.key
+*.pem
+.env
+.env.*
+secrets.json
+credentials.json
+key.txt
+hato-jimaku*.txt
+
+# ---------------------------------------------------------------------------
+# what is DELIBERATELY tracked, and must not be swept by a broader rule later
+# ---------------------------------------------------------------------------
+# hato.config.json  - the SOURCE TREE's config. Committed, carries no secret,
+#                     and never ships in the wheel (pyproject.toml explains).
+# hato-run.cmd      - the Windows launcher. CRLF, see .gitattributes.
+# tests/fixtures/   - recorded API response metadata, byte-exact.

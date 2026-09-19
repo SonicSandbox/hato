@@ -1,0 +1,361 @@
+name: release
+
+# ===========================================================================
+# BUILDS AND AUDITS the release artifacts on a `v*` tag. Uploads NOTHING.
+# ===========================================================================
+#
+# 🚨 RULED BY SONIC 2026-09-17: NO PyPI. *"we don't need the pypi… it's mainly
+# just a github usage that will need the gui for an actual github release"*. So
+# there is no publish job, no token, no `id-token: write` and no `pypi`
+# environment anywhere in this repository -- see the note where the publish job
+# used to be. ⛔ Nothing here can upload; the irreversible half is absent by
+# construction rather than gated by an `if`.
+#
+# ⭐ NO SECRET ANYWHERE, AND NOTHING TO AUTHENTICATE. `github.token` is minted
+# per run for the CI-verdict read, and `tests/test_ci_scripts.py` asserts that
+# no workflow in this repository reads a `secrets.*` value.
+#
+# ⚠ THE DISTRIBUTION NAME AND THE IMPORT NAME ARE BOTH `hato`. ⛔ PITFALL P1: the sibling project's
+# rename reached its README and this file's own header and NEVER REACHED
+# `[project] name`; the install failed with "inconsistent name: expected
+# 'tsubasa-sync', but metadata has 'tsubasa'", and it was found BY CHANCE. So
+# the name is read back out of the built wheel's `METADATA` below and asserted
+# against the literal string, in addition to `audit-wheel`'s own claim.
+#
+# ⛔ A GREEN RELEASE JOB IS A CLAIM ABOUT THE WORKFLOW, NOT ABOUT THE ARTIFACT.
+# The post-publish verification -- a fresh venv outside every checkout,
+# `pip install "hato==<version>"`, the CLI on real media -- is in
+# `spec/RUNBOOK.md` Step 6 and it is a person's job. A version number is burned
+# for good: a release can be yanked or deleted, never re-uploaded.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  # =========================================================================
+  # ⭐ CI GREEN ON THIS EXACT COMMIT, AS A JOB IN THE GRAPH
+  # =========================================================================
+  #
+  # This workflow deliberately does NOT re-run the suite, the three-OS matrix,
+  # the examples or the degradation paths. It trusts `ci.yml` on the same
+  # commit -- and the process doc's note on the sibling project's version reads:
+  #
+  #   "⚠ It does not run the examples. It trusts `ci.yml` on the same commit --
+  #    so CI green on the tagged commit is a PRECONDITION, not a formality."
+  #
+  # ⛔ There, that precondition was a tick-box in a checklist ("CI green on that
+  # exact commit -- read per step, not per job"). A checklist item is a thing
+  # somebody remembers. This is a job, `publish` needs it, and a tag whose
+  # commit has no green `tests` run CANNOT publish.
+  #
+  # ⭐ AND IT IS NOT A DEPENDENCY OF `build`. A red CI must not stop you
+  # AUDITING the artifact -- that is exactly when you most want the audit. It
+  # stops the upload and only the upload.
+  ci_green:
+    name: the tagged commit's CI is green
+    runs-on: ubuntu-latest
+    permissions:
+      # ⛔ Read the Actions API for THIS repository's own runs. No secret:
+      # `github.token` is minted per run.
+      actions: read
+    steps:
+      # ⭐ The checkout is for `.github/scripts/ci_verdict.py` and nothing else.
+      # ⛔ The verdict is not parsed in the shell: reading JSON through `jq` or
+      # `grep` inside a `while` loop is the quote-dense shell work that has cost
+      # this project twelve consecutive failures in one session, and a
+      # mis-parsed verdict here reads as "CI is green".
+      - uses: actions/checkout@v5
+
+      - name: A successful `tests` run must exist for this commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          # ⛔ HARD on a tag, advisory on a manual run. A `workflow_dispatch`
+          # exists to build and audit; blocking that on CI would make the
+          # diagnostic unavailable in the one situation it is for.
+          HARD: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          echo "commit $SHA, hard=$HARD"
+          # ⚠ UP TO TEN MINUTES. A tag pushed seconds after its branch finds
+          # `tests` still running, and "not finished" must not read as "not
+          # green". ⛔ No pipe anywhere in this block (`doctrine/release`).
+          ATTEMPT=0
+          while [ "$ATTEMPT" -lt 20 ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=100" \
+              > _ci_runs.json || echo '{}' > _ci_runs.json
+            VERDICT=$(python .github/scripts/ci_verdict.py _ci_runs.json)
+            echo "attempt $ATTEMPT: $VERDICT"
+            case "$VERDICT" in
+              success*) echo "$VERDICT"; exit 0 ;;
+              pending*) sleep 30 ;;
+              *)
+                if [ "$HARD" = "1" ]; then
+                  echo "::error title=CI is not green on the tagged commit::$VERDICT -- release.yml does not re-run the suite, the three-OS matrix, the examples or the degradation paths, so a green tests run on THIS commit is the only evidence they passed. Push the branch, let tests go green, then tag."
+                  exit 1
+                fi
+                echo "::warning title=CI is not green on this commit::$VERDICT -- this is a manual run, so it is allowed to build and audit. A tag would be refused."
+                exit 0 ;;
+            esac
+          done
+          if [ "$HARD" = "1" ]; then
+            echo "::error title=CI never finished::no completed tests run for $SHA after 10 minutes. Wait for it and re-run this job."
+            exit 1
+          fi
+          echo "::warning title=CI never finished::no completed tests run for $SHA after 10 minutes; allowed because this is a manual run."
+
+  # =========================================================================
+  # BUILD AND AUDIT. Every claim is made while it is still cheap to be wrong.
+  # =========================================================================
+  build:
+    name: build and audit the artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # ⭐ THE VERSION STAMP IS A PRECONDITION OF STAGING, NOT A STEP SOMEBODY
+      # REMEMBERS -- and it runs BEFORE the build so a stale version cannot
+      # physically produce an artifact. `doctrine/release`:
+      #
+      #   "The stamper EXISTED and was bypassed with a hand-written edit hours
+      #    after it was built, precisely because nothing forced it. Wire
+      #    `--check` in front of the upload and a stale version CANNOT
+      #    physically ship."
+      #
+      # ⚠ Hard on a tag only. `stamp --check` compares a recorded content hash
+      # against the tree, so it is red by design on any commit after the stamp
+      # -- which is every commit a manual run is likely to be pointed at.
+      - name: The stamp must not have drifted
+        shell: bash
+        env:
+          HARD: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          if python -m hato.dev stamp --check; then
+            echo "the stamp holds"
+          else
+            if [ "$HARD" = "1" ]; then
+              # ⛔ NO BACKTICKS IN THIS MESSAGE. Inside double quotes bash reads
+              # a backtick as command substitution, so a prose mention of the
+              # command would RE-RUN the command that just failed.
+              echo "::error title=stale version stamp::stamp --check failed on a tagged commit. Run 'python -m hato.dev stamp --release X.Y.Z', commit, and re-tag. doctrine/release: wire --check in front of the upload and a stale version cannot physically ship."
+              exit 1
+            fi
+            echo "::warning title=stamp has drifted::allowed on a manual run; a tag would be refused."
+          fi
+
+      # ⚠ PITFALL P24: the build frontend is not part of Python, and it goes in
+      # a venv of its own. The wheel is then tested in a SECOND, clean venv --
+      # never the one that built it.
+      - name: Build sdist and wheel, from a venv of their own
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$HOME/venv-build"
+          "$HOME/venv-build/bin/python" -m pip install --upgrade pip build twine
+          "$HOME/venv-build/bin/python" -m build
+          ls -la dist/
+
+      - name: Exactly one wheel and one sdist
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEELS=$(ls -1 dist/*.whl | wc -l)
+          SDISTS=$(ls -1 dist/*.tar.gz | wc -l)
+          echo "wheels=$WHEELS sdists=$SDISTS"
+          test "$WHEELS" -eq 1 || {
+            echo "::error title=ambiguous wheel::$WHEELS wheels in dist/; a glob would pick one SILENTLY and that is the one this release would audit"
+            exit 1; }
+          test "$SDISTS" -eq 1 || {
+            echo "::error title=no sdist::$SDISTS sdists in dist/; GPL-3.0 requires the source be available and the repo's tarball is it"
+            exit 1; }
+
+      # ⭐ THE RELEASE TOOLING IS INVOKED, NEVER RE-AUTHORED PER PROJECT
+      # (`doctrine/release`). `spec/RUNBOOK.md` Step 6 is the authority for
+      # these four invocations.
+      - name: Audit the wheel's manifest, claim by claim
+        shell: bash
+        run: python -m hato.dev audit-wheel dist/*.whl
+
+      - name: METADATA must say hato, and the version the package says
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - dist/*.whl <<'PY'
+          import email, sys, zipfile
+
+          wheel = sys.argv[1]
+          zf = zipfile.ZipFile(wheel)
+          meta = [n for n in zf.namelist() if n.endswith(".dist-info/METADATA")]
+          if len(meta) != 1:
+              sys.exit("::error title=wheel metadata::%d METADATA files in %s"
+                       % (len(meta), wheel))
+          headers = email.message_from_bytes(zf.read(meta[0]))
+          name, version = headers["Name"], headers["Version"]
+          print("wheel   : %s" % wheel)
+          print("Name    : %r" % name)
+          print("Version : %r" % version)
+          if name != "hato":
+              sys.exit("::error title=wrong distribution name::the wheel is "
+                       "named %r, not 'hato'. PyPI would refuse the upload, "
+                       "and the tag would be burned pointing at nothing "
+                       "(pitfall P1)." % name)
+          sys.path.insert(0, ".")
+          import hato
+          if version != hato.__version__:
+              sys.exit("::error title=version disagreement::the wheel says %r "
+                       "and hato.__version__ says %r. The wheel is what users "
+                       "get." % (version, hato.__version__))
+          print("agrees with hato.__version__")
+          PY
+
+      # ⭐ NEVER DONE IN THE SIBLING PROJECT AND LISTED AS NOT YET PROVEN. It is
+      # what catches a PyPI page that will not render -- and the README IS the
+      # project page, frozen per version.
+      - name: twine check
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$HOME/venv-build/bin/python" -m twine check dist/*
+
+      # ⛔ `spec/10-deployment.md` §What is project-specific about this release,
+      # items 1 and 4: no secret ships, and no third-party subtitle BODY ships.
+      # Both are irreversible once uploaded.
+      # ⚠ `--allow-no-key` for the same reason as in `ci.yml`, and the same
+      # caveat: no key exists on a runner, so `scan-secrets` cannot search the
+      # artifact FOR it and refuses to exit 0 rather than pass a scan it did not
+      # perform. The shape half runs here; the key-bytes half is made on the
+      # machine that publishes, by `packaging/sync_from_vault.py`, before a push.
+      # ⛔ Do not drop the flag to "make it strict" -- that does not make the
+      # claim, it just makes the job red.
+      - name: No secret, and no third-party subtitle content
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m hato.dev scan-secrets dist/ --allow-no-key
+          python -m hato.dev scan-content dist/
+
+      # =====================================================================
+      # 🚨 THE INSTALLED WHEEL, DRIVEN FROM OUTSIDE EVERY CHECKOUT -- P6
+      # =====================================================================
+      # This is the check whose absence published a broken 0.1.0 in the sibling
+      # project. ⛔ Not `--version`: this drives `config.load()` and every
+      # cache path, with no `HATO_CACHE` and no `HATO_CONFIG`, and it walks
+      # every parent of the working directory AND of the installed package.
+      - name: Install the wheel in a clean venv and drive it from outside the tree
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          python -m venv "$HOME/venv-test"
+          "$HOME/venv-test/bin/python" -m pip install --upgrade pip
+          "$HOME/venv-test/bin/python" -m pip install dist/*.whl
+          rm -rf /tmp/outside && mkdir -p /tmp/outside
+          cd /tmp/outside
+          export PATH="$HOME/venv-test/bin:$PATH"
+          unset PYTHONPATH HATO_CACHE HATO_CONFIG HATO_KEYFILE HATO_JIMAKU_KEY
+          "$HOME/venv-test/bin/python" \
+            "$GITHUB_WORKSPACE/.github/scripts/outside_checkout.py" \
+            --forbid-under "$GITHUB_WORKSPACE"
+
+      - name: The release tooling's own clean-venv install check
+        shell: bash
+        run: python -m hato.dev verify-install --no-unrar
+
+      # ⚠ THE TAG MUST MATCH THE VERSION IN THE PACKAGE. Publishing v0.2.0 from
+      # a tree that says 0.1.0 produces a release nobody can reason about, and
+      # `spec/10-deployment.md` rests a release proof on the artifact's version
+      # equalling the local one.
+      - name: Tag and package version must agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(python -c "import sys; sys.path.insert(0, '.'); import hato; print(hato.__version__)")
+          echo "tag=$TAG package=$PKG"
+          test "$TAG" = "$PKG" || {
+            echo "::error title=tag does not match the package::the tag says $TAG and hato.__version__ says $PKG"
+            exit 1; }
+
+      - name: Name the failure, for a reader with no credentials
+        if: failure()
+        shell: bash
+        run: |
+          echo "::error title=release build failed::the stamp gate, the build, the wheel audit, the METADATA check, twine, the secret/content scans, the outside-the-checkout guard, verify-install or the tag/version agreement. Each prints its own ::error:: line above."
+          exit 1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  # =========================================================================
+  # ⭐ PUBLISH -- AND IT CANNOT RUN WITHOUT A `v*` TAG
+  # =========================================================================
+  #
+  # 🚨 THIS RESOLVES OPEN QUESTION 6 OF THE PROCESS DOC, which reads:
+  #
+  #   "⛔ `workflow_dispatch` runs `publish` too, and SKIPS the tag/version
+  #    check. A manual run publishes whatever `__version__` the tree holds,
+  #    untagged (read from the file; never run). Never run it by hand."
+  #
+  # "Never run it by hand" is a rule in a comment, and the sibling project's
+  # `release.yml` carried exactly that arrangement: a `workflow_dispatch` there
+  # would have uploaded a dev version to PyPI, untagged, burning that version
+  # number for ever. ⛔ A version number cannot be re-used, so the cost of the
+  # accident is permanent and the fix is one line.
+  #
+  # ⭐ THE FIX: `if: startsWith(github.ref, 'refs/tags/v')`. A manual run now
+  # builds, audits, stamps, scans, installs the wheel and drives it outside the
+  # checkout -- everything useful -- and the publish job SKIPS. Nothing about
+  # the audit is lost and the irreversible half is unreachable.
+  #
+  # ⚠ Both guards are kept, because they answer different questions: this `if`
+  # asks "is this a release at all", and `build`'s tag/version step asks "is
+  # this the version it claims to be".
+  # 🚨 THERE IS DELIBERATELY NO PUBLISH JOB. RULED BY SONIC, 2026-09-17:
+  #
+  #   "we don't need the pypi. There's not really a reason to build in an import
+  #    ability right now, it's mainly just a github usage that will need the gui
+  #    for an actual github release"
+  #
+  # ⛔ So nothing in this repository uploads anywhere. This workflow BUILDS and
+  # AUDITS -- the stamp gate, the wheel manifest, METADATA, twine, the secret
+  # and subtitle-content scans, the installed wheel driven from outside every
+  # checkout, and tag/version agreement -- and then stops, leaving the artifacts
+  # as a downloadable run artifact.
+  #
+  # ⭐ THE AUDIT IS WHY THIS FILE SURVIVES THE DECISION. Every claim it makes is
+  # about the artifact a person would attach to a GitHub release, and the one it
+  # exists for -- P6, the installed package driven from outside the tree -- is
+  # what shipped the sibling project's 0.1.0 broken for every installed user. It
+  # is worth running whether or not anything is uploaded.
+  #
+  # ⛔ AND THE IRREVERSIBLE HALF IS NOW STRUCTURALLY ABSENT, not merely gated.
+  # A `workflow_dispatch` cannot publish because there is nothing to publish
+  # with; no `id-token: write` is granted anywhere in this repository; and no
+  # `pypi` environment is referenced. Re-adding it is a deliberate edit that
+  # needs Sonic's go and a PyPI pending-publisher form that does not exist yet.
+  #
+  # ▶ WHEN A REAL GITHUB RELEASE HAPPENS -- after the GUI ships, which is the
+  # thing Sonic named as its precondition -- the job to add here attaches
+  # `dist/` and the GUI build to a `softprops/action-gh-release` step. It does
+  # NOT need PyPI, a token, or an environment. Keep `needs: [build, ci_green]`.

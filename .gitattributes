@@ -1,0 +1,82 @@
+# ===========================================================================
+# WHAT MUST NOT BE REWRITTEN - AND DELIBERATELY NOTHING ELSE
+# ===========================================================================
+#
+# Reference: `Workshop/tsubasa-git/.gitattributes`, which opens with
+# `* text=auto eol=lf` because that project round-trips subtitle BYTES and 66%
+# of the real corpus is CRLF.
+#
+# 🚨 THAT LINE WAS WRITTEN HERE FIRST AND THEN MEASURED, AND THE MEASUREMENT
+# TOOK IT OUT AGAIN. Twelve files in this tree are CRLF today -- eight source
+# modules including hato/pipeline.py (1,499 lines), hato/client.py,
+# hato/doctor.py, hato/episodes.py and hato/report.py, plus three test files
+# and LEDGER.md. `text=auto` normalises line endings in the INDEX, so the next
+# `git add` would have produced a whole-file diff on every one of them, while
+# two other builders were editing this tree and the workspace auto-commits
+# every few minutes. A cosmetic rule would have collided with live work.
+#
+# Normalising this tree's line endings is a legitimate one-shot job. It is not
+# a thing to start during a parallel build, and it is not this file's job.
+# So: there is NO blanket rule. Every line below protects a specific file
+# whose BYTES OR ENDINGS ARE PART OF WHAT IT IS.
+
+# ---------------------------------------------------------------------------
+# 1. THE WINDOWS LAUNCHER MUST BE CRLF ON EVERY CHECKOUT
+# ---------------------------------------------------------------------------
+# `hato-run.cmd` is 8,990 bytes with 187 CRLF endings - measured, not assumed.
+# It is the only user-facing artifact that is not a Python entry point:
+# double-clicked, dragged onto, and what Task Scheduler runs
+# (spec/10-deployment.md). cmd.exe is only MOSTLY tolerant of LF endings, and
+# the place that would surface is the scheduled run - the one nobody watches.
+#
+# `text eol=crlf` rather than `-text` on purpose: it guarantees CRLF on every
+# checkout, including one made on Linux by an editor that saves LF. It costs a
+# one-time index rewrite of this single file, which nothing is editing (RUNBOOK
+# step 5c is done). One file is a cost worth paying; twelve was not.
+*.cmd       text eol=crlf
+
+# ---------------------------------------------------------------------------
+# 2. THE RECORDED API FIXTURES ARE BYTE-EXACT, AND A HASH SAYS SO
+# ---------------------------------------------------------------------------
+# Every capture under `tests/fixtures/` is the response body BYTE FOR BYTE,
+# beside a `<stem>.meta.json` recording the date, URL, status, response
+# headers and the body's sha256 - and `test_doctor.py` fails when a body no
+# longer matches its recorded hash (spec/07-test-plan.md).
+#
+# Measured today: every body is single-line JSON, so a conversion would be a
+# no-op RIGHT NOW. That is luck, not protection - `hato doctor --capture`
+# writes whatever jimaku sends, and the first multi-line body committed
+# unprotected would fail its own hash check on another platform, for a reason
+# no assertion names.
+#
+# `-text` rather than `binary`: no conversion either way, but the diff stays
+# readable, because re-capturing a fixture is a reviewable event.
+tests/fixtures/**   -text
+
+# ---------------------------------------------------------------------------
+# 3. NO SUBTITLE FILE CAN BE COMMITTED HERE - THIS IS THE SECOND NET
+# ---------------------------------------------------------------------------
+# `.gitignore` blocks these outright: subtitle content carries no stated
+# licence and is not ours to redistribute, and every subtitle the suites touch
+# is built in a temp dir. These lines exist only so a deliberate force-add
+# cannot ALSO silently rewrite the bytes of the thing being added.
+*.srt       -text
+*.ass       -text
+*.ssa       -text
+*.vtt       -text
+*.sub       -text
+*.idx       -text
+
+# ---------------------------------------------------------------------------
+# THE LICENCE IS A FETCHED CANONICAL FILE, NOT OURS TO REFLOW
+# ---------------------------------------------------------------------------
+# 35,149 bytes, sha256
+# 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986, taken
+# straight from GitHub's licences API and byte-identical to the engine's copy.
+# Marked so that hash stays checkable by anyone who clones this.
+LICENSE     -text
+
+# ---------------------------------------------------------------------------
+# GitHub language statistics - this is a Python project, not a docs project
+# ---------------------------------------------------------------------------
+spec/*.md   linguist-documentation

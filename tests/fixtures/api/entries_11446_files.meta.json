@@ -1,0 +1,24 @@
+{
+ "body_kept": true,
+ "bytes": 37337,
+ "captured_at": "2026-09-17T08:36:29+00:00",
+ "captured_by": "hato/0.1.0.dev0 (doctor)",
+ "final_url": "https://jimaku.cc/api/entries/11446/files",
+ "method": "GET",
+ "note": "THE CROWN JEWEL: absolute+seasonal numbering mixed, several release groups, the [CHS, JPN]/[JPN] pairs. No episode= param.",
+ "provenance": "hato doctor --capture (spec/RUNBOOK.md 0b). Real response bytes; never hand-edited -- re-capture instead (spec/07-test-plan.md).",
+ "response_headers": {
+  "access-control-allow-credentials": "true",
+  "content-encoding": "gzip",
+  "content-type": "application/json",
+  "date": "Thu, 17 Sep 2026 08:36:29 GMT",
+  "transfer-encoding": "chunked",
+  "vary": "origin, accept-encoding",
+  "x-ratelimit-limit": "25",
+  "x-ratelimit-remaining": "24",
+  "x-ratelimit-reset": "1789634200"
+ },
+ "sha256": "7bdd849499483e9c5880407c7714e8e9aedf93340fac9a0adb69e1bd9a938f6e",
+ "status": 200,
+ "url": "https://jimaku.cc/api/entries/11446/files"
+}

@@ -1,0 +1,263 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+# ===========================================================================
+# EVERY FIELD BELOW IS A PUBLISHED CLAIM, AND UPLOADED METADATA CANNOT BE
+# EDITED. A wrong value stays on that version for ever.
+# tests/test_packaging.py asserts each one; a comment here would not have
+# caught any of the five packaging defects the reference project shipped.
+# ===========================================================================
+
+[project]
+# The DISTRIBUTION name. Verified free against the PyPI JSON on 2026-09-17:
+# https://pypi.org/pypi/hato/json answered 404. Here it is also the import
+# name, which is not true of the engine below.
+name = "hato"
+
+# READ FROM hato/__init__.py, never written twice. Two places holding one
+# version is one you can bump and leave stale, and the release proof rests on
+# the installed artifact's version equalling the stamped one. RUNBOOK step 6
+# stamps it from a content hash; nothing hand-bumps it.
+dynamic = ["version"]
+
+description = "Fetches Japanese subtitles from jimaku.cc for a folder of videos and has tsubasa retime them to match"
+
+# 🚨 THE README IS THE PROJECT PAGE, AND IT IS FROZEN PER PUBLISHED VERSION.
+# Declared because README.md exists; an absent field means a BLANK page. The
+# reference project's 0.1.0 and 0.1.1 pages tell readers to install from a git
+# URL and never name the package at all (pitfall P5).
+# ⚠ MUST LIVE IN [project]. Written first into the block after
+# [project.scripts], where TOML read it as a console script named "readme" --
+# `test_every_declared_script_target_IMPORTS_and_has_its_attribute` caught it
+# in one line: "readme (scripts) points at {'file': 'README.md', ...}, which
+# has no 'module:attr' colon". A table's contents are decided by POSITION.
+readme = { file = "README.md", content-type = "text/markdown" }
+
+# A FLOOR THIS MACHINE ACTUALLY RUNS. Python 3.10.0, measured 2026-09-17, and
+# hato/config.py branches on exactly this boundary for its TOML reader.
+# The top end is deliberately open and that IS a claim about every future
+# Python; nothing has run one yet, so no classifier below claims one.
+requires-python = ">=3.10"
+
+# THE TABLE FORM, NOT THE PEP 639 STRING. spec/10-deployment.md's snippet says
+# license = "GPL-3.0-or-later"; MEASURED 2026-09-17 on setuptools 67.6.0, the
+# version installed here, that form is rejected outright:
+#   ValueError: invalid pyproject.toml config: `project.license`
+# The string form needs setuptools 77 or newer. The table form validates on
+# both, and matches the engine's own published metadata.
+license = { text = "GPL-3.0-or-later" }
+
+authors = [{ name = "Sonic" }]
+keywords = ["subtitles", "subtitle-download", "subtitle-sync", "anime", "japanese", "jimaku"]
+
+classifiers = [
+    # The launch scope is complete and was exercised end to end on real media
+    # and from the Windows scheduler (RUNBOOK 5c) -- but nobody has yet
+    # installed it from a package.
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    # ONE Python version, because ONE Python has ever run this. 3.11 to 3.13
+    # are not claimed until a run proves them: the reference project shipped
+    # a range nothing had executed, and that is recorded as pitfall P3.
+    # There is no Operating System classifier for the same reason -- only
+    # Windows 10 has run it, and OS Independent would claim two more.
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Text Processing",
+]
+
+# ===========================================================================
+# DEPENDENCIES -- DERIVED FROM THE SOURCE, NOT FROM THE SPEC'S LIST
+# ===========================================================================
+#
+# spec/01-scope.md's list was written before the code and is wrong in three
+# ways. The real set comes from walking every module under hato/ with ast:
+#
+#   requests   client.py, kitsu.py      module top level, UNGUARDED  -> hard
+#   tsubasa    5 modules top level      UNGUARDED                    -> hard
+#   tomli      config.py                below Python 3.11 only       -> hard, marked
+#   py7zr      archives.py, doctor.py   inside try/except ImportError -> extra
+#   rarfile    archives.py, doctor.py   inside try/except ImportError -> extra
+#
+# The spec says "httpx or requests -- builder's choice"; the client that got
+# built imports requests, so requests is what is declared. It also lists
+# anitopy and guessit as hato's own dependencies: NOTHING under hato/ imports
+# either, because LEDGER-HOT.md forbids a second filename parser in hato --
+# the parser is the engine's. They arrive through the engine's own extra,
+# below, which is the only truthful way to declare them.
+dependencies = [
+    # THE DISTRIBUTION IS tsubasa-sync; THE IMPORT STAYS tsubasa. The other
+    # name on PyPI belongs to an unrelated AI-personas framework, so a
+    # dependency on it would install somebody else's package.
+    #
+    # 🚨 RAISED TO 0.1.6 BY SONIC, 2026-09-18. Read this before "correcting" it
+    # back, because the two numbers below mean different things:
+    #
+    #   0.1.5  the oldest release that WORKS -- the first carrying the English
+    #          display-name reader hato's present-check relies on
+    #          (spec/06-edge-cases.md section 6)
+    #   0.1.6  the latest release, and what Sonic ruled the floor should be
+    #
+    # ⚠ So this floor is a POLICY, not a capability measurement: hato does not
+    # call anything 0.1.6 introduced. It tracks the engine's current release
+    # rather than its oldest compatible one, which is defensible here because
+    # both projects are Sonic's and hato ships clone-and-run -- the dev checkout
+    # is already 0.1.6, so nothing is being asked for that is not present.
+    # ⛔ The cost, stated so it is not rediscovered: every future tsubasa release
+    # drifts this line, and a floor at latest refuses an install for a version
+    # that would in fact work.
+    #
+    # Verified against the index 2026-09-18: 0.1.0-0.1.6 published, latest
+    # 0.1.6, only 0.1.0 yanked, requires-python >=3.10.
+    #
+    # The parsing extra is how spec/01-scope.md's ratified "anitopy primary,
+    # guessit fallback" is honoured now that the parser lives in the engine.
+    # The same JSON reports provides_extra parsing, trash, gui, vad, all, and
+    # requires_dist anitopy>=2.1 and guessit>=3.4 for parsing. Their notices
+    # ship in THIRD_PARTY_LICENSES.md, which both licences require.
+    "tsubasa-sync[parsing]>=0.1.6",
+
+    # Built and tested against 2.28.2. The floor is REASONED rather than
+    # measured, and says so: the four names hato uses -- Session,
+    # adapters.BaseAdapter, auth.AuthBase, structures.CaseInsensitiveDict --
+    # have been stable across the whole 2.x line.
+    "requests>=2.25",
+
+    # tomllib is stdlib from 3.11; below that the same read goes through tomli.
+    # hato/config.py holds exactly this branch, and 1.1 is the release whose
+    # load() takes a binary file object. Installed here: 2.4.1.
+    "tomli>=1.1; python_version < '3.11'",
+]
+
+# ===========================================================================
+# OPTIONAL -- REACHED THROUGH A GUARDED LAZY IMPORT, ABSENT IS A NAMED SKIP
+# ===========================================================================
+# hato/archives.py imports both inside try/except ImportError and raises
+# ArchiveUnsupported with a sentence naming the missing tool, so a .7z or .rar
+# candidate is skipped rather than crashing the run -- and archive support is
+# off by default anyway (spec/01-scope.md, launch item 8).
+#
+# .rar ALSO needs an external unrar binary, which no wheel can supply:
+# rarfile.tool_setup() is called first precisely so no tool is a skip whatever
+# the bytes hold.
+[project.optional-dependencies]
+# Floors: py7zr at the one version proven here, because the stall guard in
+# archives.py reaches inside py7zr for worker.decompress and FAILS CLOSED
+# without it -- an older release is not something this can claim.
+# rarfile at 4.0, the release that introduced tool_setup(); installed 4.5.
+archives = ["py7zr>=1.1.3", "rarfile>=4.0"]
+# ⭐ THE WINDOW IS AN EXTRA, NOT A DEPENDENCY (RUNBOOK 7c). hato's whole job is
+# done by the CLI, and Qt is ~70 MB; making every command-line user install a
+# toolkit to fetch subtitles would be the tail wagging the dog. `hato.gui` is
+# reached only through `hato.gui.main()`, which imports it lazily and turns an
+# absent Qt into an instruction naming this extra rather than a traceback --
+# doctrine/architecture's *instruction, not refusal*.
+# ⚠ THE FLOOR IS A CLAIM ABOUT THE API, NOT A PROVEN VERSION. Only **6.11.0**
+# has been run here. 6.5 is named because nothing in the window is newer than
+# that, and ⛔ an older release is not something this can assert.
+gui = ["PyQt6>=6.5"]
+
+[project.scripts]
+# An entry point is only a string, and building never imports it -- the
+# reference project shipped one pointing at a module that did not exist
+# (pitfall P4). tests/test_packaging.py imports every target declared here and
+# asserts the named attribute is callable.
+hato = "hato.cli:main"
+
+# ⭐ REAL URLS, added 2026-09-17 once the repository actually existed. The owner
+# segment was VERIFIED, not assumed: `ssh -T` with hato's own deploy key answers
+# "Hi SonicSandbox/hato!", which is the repo the key is scoped to.
+# ⛔ PITFALL P2: the sibling project's first pyproject.toml carried a GitHub URL
+# whose owner segment was a stand-in token, written before the repo existed and
+# never revisited. `tests/test_packaging.py` fails on placeholder text, so this
+# table cannot come back filled in badly.
+# ⚠ And that check reads the WHOLE FILE, comments included -- naming the token
+# literally here turned it red, which is the check working, not over-reaching.
+# A stand-in in a comment is one copy/paste away from being a published value.
+[project.urls]
+Homepage = "https://github.com/SonicSandbox/hato"
+Source = "https://github.com/SonicSandbox/hato"
+Issues = "https://github.com/SonicSandbox/hato/issues"
+#
+# ⚠ The `readme` field is declared up in [project], where it belongs. A note
+# here previously said "there is no README.md in this tree yet" -- written from
+# a reading of the tree taken before the file landed, and already false when it
+# was committed. Re-read before restating the state of a file.
+
+[tool.setuptools.dynamic]
+version = { attr = "hato.__version__" }
+
+[tool.setuptools.packages.find]
+# hato AND hato.commands. The commands package is where every subcommand
+# lives, loaded by importlib at runtime from cli.py's COMMANDS table -- a
+# narrower pattern would build a wheel that installs and imports cleanly and
+# then fails on the first subcommand, for installed users only.
+include = ["hato*"]
+
+[tool.setuptools]
+# EXPLICIT, so what ships does not depend on which build-time plugins happen
+# to be installed. With this true, setuptools sweeps in whatever a
+# revision-control plugin reports inside the package directories; the set of
+# files that end up in the wheel then differs between two machines building
+# the same commit.
+include-package-data = false
+
+# BOTH NOTICES SHIP WITH THE ARTIFACT, AND THE DEFAULT WOULD HAVE SHIPPED ONE.
+# spec/10-deployment.md requires the GPL-3.0 notice AND the dependency licence
+# list to travel with the release: anitopy is MPL-2.0 and guessit is
+# LGPL-3.0-or-later, and both oblige it.
+#
+# MEASURED 2026-09-17: setuptools' default for this key is
+# LICEN[CS]E* / COPYING* / NOTICE* / AUTHORS*, anchored at the start of the
+# name. LICENSE matches. THIRD_PARTY_LICENSES.md begins with THIRD, so it
+# matches nothing and would have been left out of every artifact while the
+# repository looked complete. Named explicitly instead of renamed, because the
+# engine's repository already calls its file this.
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]
+
+# 🚨 THIS SAID "there are no non-.py files inside hato/ at all" UNTIL
+# 2026-09-18, and the window falsified it: `hato/data/` now carries the mark at
+# the seven sizes the window actually uses (16-256; the 512 and 1024 masters
+# stay out of the artifact deliberately). `tests/test_packaging.py` went red on
+# the same commit, which is the check working -- ⛔ the comment was a claim
+# about the tree, and a claim about a tree goes stale the moment somebody adds
+# a file.
+#
+# ⚠ WITHOUT THIS TABLE NOTHING RAISES. `include-package-data = false` means an
+# undeclared file is simply absent, and `branding.py` fails OPEN by design --
+# a missing icon is a plainer window, not a reason the app will not open. So
+# the wheel would install, import and run with no mark anywhere, and the only
+# symptom is that it looks wrong.
+#
+# ⚠ The one non-Python artifact this CANNOT reach is `hato-run.cmd`, which
+# sits at the REPOSITORY ROOT -- see the launcher entry in
+# tests/test_packaging.py, which holds that gap as a named register and turns
+# red the moment the file moves without this table gaining it.
+
+[tool.setuptools.package-data]
+# ⚠ THE .ico IS NOT COVERED BY THE .png GLOB, and its absence is silent in
+# exactly the same way: `branding.py` fails open, so a wheel without it runs
+# with no tray icon and nothing raises. Both patterns, named.
+#
+# ⭐ AND THE RELEASE STAMP. `hato/dev/_stamp.json` is the content hash that
+# says WHICH release these bytes are, and `hato.dev audit-wheel`'s
+# `version_matches_stamp` reads it -- so shipping it is what lets an installed
+# copy prove its own identity rather than being taken on trust.
+# ⚠ CI caught its absence on the first push of 1.0.0: the file was created by
+# stamping and matched no glob, so the wheel would have installed and run
+# without it, raising nothing.
+hato = ["data/*.png", "data/*.ico", "dev/_stamp.json"]
+
+[tool.setuptools.exclude-package-data]
+# hato.config.json MUST NOT SHIP. It is the source tree's own config, and
+# paths.find_project_config() walks UP from the package looking for it -- in
+# the reference project the equivalent file shipped in 0.1.0, was found by
+# cache_root(), and raised ConfigError for every pip install user while every
+# check stayed green because every check ran inside a checkout (pitfall P6).
+# It lives outside every package directory, so nothing can pick it up; this
+# line states the intention where a reader will look for it.
+"*" = ["hato.config.json"]

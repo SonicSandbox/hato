@@ -1,0 +1,54 @@
+# What the SOURCE archive carries. ⚠ The wheel is governed by pyproject.toml;
+# this file governs the sdist, and the two are separate lists.
+#
+# 🚨 WHY `prune tests` EXISTS, AND IT WAS MEASURED, NOT GUESSED. The sdist
+# shipped 23 `tests/` members, and two of them are deliberately full of things a
+# published artifact must not contain:
+#
+#   tests/test_devtools.py   planted KEY-SHAPED literals -- the fixtures that
+#                            prove `scan-secrets` can actually fail
+#   tests/test_archives.py   synthetic SRT cue blocks and WebVTT timings
+#   tests/test_cache.py      the same
+#
+# So `python -m hato.dev scan-secrets dist/` and `scan-content dist/` both
+# failed on the artifact -- correctly. They are not wrong; the archive was.
+# ⛔ The fixtures are ours and synthetic, but a scanner cannot tell a planted
+# fake from a real leak, and it should not have to: the answer is not to teach
+# it exceptions, it is to stop shipping the suite.
+#
+# ⚠ Consequence, stated: the sdist cannot run its own tests. That is normal for
+# a source distribution and harmless here -- the suite lives in the repository,
+# which is hato's actual delivery route (spec/10-deployment.md §RULED).
+prune tests
+
+# ⛔ The dev runner's config. Pitfall P6 in full: the sibling project shipped
+# its development config, the installed package READ it, and the headline call
+# raised ConfigError for every user. It is already kept out of the wheel by
+# pyproject.toml; this keeps it out of the sdist too.
+exclude hato.config.json
+
+# Working notes, run logs and the mutation engine are vault-only and are not
+# published even to the repository -- but exclude them explicitly so a stray
+# copy can never ride along in an archive.
+prune _runs
+prune mutants
+prune gui-mock
+exclude _mutants.mjs
+exclude LEDGER.md LEDGER-HOT.md HANDOFF.md CONTEXT.md
+
+# What the archive DOES carry beyond the package itself.
+include LICENSE
+include THIRD_PARTY_LICENSES.md
+include README.md
+include hato-run.cmd
+# ⚠ The other two launchers, and one of them is load-bearing.
+# `hato/startup.py` registers `hato-watch.pyw` BY NAME in a Windows Run key,
+# so a source tree without it has a login entry pointing at nothing --
+# silently, because a windowed interpreter has no console to say so.
+include hato-watch.pyw
+include hato-gui.cmd
+# 🚨 GPL-3.0 CORRESPONDING SOURCE for the Windows standalone: §1 includes
+# "the scripts used to control compilation and installation".
+recursive-include packaging *.py
+include packaging/hato.spec
+recursive-include spec *.md

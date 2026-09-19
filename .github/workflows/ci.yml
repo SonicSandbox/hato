@@ -1,0 +1,750 @@
+name: tests
+
+# ===========================================================================
+# ⛔ READ-ONLY, AND IT NEEDS NO SECRET. Nothing here authenticates to anything:
+# the suites are hermetic (zero network, per-user store redirected to a temp
+# dir by `run_tests.py` itself) and the artifact checks read files on disk.
+# The absence of a secret is a property worth keeping, not an oversight.
+#
+# 🚨 AND THE LIVE API SUITE IS NEVER RUN HERE. `tests/test_live.py` is
+# `"default": false` in `hato.config.json` and asks jimaku.cc for real.
+# `LEDGER-HOT.md`: the budget is 25 requests / 60 s on somebody else's server,
+# "a failed request still consumes rate-limit quota", and CI would spend it
+# twelve times per push. `tests/test_ci_scripts.py` asserts that no workflow
+# file can reach it.
+# ===========================================================================
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ⚠ UTF-8 ON EVERY STEP OF EVERY JOB, not per step and not by discipline.
+# `LEDGER-HOT.md`: "Windows Python defaults to cp1252 and raised
+# UnicodeDecodeError on the very first real jimaku response, at byte 30,252 --
+# a Japanese filename. Set PYTHONUTF8=1 in the runner." Pitfall P15 is the same
+# trap one level up: the FAILURE REPORTER died on a Japanese message and exited
+# green having emitted nothing.
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  # =========================================================================
+  # 1. THE SUITE, ON THREE OPERATING SYSTEMS x EVERY PYTHON THE PACKAGE CLAIMS
+  # =========================================================================
+  #
+  # ⚠ "An open range claims every future Python." `spec/10-deployment.md` gives
+  # hato a `tomli>=1.1; python_version < '3.11'` marker, which makes 3.10 the
+  # floor; the matrix proves 3.10-3.12 and NOTHING ABOVE. If `requires-python`
+  # is written open-ended, this list is the only thing that says what was
+  # actually run -- add a row before claiming a version, never after.
+  # ⚠ This line said "3.10-3.13" after 3.13 was dropped from the list below --
+  # corrected the same day. A comment describing a matrix is part of the matrix.
+  #
+  # ⛔ AND IT IS NOT WINDOWS-ONLY, however tempting that is for a tool whose
+  # first user runs Windows. The sibling project's first real three-OS run
+  # found three failures of three different kinds, and the interesting two were
+  # NOT on Windows:
+  #   P10  Linux failed a UNC-path test -- the test encoded Windows path
+  #        semantics without saying so.
+  #   P11  macOS exposed a REAL PRODUCT DEFECT that Linux skipped and Windows
+  #        passed: `os.path.normcase` is a no-op on POSIX, but macOS's
+  #        filesystem folds case, so one file had two identity keys.
+  # hato keys the working cache by content hash and the run by
+  # (target folder, video stem) -- both are identity keys over paths, which is
+  # the exact family P11 came from.
+  suite:
+    name: ${{ matrix.os }} - py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # 🚨 3.13 DROPPED, RULED BY SONIC 2026-09-17: *"Our current python
+        # version should be fine. I don't want to do the 3.13, that should be
+        # for tsubasa."*
+        #
+        # ⭐ THE REASON IS THE SAME SPLIT THAT DECIDES EVERYTHING ELSE HERE.
+        # tsubasa is EMBEDDED in other people's code, so it must work on
+        # whatever Python they have -- that range is tsubasa's problem to carry.
+        # hato is RUN, on the machine it was installed on, so it only has to
+        # work on the Python that is there.
+        #
+        # ⚠ What dropping it discards, stated so nobody thinks it was fixed: a
+        # Python 3.13 `zipfile` behaviour change fails
+        # `test_a_cp932_name_without_the_utf8_flag_is_read_as_shift_jis` on ALL
+        # THREE operating systems. Whether 3.13 broke the product or that
+        # check's raw-name helper was never settled -- it cannot be, from a 3.10
+        # machine. The check keeps a strict xfail for anyone who runs 3.13, so
+        # they get an explanation rather than a mystery, and it self-reports if
+        # it ever starts passing.
+        python: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      # 🚨 Qt's OFFSCREEN PLATFORM STILL NEEDS SYSTEM LIBRARIES ON LINUX.
+      # PyQt6's wheel carries Qt itself but not libEGL/libGL, and without them
+      # the plugin fails to load -- which reads as "could not load the Qt
+      # platform plugin xcb/offscreen", forty lines deep, rather than as a
+      # missing apt package. ⚠ Linux only; the Windows and macOS wheels are
+      # self-contained.
+      - name: Qt's offscreen platform needs these on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libegl1 libgl1 libxkbcommon0 libdbus-1-3
+
+      # ⚠ A MISSING `pyproject.toml` MUST SAY SO IN ONE LINE. Without this the
+      # first red run reads as a pip resolver failure forty lines deep.
+      - name: The package must be installable
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f pyproject.toml || {
+            echo "::error title=no pyproject.toml::hato has no pyproject.toml, so nothing can install it. It is written by the packaging step of the build (spec/RUNBOOK.md Step 6)."
+            exit 1; }
+          python -m pip install --upgrade pip
+          # 🚨 THE `archives` EXTRA IS NAMED, AND THIS LINE IS A SEAM DEFECT
+          # THAT CI CAUGHT. It read `pip install -e .` with a note saying no
+          # extra could be named, because `spec/10-deployment.md` listed
+          # py7zr and rarfile as `dependencies`. That was true of the SPEC and
+          # false of the package: the step writing `pyproject.toml` was running
+          # at the same time as this one, read `hato/archives.py`, found both
+          # imports behind `try/except ImportError`, and correctly made them
+          # `[project.optional-dependencies] archives`.
+          #
+          # ⛔ So the first CI run failed with `ModuleNotFoundError: No module
+          # named 'py7zr'` -- not a degradation, a whole test module that could
+          # not import. Neither step was wrong on its own; nobody owned the
+          # boundary between them.
+          #
+          # ⭐ The extra's name is now an established fact, not a guess, and
+          # `tests/test_packaging.py` asserts it exists.
+          # ⚠ The backends being ABSENT is a different claim, covered by the
+          # `degradation` job, which uninstalls them.
+          python -m pip install -e ".[archives]"
+          # 🚨 AND THE WINDOW. RUNBOOK 7c-7e shipped a PyQt6 GUI, a tray
+          # watcher and a Windows standalone, and FIVE default suites import
+          # PyQt6 at module level -- `gui_widgets`, `gui_run`, `watch`,
+          # `startup`, `config_write`. Without this the runner does not skip
+          # them, it FAILS AT IMPORT, and every one of them is a suite about
+          # a shipping feature.
+          #
+          # ⚠ `[gui]` is a declared extra, so this asserts the extra exists
+          # rather than naming a version CI alone believes in.
+          python -m pip install -e ".[gui]"
+          # ⚠ pytest is the runner's engine and PyYAML is what parses these
+          # workflow files in `tests/test_ci_scripts.py`. Without PyYAML that
+          # check SKIPS, and a skip is not a pass.
+          python -m pip install pytest pyyaml
+
+      # ⭐ THE RUNNER'S OWN GATE, BEFORE ITS SUITES. `doctrine/verification`: "a
+      # test not in the runner does not exist -- and the runner PROVES it." The
+      # prose rule alone did not hold in the source project: the build ended
+      # with four orphaned harnesses after it was written down.
+      - name: Every harness on disk is registered
+        run: python run_tests.py --verify-registration
+
+      - name: The suite
+        run: python run_tests.py
+
+      # ⭐ THE EXAMPLES ARE EXECUTED, NOT TRUSTED -- once they exist. Running
+      # the sibling project's examples for the first time found three defects
+      # no suite had. ⚠ Until `examples/` lands this step says so and does
+      # nothing; it must not be removed in the meantime, or nobody notices when
+      # the directory appears.
+      - name: Run the examples, and check the docs against the API
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          if [ -d examples ]; then
+            for example in examples/*.py; do
+              echo "::group::$example"
+              python "$example" || {
+                echo "::error title=example failed::$example exited non-zero"
+                exit 1; }
+              echo "::endgroup::"
+            done
+          else
+            echo "examples/ does not exist yet -- nothing executed"
+          fi
+          # ⛔ `--allow-empty` IS TEMPORARY AND IT IS THE WHOLE POINT OF THIS
+          # FLAG BEING VISIBLE HERE. It makes "there are no docs" a pass. The
+          # day `docs/` lands, DELETE the flag: without it, `check_docs.py`
+          # exits non-zero on 0 blocks, because passing when there was nothing
+          # to check is the failure mode it exists to prevent.
+          python .github/scripts/check_docs.py \
+            --docs docs --examples examples --allow-empty
+
+      # =====================================================================
+      # 🚨 PUT THE FAILURE WHERE IT CAN BE READ WITHOUT CREDENTIALS -- P14
+      # =====================================================================
+      # There is no `gh` CLI and no GitHub token on the build machine. Five
+      # channels were tried when the sibling project's CI went red and exactly
+      # one worked: `::error::` annotations, because
+      # `GET /repos/{o}/{r}/check-runs/{job_id}/annotations` is public on a
+      # public repo and the job id IS the check-run id. The job logs API
+      # answers "Must have admin rights to Repository" to an anonymous request;
+      # an artifact download needs auth; `$GITHUB_STEP_SUMMARY` comes back as
+      # `"summary": null`.
+      #
+      # ⛔ AND IT IS NOT WRAPPED IN `|| true`. That is what swallowed the
+      # reporter the one time it died (P15) -- it exited green having emitted
+      # nothing, on Windows, on a cp1252 console. The reporter exits non-zero
+      # when it finds failures, which is correct: the job is already red, and a
+      # reporter that CANNOT run must be visible rather than silent.
+      - name: Say what actually failed
+        if: failure()
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python .github/scripts/report_failures.py \
+            --runs _runs \
+            --label "${{ matrix.os }} py${{ matrix.python }}" \
+            --require-failures \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      # ⭐ AND STILL KEEP THE FULL LOG. A run once reported one failure with its
+      # name scrolled off, costing a second eight-minute run to learn a name the
+      # first run already had. `run_tests.py` writes every suite's whole output
+      # under `_runs/<stamp>/`.
+      - name: Keep the run log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: run-log-${{ matrix.os }}-py${{ matrix.python }}
+          path: _runs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # =========================================================================
+  # 2. THE ARTIFACT: WHAT IS IN THE WHEEL, AND DOES THE INSTALLED COPY WORK
+  #    FROM OUTSIDE EVERY CHECKOUT
+  # =========================================================================
+  #
+  # 🚨 THIS JOB IS THE ONE THAT CATCHES WHAT SHIPPED. Quoted from
+  # `PYPI-PUBLISHING-DRAFT-2026-09-16.md`:
+  #
+  #   "Every check was green because every check ran inside a checkout.
+  #    tsubasa 0.1.0 passed its CI matrix and its release job, and
+  #    `sync(scan(folder))` raised ConfigError for EVERY `pip install` user."
+  #
+  #   "P6 -- `cache_root()` read the DEVELOPMENT config, present in the vault
+  #    and, via the copy list, in the clone."
+  #
+  # hato's equivalent is `hato/paths.py::find_project_config()`, and
+  # `hato.config.json` IS in the publish clone's copy list. ⛔ So the wheel is
+  # opened, its manifest audited claim by claim, and then INSTALLED AND DRIVEN
+  # from a directory with no `hato.config.json` above it -- and the guard walks
+  # every parent of the working directory AND every parent of the installed
+  # package, because `find_project_config()` starts at the package.
+  wheel:
+    name: the wheel, and the installed copy outside every checkout
+    runs-on: ubuntu-latest
+
+    # 🚨 PARKED, NOT BROKEN, AND DELIBERATELY NON-BLOCKING. RULED BY SONIC
+    # 2026-09-18: *"leave the pip as known-parked check unless it interferes
+    # with CI publishing, etc. we don't want any headaches there."*
+    #
+    # This job proves a `pip install` works from a clean venv. hato ships as a
+    # STANDALONE run from a clone (`spec/10-deployment.md` §RULED) -- there is no
+    # pip route -- so its `verify-install` step fails on a capability nobody
+    # uses, and every other job in this workflow is green.
+    #
+    # ⛔ `continue-on-error` rather than deletion, for two reasons. Deleting it
+    # would also delete the parts that DO still matter -- the wheel manifest
+    # audit, the METADATA check, twine, and the artifact scans -- and their
+    # output stays readable here. And a permanently RED run is itself the
+    # headache: `doctrine/release` records a live data exposure surviving
+    # precisely because *"a permanently-red check is one people learn to scroll
+    # past."* A parked job that reports amber is honest; a red X everyone
+    # ignores is not.
+    #
+    # ▶ TO UN-PARK IT: if hato is ever published to PyPI, remove this line
+    # first -- the job is the gate that would catch a broken install, and it is
+    # the exact check whose absence shipped tsubasa 0.1.0 broken to every user.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # ⚠ PITFALL P24: `python -m build` -> "No module named build". The build
+      # frontend is not part of Python. It goes in a venv of its own, and the
+      # wheel is then tested in a SECOND, clean venv -- never the one that
+      # built it, which carries the build dependencies and could satisfy an
+      # import the wheel forgot to declare.
+      - name: Build the wheel and the sdist, from a venv of their own
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f pyproject.toml || {
+            echo "::error title=no pyproject.toml::hato has no pyproject.toml, so no wheel can be built."
+            exit 1; }
+          python -m venv "$HOME/venv-build"
+          "$HOME/venv-build/bin/python" -m pip install --upgrade pip build twine
+          "$HOME/venv-build/bin/python" -m build
+          ls -la dist/
+
+      # ⛔ EXACTLY ONE OF EACH, ASSERTED. A second wheel in `dist/` is picked
+      # SILENTLY by a `glob(...)[0]`, and that is the value the audit below
+      # then reports on.
+      - name: Exactly one wheel and one sdist
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEELS=$(ls -1 dist/*.whl | wc -l)
+          SDISTS=$(ls -1 dist/*.tar.gz | wc -l)
+          echo "wheels=$WHEELS sdists=$SDISTS"
+          test "$WHEELS" -eq 1 || {
+            echo "::error title=ambiguous wheel::$WHEELS wheels in dist/; every check below would silently pick one"
+            exit 1; }
+          test "$SDISTS" -eq 1 || {
+            echo "::error title=no sdist::$SDISTS sdists in dist/; GPL-3.0 requires the source be available"
+            exit 1; }
+
+      # ⭐ THE RELEASE TOOLING IS INVOKED, NEVER RE-AUTHORED PER PROJECT
+      # (`doctrine/release`). `python -m hato.dev audit-wheel` already claims
+      # `metadata_name`, `metadata_version`, `runtime_data`, `launcher`,
+      # `gpl3_notice`, `dependency_licences`, `no_dev_config`, `no_strays` and
+      # `record_matches_zip` -- including 🚨 that `hato.config.json` is NOT in
+      # the wheel, which is pitfall P6 closed at the manifest level.
+      #
+      # ⚠ `stamp --check` is deliberately NOT run here. It compares a recorded
+      # content hash against the tree, so it is red on every commit after the
+      # stamp by design. It belongs in front of the upload, and it is in
+      # `release.yml`.
+      - name: Audit the wheel's manifest, claim by claim
+        shell: bash
+        run: python -m hato.dev audit-wheel dist/*.whl
+
+      # ⭐ ALSO ASSERTED HERE, INDEPENDENTLY OF THE TOOL'S OWN CONSTANT.
+      # PITFALL P1: the sibling project's rename reached its README and its
+      # release workflow and never reached `[project] name`; the install failed
+      # with "inconsistent name", and it was FOUND BY CHANCE. `audit-wheel`
+      # compares `METADATA` against `hato/dev/wheel.py::DIST_NAME`; this
+      # compares it against the literal string this workflow was written for.
+      # Two independent copies of one fact is the only arrangement that can
+      # ever disagree.
+      - name: METADATA must say hato, and the version the package says
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - dist/*.whl <<'PY'
+          import email, sys, zipfile
+
+          wheel = sys.argv[1]
+          zf = zipfile.ZipFile(wheel)
+          meta = [n for n in zf.namelist() if n.endswith(".dist-info/METADATA")]
+          if len(meta) != 1:
+              sys.exit("::error title=wheel metadata::%d METADATA files in %s"
+                       % (len(meta), wheel))
+          headers = email.message_from_bytes(zf.read(meta[0]))
+          name, version = headers["Name"], headers["Version"]
+          print("wheel   : %s" % wheel)
+          print("Name    : %r" % name)
+          print("Version : %r" % version)
+
+          # ⛔ The distribution name. `hato` was verified free on PyPI
+          # 2026-09-17; the import name is `hato` too.
+          if name != "hato":
+              sys.exit("::error title=wrong distribution name::the wheel is "
+                       "named %r, not 'hato'. It would not install under the "
+                       "name the README gives, and PyPI would refuse the "
+                       "upload (pitfall P1)." % name)
+
+          # ⛔ ONE SOURCE OF TRUTH FOR THE VERSION. `hato/__init__.py` holds
+          # `__version__` and `pyproject.toml` declares it dynamic; if the two
+          # ever disagree the wheel is the one users get.
+          sys.path.insert(0, ".")
+          import hato
+          if version != hato.__version__:
+              sys.exit("::error title=version disagreement::the wheel says %r "
+                       "and hato.__version__ says %r" % (version, hato.__version__))
+          print("agrees with hato.__version__")
+          PY
+
+      # ⭐ NEVER DONE IN THE SIBLING PROJECT, AND IT IS WHAT CATCHES A PyPI PAGE
+      # THAT WILL NOT RENDER. The README *is* the project page, frozen per
+      # version -- `twine check` is the only thing that reads it as PyPI will.
+      - name: twine check
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$HOME/venv-build/bin/python" -m twine check dist/*
+
+      # ⛔ NO SECRET SHIPS, AND NO SUBTITLE BODY SHIPS.
+      # `spec/10-deployment.md` §What is project-specific about this release:
+      #   1. "No secret ships. The key is read at runtime from the keystore or
+      #      the environment. A release build must be greppable-clean -- and
+      #      the check for that belongs in CI, not in someone's memory."
+      #   4. "No subtitle content, no corpus and no fixture containing
+      #      third-party subtitle text may ship in the release artifact.
+      #      API-response fixtures are fine -- they are metadata. Subtitle
+      #      bodies are not ours to redistribute."
+      # 🚨 TWO CORRECTIONS HERE, AND IN BOTH CASES THE TOOL WAS RIGHT AND THIS
+      # STEP WAS ASKING IT AN IMPOSSIBLE QUESTION. It failed three CI runs.
+      #
+      # 1. `--allow-no-key` ON THE ARTIFACT SCAN.
+      #    `scan-secrets` makes two claims: the real key's bytes are absent, and
+      #    no credential-shaped literal is present. The first needs the key to
+      #    search FOR -- and CI has no key, correctly and by design. Rather than
+      #    pass a scan it could not perform, the tool exits 2 and says so:
+      #    *"a scan that skips its own subject must not exit 0."* ⭐ That is
+      #    exactly right, and it means the step could never go green as written.
+      #    ⚠ `--allow-no-key` runs the shape half and marks the other SKIP /
+      #    DEGRADED in the output, naming the bytes it did not search. The
+      #    strong half is made where the key exists: on the machine that
+      #    publishes, by `packaging/sync_from_vault.py` before every push.
+      #
+      # 2. THE SOURCE-TREE SCANS ARE GONE, because the source tree is SUPPOSED
+      #    to contain the things they look for. `tests/test_devtools.py` plants
+      #    credential-shaped literals so the scanner can be proven able to fail,
+      #    and `test_archives.py` / `test_cache.py` build synthetic SRT and
+      #    WebVTT bodies. Measured: `scan-content .` fails 2 of its 5 claims on
+      #    a healthy tree. ⛔ A check that cannot pass is a check people learn to
+      #    scroll past -- the exact failure `doctrine/release` records a live
+      #    data exposure behind.
+      #    ⭐ The tree IS still scanned, where the answer can be honest: the
+      #    publish script runs it with a written register of the known planted
+      #    fixtures, so a NEW shape is red and the deliberate ones are not.
+      - name: No secret, and no third-party subtitle content, in the ARTIFACT
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m hato.dev scan-secrets dist/ --allow-no-key
+          python -m hato.dev scan-content dist/
+
+      # =====================================================================
+      # 🚨 THE INSTALLED WHEEL, IN A SECOND CLEAN VENV, FROM OUTSIDE EVERY
+      #    CHECKOUT, DRIVING THE CODE PATH THAT TOUCHES THE CACHE
+      # =====================================================================
+      # ⛔ NOT `--version` AND NOT `--help`. Those are exactly the parts the
+      # sibling project's outside-the-checkout job called, which is why its
+      # 0.1.0 shipped with `sync()` broken for every installed user. This runs
+      # `config.load()`, `data_root()`, `cache_dir()`, `state_db_path()`,
+      # `default_subs_dir()`, `default_log_path()`, `lock_path()` and
+      # `hato config --show --json` through the console script, with NO
+      # `HATO_CACHE` and NO `HATO_CONFIG` set.
+      #
+      # ⛔ AND THE PARENT WALK IS PROGRAMMATIC. The sibling's guard was
+      # `test ! -e tsubasa.config.json` and its own note reads: "It checks the
+      # working directory only; the walk up the parent folders was done by
+      # hand, once." `outside_checkout.py` walks every parent of the working
+      # directory AND every parent of the installed package -- the second chain
+      # being the one `find_project_config()` actually uses -- and prints how
+      # many directories each walk visited.
+      - name: Install the wheel in a clean venv and drive it from outside the tree
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          python -m venv "$HOME/venv-test"
+          "$HOME/venv-test/bin/python" -m pip install --upgrade pip
+          "$HOME/venv-test/bin/python" -m pip install dist/*.whl
+          rm -rf /tmp/outside && mkdir -p /tmp/outside
+          cd /tmp/outside
+          # ⛔ The console script must be reachable as a user reaches it.
+          export PATH="$HOME/venv-test/bin:$PATH"
+          # ⛔ AND NO OVERRIDE MAY LEAK IN. `PYTHONPATH="$PWD"` is how the
+          # sibling project's "outside the checkout" examples imported the
+          # checkout anyway; the guard refuses to run with one set.
+          unset PYTHONPATH HATO_CACHE HATO_CONFIG HATO_KEYFILE HATO_JIMAKU_KEY
+          "$HOME/venv-test/bin/python" \
+            "$GITHUB_WORKSPACE/.github/scripts/outside_checkout.py" \
+            --forbid-under "$GITHUB_WORKSPACE"
+
+      # ⭐ AND THE PROJECT'S OWN CLEAN-VENV CHECK, AS `spec/RUNBOOK.md` Step 6
+      # invokes it. It is a different claim from the step above: that one proves
+      # the parent walk and the cache path, this one is the release tooling's
+      # own end-to-end install, with no `unrar` assumed.
+      - name: The release tooling's own clean-venv install check
+        shell: bash
+        run: python -m hato.dev verify-install --no-unrar
+
+      - name: Name the failure, for a reader with no credentials
+        if: failure()
+        shell: bash
+        run: |
+          echo "::error title=wheel job failed::the wheel audit, the METADATA check, twine, the secret/content scans, the outside-the-checkout guard or verify-install. Each prints its own ::error:: line above; this one exists so an empty annotation list is never the answer."
+          exit 1
+
+      # ⚠ Kept so the acceptance install can be done from ANY commit, not only
+      # from a tag. A wheel that built and passed is worth having when
+      # something later disagrees.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dist-ci
+          path: dist/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # =========================================================================
+  # 3. THE DEGRADATION PATHS: NO `unrar` ON PATH, AND NO ARCHIVE BACKENDS
+  # =========================================================================
+  #
+  # `spec/10-deployment.md` §2: "The `unrar` dependency is optional and
+  # external. The release notes say so, and CI runs at least one job WITHOUT it
+  # so the degradation path is actually executed."
+  # `spec/07-test-plan.md`: "⚠ CI must run at least one job without `unrar`, or
+  # the graceful-degradation branch is never executed."
+  #
+  # 🚨 AND IT IS NOT ENOUGH TO HOPE THE RUNNER HAS NO `unrar`. `hato/archives.py`
+  # looks for "unrar, unar, 7z, 7zz and bsdtar", and a GitHub runner has 7z and
+  # bsdtar. A job relying on absence would silently take the HAPPY path and
+  # report the degradation branch as covered. So PATH is emptied for the probe
+  # and the absence is ASSERTED as a precondition -- with a positive control
+  # first, proving a tool IS found before the masking, so the masking is what
+  # changed the answer and not the instrument.
+  degradation:
+    name: no unrar, and no archive backends
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f pyproject.toml || {
+            echo "::error title=no pyproject.toml::hato has no pyproject.toml, so nothing can install it."
+            exit 1; }
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      # ⭐ THE POSITIVE CONTROL, FIRST. doctrine/evidence: "make the instrument
+      # disagree with something you already know. Point it at a case whose
+      # answer you are certain of, before you believe it about a case you are
+      # not."
+      - name: What this runner can actually read (the control)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import shutil, sys
+          tools = ("unrar", "unar", "7z", "7zz", "bsdtar")
+          found = {t: shutil.which(t) for t in tools}
+          for tool in tools:
+              print("  %-8s %s" % (tool, found[tool] or "ABSENT"))
+          try:
+              import rarfile
+          except ImportError as exc:
+              print("rarfile is not installed: %s" % exc)
+              sys.exit(0)
+          try:
+              rarfile.tool_setup()
+              print("rarfile.tool_setup() SUCCEEDS with the runner's own PATH")
+              print("=> the masking in the next step is what removes it")
+          except Exception as exc:
+              print("rarfile.tool_setup() already fails here: %s: %s"
+                    % (type(exc).__name__, exc))
+              print("::warning title=no rar tool on this runner::the next step "
+                    "would have passed without masking anything, so it is not "
+                    "a control over the masking. The degradation claim still "
+                    "holds; the claim that MASKING caused it does not.")
+          PY
+
+      # ⛔ PATH IS EMPTIED FOR THE PROBE ONLY, and both interpreters are invoked
+      # by absolute path so that emptying PATH removes the archive TOOLS and
+      # nothing else. A degradation that happened because `python` went missing
+      # would be a green check over a broken job.
+      - name: A .rar with no external tool anywhere on PATH
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          PY=$(python -c "import sys; print(sys.executable)")
+          HATO_BIN=$(command -v hato || true)
+          mkdir -p "$HOME/emptybin"
+          export HATO_BIN
+          PATH="$HOME/emptybin" "$PY" - <<'PY'
+          import os, subprocess, sys, shutil, tempfile
+
+          # ⭐ THE PRECONDITION, ASSERTED OUT LOUD (doctrine/verification):
+          # without it a pass here could mean the archive was refused for some
+          # entirely different reason.
+          tools = ("unrar", "unar", "7z", "7zz", "bsdtar")
+          still = {t: shutil.which(t) for t in tools if shutil.which(t)}
+          if still:
+              sys.exit("::error title=masking failed::PATH was emptied and "
+                       "these are still findable: %r. The degradation branch "
+                       "would not be the one exercised." % still)
+          print("precondition: none of %s is on PATH" % (tools,))
+
+          where = tempfile.mkdtemp()
+          rar = os.path.join(where, "candidate.rar")
+          with open(rar, "wb") as fh:
+              fh.write(b"Rar!\x1a\x07\x00" + b"\x00" * 64)
+
+          binary = os.environ.get("HATO_BIN")
+          argv = [binary, "extract", rar] if binary else \
+                 [sys.executable, "-m", "hato", "extract", rar]
+          if not binary:
+              print("::warning title=no console script::`hato` is not on PATH; "
+                    "driving `python -m hato` instead. [project.scripts] may "
+                    "not be wired (pitfall P4).")
+          proc = subprocess.run(argv, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, timeout=300)
+          out = proc.stdout.decode("utf-8", "replace")
+          print(out)
+
+          # ⛔ A REFUSAL IS NOT A CRASH. `spec/10-deployment.md`: "Refusals and
+          # NOT_FOUNDs are not failures." Exit 1 with a SKIPPED line is the
+          # contract `hato/commands/extract.py` documents; a traceback or an
+          # exit 2 is a defect.
+          if "Traceback" in out:
+              sys.exit("::error title=crash not degradation::a missing unrar "
+                       "produced a traceback:\n%s" % out[-2000:])
+          if proc.returncode != 1:
+              sys.exit("::error title=wrong exit code::`hato extract` on a .rar "
+                       "with no tool exited %d; the documented contract is 1 "
+                       "(could not unpack), and 2 means a usage fault."
+                       % proc.returncode)
+          if "SKIPPED" not in out:
+              sys.exit("::error title=no degradation message::nothing said "
+                       "SKIPPED. The .rar branch must degrade with a message "
+                       "naming what is missing, never error.")
+          if not any(word in out for word in
+                     ("external tool", "rarfile package", "unrar")):
+              sys.exit("::error title=unhelpful message::it degraded without "
+                       "naming what to install:\n%s" % out[-2000:])
+          print("OK: a .rar degrades with a message, exit 1, no traceback")
+          PY
+
+      # ⚠ EXTRAS ABSENT IS A SEPARATE CLAIM FROM TOOLS ABSENT. `py7zr` and
+      # `rarfile` are imported lazily behind guards in `hato/archives.py`
+      # (`NO_PY7ZR`, `NO_RARFILE`), so their absence is a supported
+      # configuration whether `pyproject.toml` declares them as dependencies or
+      # as extras -- and uninstalling them is the one test that works either
+      # way. ⚠ Pitfall P13: an "imports without the optional dep" test that
+      # BLOCKS the import can pass while blocking nothing. This uninstalls.
+      - name: Uninstall py7zr and rarfile, and prove both branches degrade
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          python -m pip uninstall -y py7zr rarfile || true
+          python - <<'PY'
+          import importlib, os, subprocess, sys, tempfile
+
+          for name in ("py7zr", "rarfile"):
+              try:
+                  importlib.import_module(name)
+              except ImportError:
+                  print("%s is absent, as intended" % name)
+              else:
+                  print("::warning title=%s still installed::it is a "
+                        "dependency of something else here, so the 'backend "
+                        "absent' branch was NOT exercised for it." % name)
+
+          # ⛔ THE PACKAGE MUST STILL IMPORT. A guarded lazy import that was
+          # written at module scope by accident turns an optional backend into
+          # a hard dependency, and nothing else would notice.
+          import hato.archives
+          print("hato.archives imports with no archive backend installed")
+
+          where = tempfile.mkdtemp()
+          cases = (("candidate.7z", b"7z\xbc\xaf\x27\x1c" + b"\x00" * 64,
+                    ("py7zr",)),
+                   ("candidate.rar", b"Rar!\x1a\x07\x00" + b"\x00" * 64,
+                    ("rarfile", "external tool", "unrar")))
+          for name, magic, words in cases:
+              path = os.path.join(where, name)
+              with open(path, "wb") as fh:
+                  fh.write(magic)
+              proc = subprocess.run([sys.executable, "-m", "hato", "extract", path],
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, timeout=300)
+              out = proc.stdout.decode("utf-8", "replace")
+              print(out)
+              if "Traceback" in out:
+                  sys.exit("::error title=crash not degradation::%s crashed "
+                           "with no backend installed:\n%s" % (name, out[-2000:]))
+              if proc.returncode != 1:
+                  sys.exit("::error title=wrong exit code::%s exited %d, "
+                           "expected 1" % (name, proc.returncode))
+              if "SKIPPED" not in out or not any(w in out for w in words):
+                  sys.exit("::error title=no degradation message::%s did not "
+                           "name a missing backend:\n%s" % (name, out[-2000:]))
+              print("OK: %s degrades and says what is missing" % name)
+          PY
+
+      - name: Name the failure, for a reader with no credentials
+        if: failure()
+        shell: bash
+        run: |
+          echo "::error title=degradation job failed::a .rar with no external tool, or a .7z/.rar with no backend installed, did not degrade with a message and exit 1. The step above prints its own ::error:: line naming which."
+          exit 1
+
+  # =========================================================================
+  # 4. THE LICENCE IS A FILE PEOPLE RELY ON, SO IT IS CHECKED LIKE ONE
+  # =========================================================================
+  # `spec/10-deployment.md`: "The GPL-3.0 notice and the dependency licence
+  # list ship with the artifact -- `anitopy` is MPL-2.0 and `guessit` is
+  # LGPL-3.0, and both require their notices to be carried." The notices INSIDE
+  # the wheel are `audit-wheel`'s `gpl3_notice` and `dependency_licences`
+  # claims; this job checks the repository's own file.
+  #
+  # ⚠ A SIZE FLOOR AS WELL AS THE HEADER. A placeholder explaining that the
+  # licence is missing carries no header and would fail the greps -- but a
+  # truncated copy carries the header and fails nothing. GPL-3.0 as served by
+  # GitHub's licences API is 35,149 bytes; the floor is set below that with
+  # room for an EOL difference, not pinned to it.
+  licence:
+    name: LICENSE is the canonical GPL-3.0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Header, version, and a size floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s LICENSE || {
+            echo "::error title=no licence::LICENSE is missing or empty, and hato is GPL-3.0-or-later"
+            exit 1; }
+          BYTES=$(wc -c < LICENSE)
+          echo "LICENSE is $BYTES bytes"
+          grep -q "GNU GENERAL PUBLIC LICENSE" LICENSE || {
+            echo "::error title=not the GPL::LICENSE has no 'GNU GENERAL PUBLIC LICENSE' header"
+            exit 1; }
+          grep -q "Version 3, 29 June 2007" LICENSE || {
+            echo "::error title=wrong GPL version::LICENSE is not 'Version 3, 29 June 2007'"
+            exit 1; }
+          grep -q "TERMS AND CONDITIONS" LICENSE || {
+            echo "::error title=truncated licence::LICENSE has no 'TERMS AND CONDITIONS' section"
+            exit 1; }
+          if grep -qi "PLACEHOLDER" LICENSE; then
+            echo "::error title=placeholder licence::LICENSE is still the placeholder. It was a real state of the sibling repository for one afternoon, and it looks like success from every direction but opening it."
+            exit 1
+          fi
+          test "$BYTES" -ge 30000 || {
+            echo "::error title=licence too short::LICENSE is $BYTES bytes; the canonical GPL-3.0 is about 35,149. A truncated copy carries the header and fails no grep."
+            exit 1; }
+          echo "LICENSE ok"

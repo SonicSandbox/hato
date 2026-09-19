@@ -1,0 +1,24 @@
+{
+ "body_kept": true,
+ "bytes": 1786,
+ "captured_at": "2026-09-17T08:36:37+00:00",
+ "captured_by": "hato/0.1.0.dev0 (doctor)",
+ "final_url": "https://jimaku.cc/api/entries/440/files",
+ "method": "GET",
+ "note": "files of entry 440 (Kimi no Na wa.), flags.movie == true: episode matching is skipped entirely (06-edge-cases.md §3)",
+ "provenance": "hato doctor --capture (spec/RUNBOOK.md 0b). Real response bytes; never hand-edited -- re-capture instead (spec/07-test-plan.md).",
+ "response_headers": {
+  "access-control-allow-credentials": "true",
+  "content-encoding": "gzip",
+  "content-type": "application/json",
+  "date": "Thu, 17 Sep 2026 08:36:38 GMT",
+  "transfer-encoding": "chunked",
+  "vary": "origin, accept-encoding",
+  "x-ratelimit-limit": "25",
+  "x-ratelimit-remaining": "22",
+  "x-ratelimit-reset": "1789634200"
+ },
+ "sha256": "602cc56df69bb124c2135f30732d81ec0a33c1a97f32cf18ff423f9e4a504c2f",
+ "status": 200,
+ "url": "https://jimaku.cc/api/entries/440/files"
+}

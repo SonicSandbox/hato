@@ -1,0 +1,201 @@
+{
+  "//": "PROJECT ROOT CONFIG for the hato SOURCE TREE. Tools walk UP from their working directory or package to find this file, so they run from anywhere. It is not the user's config (that is config.toml, spec/05-interface.md) and it never ships. NO SECRETS -- the vault auto-commits every ~5 min and git history has no undo (LEDGER-HOT.md).",
+  "project": "hato",
+
+  "tsubasa": {
+    "//": "The engine hato imports. During the build it is imported from the vault checkout (spec/RUNBOOK.md 0a), resolved RELATIVE TO THIS FILE, and tests/test_wiring.py fails if `import tsubasa` resolves anywhere else -- so a pip-installed tsubasa-sync can never silently shadow it.",
+    "checkoutRelative": "../tsubasa"
+  },
+
+  "media": {
+    "//": "TESTS ONLY. The ffmpeg the suites use to BUILD real videos in a temp dir (the tsubasa contract test, spec/07-test-plan.md). Resolved relative to this file. ⛔ Never read by shipping code -- a released hato must not know where this vault keeps its tools (RUNBOOK 0a: never hardcoded).",
+    "ffmpegRelative": "../media-kit/bin/ffmpeg.exe"
+  },
+
+  "keystore": {
+    "//": "Where the jimaku key is read from in a SOURCE CHECKOUT. Order: $HATO_JIMAKU_KEY, then $HATO_KEYFILE, then this path resolved relative to this file. It points OUTSIDE the vault by construction (InfiniteVoid/keystore). The key itself is never here, never printed beyond its last 4 characters, never logged.",
+    "fileRelative": "../../../keystore/hato-jimaku.txt"
+  },
+
+  "test": {
+    "//harnessDir": "The runner enumerates every file here matching harnessPattern and FAILS on any that is neither in a suite nor excused below with a written reason (spec/07-test-plan.md, Registration self-check).",
+    "harnessDir": "tests",
+    "harnessPattern": "^test_.*\\.py$",
+    "//runLogDir": "Every suite's full output lands here, named for the run, so a failure's name never scrolls away.",
+    "runLogDir": "_runs",
+    "//excused": "name -> the written reason it is not in a suite. Empty is the goal.",
+    "excused": {},
+    "//suites": "`default: false` is how the LIVE suite is kept out of the default run -- by this configuration, not by discipline (spec/07-test-plan.md). Every other suite is hermetic: zero network, per-user store redirected to a temp dir by the runner itself.",
+    "suites": [
+      {
+        "name": "wiring",
+        "cmd": ["-m", "pytest", "tests/test_wiring.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 0a. The package imports; tsubasa resolves to the vault checkout and nowhere else; the key resolves from env or keystore and prints only its last 4; the network guard is really armed; config resolves identically from any working directory."
+      },
+      {
+        "name": "config",
+        "cmd": ["-m", "pytest", "tests/test_config.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Steps 0a and 5b. config.toml: documented defaults when missing, HATO_CONFIG honoured, unknown keys refused loudly, a key-shaped field refused with the reason, relative paths refused because a scheduled run starts somewhere unexpected."
+      },
+      {
+        "name": "gui_widgets",
+        "cmd": ["-m", "pytest", "tests/test_gui_widgets.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Steps 7c-7e. The window itself, driven with WA_DontShowOnScreen so the real platform plugin (and therefore real FONTS) is loaded. 🚨 Read the note in the suite before changing how it renders: QT_QPA_PLATFORM=offscreen on Windows reports ZERO font families, so every string paints as tofu -- the PNG is real, the layout is real, and the typography is fiction. An offscreen shot is a picture of a window nobody can read. Pins the ruled design: the engine's word 'refused' never reaches a person, the count badge and the footer tally derive from one state object rather than being hardcoded twice, a candidate click commits that exact pair, the accordion animates to content height and never a guessed cap, and every tab renders with zero rows."
+      },
+      {
+        "name": "watch",
+        "cmd": ["-m", "pytest", "tests/test_watch.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 7f. The tray watcher. Its POLICY is driven here on a fake clock -- so a check about a sixty-second settle does not take sixty seconds -- and the Win32 half is kept as thin as it can be. Pins the rule that a second change RESETS the countdown (a season copied in over ten minutes is ONE run), that hato's own .ja.ass output is never worth waking for (or the watcher spins), that FileNameLength is BYTES and not characters (read as characters every name is halved and the watcher silently never fires), and -- structurally -- that this module imports neither a GUI toolkit nor hato's pipeline, which is the entire reason it is a separate 13.4 MB process rather than a 30.6 MB one."
+      },
+      {
+        "name": "startup",
+        "cmd": ["-m", "pytest", "tests/test_startup.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 7h. Starting with Windows. NOTHING HERE TOUCHES THE REAL REGISTRY -- every check reads or drives an injected fake, because a suite that adds a real login entry changes the developer's machine and leaves it changed. The check that earns its keep is the SOURCE command: hato is not installed as a distribution (measured -- `import hato` raises ModuleNotFoundError from any directory but its own), so a login entry running `pythonw -m hato.watch` would fail at every boot AND fail invisibly, since pythonw has no console to print the traceback to. `hato-watch.pyw` exists because a script's own folder goes on sys.path, and these checks are what refuses a 'simplification' back to -m. Also pins that the frozen entry is hato-watch.exe and never hato.exe (which is the WINDOW, and would throw a window in somebody's face at every login), that the command is quoted by Windows' own rule, and that there is NO config key for any of it -- the registry is the only state, so the switch cannot read ON while nothing runs."
+      },
+      {
+        "name": "gui_run",
+        "cmd": ["-m", "pytest", "tests/test_gui_run.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 7c. The window's subprocess driver, and it imports NO toolkit -- the spawning, decoding, parsing and counting are where the failures live, and a check that needs a display gets skipped on every CI runner hato has. Pins the three hosts that disagree about how to invoke the CLI (source, frozen, HATO_CLI), the console-window flag, and two rules an adversarial pass found tsubasa's GUI breaking: the categories must PARTITION, and a CONFIDENT row with no output_path is not a written file. Also asserts the negative spec/05-interface.md rules -- the engine's word 'refused' never reaches a person."
+      },
+      {
+        "name": "config_write",
+        "cmd": ["-m", "pytest", "tests/test_config_write.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 7a. The config WRITER, which did not exist until 2026-09-18 while the ruled Settings tab edited four things through it. One writer, one schema, one validator: the write round-trips through parse(), so nothing can be written that hato would refuse to read. Plus the TOML literal-string trap (a Windows path in a basic string is an escape sequence), a failed write leaving the OLD file whole rather than zero bytes, skip_folders being honoured by the RUN and not merely stored, and the key's non-file road so a GUI field never writes the secret to a second file."
+      },
+      {
+        "name": "runner",
+        "cmd": ["-m", "pytest", "tests/test_runner.py", "-q", "--no-header"],
+        "default": true,
+        "why": "The runner's own guarantees, driven against synthetic projects -- the one piece that cannot be checked by the thing it checks: an orphaned harness fails the run, a suite reporting ZERO checks is a tooling fault, a named harness that does not exist is a tooling fault, failing output is written to disk."
+      },
+      {
+        "name": "doctor",
+        "cmd": ["-m", "pytest", "tests/test_doctor.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 0b. The readout's SHAPE and the capture's SAFETY, against a session double built from real requests types: no blank line, a 401 stops every further metered call, the key never lands in a capture, request headers and subtitle bodies are never written, the empty-query catalogue is kept as a count, the 429 is not provoked. Structurally cannot cover whether jimaku still answers this way -- that is `hato doctor` itself."
+      },
+      {
+        "name": "cache",
+        "cmd": ["-m", "pytest", "tests/test_cache.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 1a. The working cache: head 64 KB + tail 64 KB + size, never a whole video; content-addressed, temp-plus-rename, a partial download discarded on failure; Windows-illegal names mapped, never dropped; HATO_CACHE honoured."
+      },
+      {
+        "name": "state",
+        "cmd": ["-m", "pytest", "tests/test_state.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 1b. The state DB through its one accessor: refusals per (video x subtitle), negative-cache expiry at 7 and 30 days, a reason on every non-confident row, corrupt-DB recovery, WAL, the run lock. Structurally cannot cover the canonicity table end to end -- the filesystem half is the fetch loop's (RUNBOOK 4b)."
+      },
+      {
+        "name": "names",
+        "cmd": ["-m", "pytest", "tests/test_names.py", "-q", "--no-header"],
+        "default": true,
+        "why": "The one place hato reaches tsubasa's parser for a bare name (zero-byte stubs + tsubasa.scan): one answer per distinct name, stubs only in the workdir, case collisions read separately, grouping honoured, tsubasa's skip reasons carried. Cannot cover whether the parser's reading is right -- that is tsubasa's gate and the timing verdict."
+      },
+      {
+        "name": "client",
+        "cmd": ["-m", "pytest", "tests/test_client.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Steps 2a and 2c. The jimaku client against RECORDED responses: raw Authorization, 401 stops everything, empty query refused before a request, episode= never sent, 404 for an invalid entry, the url guard on the parsed path, rate-limit headers obeyed with jittered waits, the 5/15/45 s ladder and the six-unreachable stop, downloads unmetered with no key and HTML refused, the kill switch. Structurally cannot cover whether jimaku still answers this way -- that is `hato doctor` and the live suite."
+      },
+      {
+        "name": "identify",
+        "cmd": ["-m", "pytest", "tests/test_identify.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 2b. Identification and the resolution cache: a hit costs 0 calls, a miss 1, the live-action path 2, the Kitsu path 2 Kitsu + 3 jimaku (search, the anime=false retry, then by AniList id); the season picks 11446 over 729; an empty title never becomes a request; the key includes the season. Cannot cover whether jimaku's fuzzy search still ranks the same way."
+      },
+      {
+        "name": "tokens",
+        "cmd": ["-m", "pytest", "tests/test_tokens.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Steps 3a/3b. The seven name tokens tsubasa does not publish -- release group, multi-episode, special, version, language class, AI marker, year -- each with the measurement that justified it. Never a title, season or episode."
+      },
+      {
+        "name": "align_episodes",
+        "cmd": ["-m", "pytest", "tests/test_align_episodes.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 3a. Range alignment per release group on the recorded 120-file entry: different offsets per group, pooling measurably worse, seasonal/absolute split inside one release, specials never range-aligned, .5 literal, v2, multi-episode refused, single video, count mismatch as NOT FOUND, the movie path. Pure arithmetic over fixture data -- the highest-value suite here."
+      },
+      {
+        "name": "rank",
+        "cmd": ["-m", "pytest", "tests/test_rank.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 3b. Candidate ranking: AI and non-Japanese filtered, .ass first even as [CHS, JPN], single- before multi-language within a format, alignment quality, version, size only within a format and language class, seen groups. Structurally cannot say whether the top candidate is RIGHT -- only the timing verdict knows."
+      },
+      {
+        "name": "archives",
+        "cmd": ["-m", "pytest", "tests/test_archives.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 3c. Extraction into the cache only: zip-slip rejects the whole archive before anything is written, caps enforced on actual bytes with partial output removed, nested archives not recursed, a missing unrar is a skip never a crash, bytes out equal bytes in. Every archive generated at test time. Cannot cover real-world archive variety."
+      },
+      {
+        "name": "port",
+        "cmd": ["-m", "pytest", "tests/test_port.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 4a. The sync() port: tsubasa's Result passed through unchanged, CONFIDENT is not WRITTEN, the results= choice tested, the stub's output names proven identical to the REAL engine's -- and ONE contract test running the real tsubasa.sync() on a video built in a temp dir. A port exercised only against its stub is proof of the stub."
+      },
+      {
+        "name": "existing",
+        "cmd": ["-m", "pytest", "tests/test_existing.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 4b's front half. What counts as PRESENT (the canonical sidecar in the video's own folder, not forced -- never another show's episode 01), the embedded Japanese text track, the no-track skip (zero requests, zero downloads, no refusal row), an unreadable video as ERROR before any download."
+      },
+      {
+        "name": "pipeline",
+        "cmd": ["-m", "pytest", "tests/test_pipeline.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 4b. The fetch loop against recorded API + stub port: the four outcomes, escalation, the cap, refusals never re-downloaded, negatives honoured, a deleted subtitle re-synced from its kept original with zero network, a warm run at 0 metered calls, a 401 stopping everything, every video ending as exactly one skip or result."
+      },
+      {
+        "name": "write",
+        "cmd": ["-m", "pytest", "tests/test_write.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 4c. The hand-off: the .ja tag on every original, kept originals by temp-plus-rename and never overwritten or deleted, --out mirroring, subs_dir inside a scanned folder refused, encodings preserved, nothing partial in the media folder. Cannot cover whether a player loads the result (measured once by hand in Sonic's mpv)."
+      },
+      {
+        "name": "endtoend",
+        "cmd": ["-m", "pytest", "tests/test_endtoend.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Steps 5a and 5c, through cli.main() and a real cmd.exe. A full run through the CLI entry over a fixture folder with recorded API responses -- and one run through the REAL tsubasa port on built videos, twice, the second making zero requests. Cannot cover the real network or real library timing."
+      },
+      {
+        "name": "packaging",
+        "cmd": ["-m", "pytest", "tests/test_packaging.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step R3. Every published claim in pyproject.toml, LICENSE and THIRD_PARTY_LICENSES.md, each asserted against something DERIVED rather than restated: the dependency list against an ast walk of every import under hato/ (which is how `httpx` was caught as a spec fiction and py7zr/rarfile as guarded extras), the licence notices against the dependency list, the script target by importing it (pitfall P4), the classifiers against a dated register of Pythons that have actually run (P3), the bare unrelated `tsubasa` dependency by name, and hato.config.json's exclusion (P6). Cannot cover the ARTIFACT -- it never builds a wheel, and it is structurally blind to whether the installed package runs OUTSIDE a checkout, which is exactly what shipped tsubasa 0.1.0 broken."
+      },
+      {
+        "name": "ci_scripts",
+        "cmd": ["-m", "pytest", "tests/test_ci_scripts.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step R5. The two CI scripts that are DIAGNOSTIC INSTRUMENTS, driven against real JUnit XML: the annotation reporter emits one percent-encoded line naming every failing test, writes it BEFORE any other output, keeps its bytes ASCII, and stays silent on a clean run (pitfalls P14, P15, P25); and the outside-the-checkout guard really climbs every parent of both the working directory AND the installed package, which is the chain that matters because find_project_config starts at the package, not at the cwd. Cannot cover the WORKFLOWS: ci.yml and release.yml have never run, so every claim about them is a claim about YAML text, not about a runner."
+      },
+      {
+        "name": "devtools",
+        "cmd": ["-m", "pytest", "tests/test_devtools.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step R2. The five release commands the runbook's step 6 invokes, none of which existed before: the version stamp as a CONTENT HASH with --check as the gate in front of the upload (a hand-bump, an edited file, an added file and a removed file each go red by name), the wheel manifest audit (pitfall P1 the name, P6 the dev config, P7 the runtime data), and both artifact scanners. ⭐ All four scanners are proven able to fail against a PLANTED secret -- loose, inside a wheel, inside an sdist, and in five encodings -- a planted subtitle body, a planted dev config, and a doubly-nested archive. ⛔ Cannot cover the real release: every wheel here is synthetic rather than built by `python -m build`, so nothing proves pyproject.toml produces a wheel of this shape; and verify-install's venv is excluded as slow and networked, so its parent walk, PATH scrub and assertion set run against recorded outcomes and no check here sees a pip install that fails."
+      },
+      {
+        "name": "api",
+        "cmd": ["-m", "pytest", "tests/test_api.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step R1. The PUBLIC library API (spec/05-interface.md): the four published names exist and Result carries every field the spec lists, under the spec's own names quoted into the suite; scan() makes ZERO metered calls, reads no key and writes nothing, with the socket guard proven able to fail in the same check; a bare str is ONE folder, not one folder per character; junk is ignored silently; both the subs_dir and the --out door are refused at scan; identify() costs a call for an unresolved show and nothing for a cached one, and RAISES past a 401 instead of swallowing it per show; fetch() defaults to writing nothing; tsubasa's Result is the same OBJECT the pipeline carried, never re-wrapped; a run cut short says so; nothing prints a character; and Settings' defaults agree with config.py's schema. Cannot cover whether the fetch loop is right (that is `pipeline`), whether jimaku still answers this way (`doctor`, `live`), whether the names are reachable on the PACKAGE (`wiring`), or any per-video api_calls figure -- metered calls are spent per show and no per-video number exists."
+      },
+      {
+        "name": "live",
+        "cmd": ["-m", "pytest", "tests/test_live.py", "-q", "--no-header"],
+        "default": false,
+        "live": true,
+        "why": "OPT-IN, never in the default run: spends 2 metered jimaku calls and 1 download with the REAL key against someone else's server (spec/07-test-plan.md). Run by name -- `python run_tests.py live` -- when the API may have changed."
+      }
+    ]
+  }
+}
