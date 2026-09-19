@@ -2,7 +2,7 @@
  "//": "hato's version stamp. The RELEASE NUMBER is a decision, declared with `python -m hato.dev stamp --release X.Y.Z`; the CONTENT HASH is what `stamp --check` proves has not drifted since. ⛔ Never hand-edit either -- re-run the stamper (doctrine/release §2).",
  "//stamped_at": "provenance only -- ⛔ NOT part of content_hash. A timestamp in the hash would churn on every build in an auto-committing repo (doctrine/release §2).",
  "algorithm": "sha256 over '<posix path> <sha256 of bytes>\\n' per file, sorted by path, utf-8",
- "content_hash": "sha256:0937a7609c3a6c34f9765e805d7d2ea8e0f2f3c10cf33256f065f7428a864c9a",
+ "content_hash": "sha256:76073cf56f475fb6b998a78bd6caf19bfb7628649fa85ffe1bd8d9956ccdadb9",
  "file_count": 72,
  "files": {
   "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
@@ -47,7 +47,7 @@
   "hato/dev/__main__.py": "d1e32c1d7c09f87fc74b3909db4452ca6b70faaeac9441f82d8da3a5e50872b2",
   "hato/dev/anchor.py": "3fad58e6e1f82e32df549a69aaf194740ce546adbf3915737d07b4b66a62e00a",
   "hato/dev/claims.py": "b4686a61570f527db01a4a2f5d48a62f07dc5c0af33f3f2f78038909e54b0930",
-  "hato/dev/install.py": "ca697f1d38a043b23cfe8096422c606633a0f2f4c624d29682524d3697960c8c",
+  "hato/dev/install.py": "db86f655c0e1729c5054e36520673eb2e55ebe2c3c93b49b39c8a238c4de3c2a",
   "hato/dev/scan.py": "b7d8656d29008e081bcc345410b55eafa4ed5f6d233db632b15226d0270e7bd7",
   "hato/dev/stamp.py": "808f1a69cb7ac1ed9fa8293499e93cd300d37f503daae2ce32c181dc0bca1e90",
   "hato/dev/wheel.py": "728f499cad770ef7b6717dcd61f13fa515aede51f8019b5918f7ba4c68d8c653",
@@ -79,5 +79,5 @@
   "pyproject.toml": "158a847de5a042f6cb89e0a70482098a7635566381c6cc1d62e233985cf7ea42"
  },
  "release": "1.0.1",
- "stamped_at": "2026-09-19T07:40:33+00:00"
+ "stamped_at": "2026-09-19T08:21:12+00:00"
 }

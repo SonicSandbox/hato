@@ -190,7 +190,17 @@ def assess(results, expected_version, no_unrar):
             out.append(fail("unrar_absent", "the degradation probe exited %s: %s"
                             % (probe.get("rc"), _one_line(probe))))
         else:
-            text = probe.get("out") or ""
+            # 🚨 NORMALISE THE LINE ENDINGS BEFORE MATCHING, AND THIS WAS RED
+            # ON WINDOWS FOREVER. The probe is a child process, so on Windows it
+            # emits `\r\n`; `$` under `re.M` matches before the `\n` with the
+            # `\r` still in the line, so `found$` could never match and the
+            # claim below it reported *"the probe did not confirm PATH was
+            # scrubbed"* over a probe whose first line says exactly that.
+            # ⛔ Worse than a false red: `degrades_not_errors` lives inside the
+            # matching branch, so on Windows it was never emitted at all -- one
+            # claim failed and a second quietly stopped existing. Measured
+            # 2026-09-19; CI is Linux and had been green on both.
+            text = (probe.get("out") or "").replace("\r\n", "\n")
             scrubbed = re.search(r"^RAR TOOLS: none of ([0-9]+) found$", text, re.M)
             if not scrubbed:
                 out.append(fail("unrar_absent",
@@ -349,22 +359,46 @@ def run(root, wheel=None, build=False, no_unrar=False, temp_root=None, keep=Fals
             raise Fault("pip install %s failed in the clean venv: %s"
                         % (wheel_path.name, _one_line(got)))
 
-        site = _run([python, "-c",
-                     "import hato, pathlib; print(pathlib.Path(hato.__file__).resolve().parent)"])
-        if site["rc"] != 0:
-            raise Fault("the installed hato could not be imported: %s" % _one_line(site))
-        package_dir = Path(site["out"].strip())
-
         work = base / "outside"                 # ⛔ no project file in it, by construction
         work.mkdir()
-        chains = [work, package_dir]
-        results = {"offenders": parent_config_offenders(chains),
-                   "chains": [str(c) for c in chains]}
 
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
         env.pop("PYTHONPATH", None)             # ⛔ never the checkout
+
+        # 🚨 THE PROBE THAT LOCATES THE INSTALL MUST RUN WHERE THE OTHER PROBES
+        # RUN, AND FOR A YEAR IT WAS THE ONLY ONE THAT DID NOT.
+        #
+        # `python -c` puts the CURRENT DIRECTORY first on sys.path. Run from a
+        # checkout -- which is exactly how `spec/RUNBOOK.md` Step 6 and both
+        # workflows invoke this tool -- `import hato` resolves to the SOURCE
+        # TREE, never the clean venv. `package_dir` then came back as
+        # `<checkout>/hato`, whose parent holds `hato.config.json`, and
+        # `venv_isolated` reported a P6 violation that was entirely an artefact
+        # of where the probe was standing.
+        #
+        # ⭐ Measured 2026-09-19 on CI run #13: *"1 project config(s) above the
+        # install: /home/runner/work/hato/hato/hato.config.json"*, with the
+        # subject line naming the checkout as the root. The claim was true about
+        # the directory it looked in and said nothing about the install.
+        #
+        # ⛔ It also made the check unfalsifiable in the other direction: a
+        # wheel that failed to install would still import from the checkout and
+        # still print a version, so `import_version` could not tell a working
+        # install from no install at all. Those probes already passed `cwd=work,
+        # env=env`; this one is now moved below their setup so it can too.
+        site = _run([python, "-c",
+                     "import hato, pathlib; print(pathlib.Path(hato.__file__).resolve().parent)"],
+                    cwd=work, env=env)
+        if site["rc"] != 0:
+            raise Fault("the installed hato could not be imported: %s" % _one_line(site))
+        package_dir = Path(site["out"].strip())
+
+        chains = [work, package_dir]
+        results = {"offenders": parent_config_offenders(chains),
+                   "chains": [str(c) for c in chains]}
+
         removed = []
         if no_unrar:
             env["PATH"], removed = path_without(rar_tools(), env.get("PATH", ""))
