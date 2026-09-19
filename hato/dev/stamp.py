@@ -104,14 +104,41 @@ def ship_files(root):
 
 
 def digest(path):
-    h = hashlib.sha256()
-    with open(str(path), "rb") as fh:
-        while True:
-            chunk = fh.read(1 << 16)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
+    u"""sha256 of a file's CONTENT, with line endings normalised. -> hex
+
+    🚨 THE STAMP USED TO HASH RAW BYTES, AND THAT MADE IT VALID ON EXACTLY ONE
+    MACHINE -- the one that wrote it. A content hash is supposed to prove *the
+    published commit is the code that was tested*; hashing raw bytes proved
+    something narrower and useless: *these files, as this filesystem happens to
+    store newlines today.* Git rewrites that on the way in and on the way out.
+
+    ⭐ MEASURED 2026-09-19, and the number moved with the PLATFORM, which is
+    what gave it away:
+
+        this working tree (LF, written by sync_from_vault)   72/72 held
+        a fresh Windows checkout (core.autocrlf=true -> CRLF)   50 differed
+        Linux CI (index bytes; 9 files are stored CRLF)          9 differed
+
+    All 50 were line endings ONLY -- zero files differed in content, zero were
+    missing. ⛔ So `release.yml`'s stamp gate failed on the v1.0.0 tag and
+    again on v1.0.1, and both times it was reporting the truth about bytes it
+    should never have been looking at. A gate that cannot pass anywhere is one
+    people learn to scroll past, which is `doctrine/release` in its own words.
+
+    ⚠ WHAT THIS GIVES UP, STATED: the stamp no longer notices a file whose
+    ONLY change is its line endings. That is deliberate -- `.gitattributes` is
+    what guarantees endings where they are load-bearing (`*.cmd text eol=crlf`
+    for `hato-run.cmd`, `-text` on LICENSE and the byte-exact fixtures), and it
+    guarantees them on every checkout, which a hash never could.
+
+    ⚠ Binary files are left alone, using git's own heuristic: a NUL byte means
+    binary. Git does not convert those either, so their bytes are already the
+    same everywhere and normalising would only risk conflating two files.
+    """
+    data = Path(path).read_bytes()
+    if b"\x00" not in data:
+        data = data.replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
 
 
 def manifest(root):
@@ -155,8 +182,11 @@ def _record(release, files):
                "hand-edit either -- re-run the stamper (doctrine/release §2)."),
         "release": release,
         "content_hash": content_hash(files),
-        "algorithm": ("sha256 over '<posix path> <sha256 of bytes>\\n' per file, "
-                      "sorted by path, utf-8"),
+        "algorithm": ("sha256 over '<posix path> <sha256 of content>\\n' per "
+                      "file, sorted by path, utf-8. Per-file content is the "
+                      "file's bytes with CRLF normalised to LF unless it holds "
+                      "a NUL, so the hash survives git's line-ending rewrite "
+                      "and means the same thing on every platform."),
         "file_count": len(files),
         "stamped_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "//stamped_at": ("provenance only -- ⛔ NOT part of content_hash. A "
