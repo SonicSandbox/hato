@@ -2,7 +2,7 @@
  "//": "hato's version stamp. The RELEASE NUMBER is a decision, declared with `python -m hato.dev stamp --release X.Y.Z`; the CONTENT HASH is what `stamp --check` proves has not drifted since. ⛔ Never hand-edit either -- re-run the stamper (doctrine/release §2).",
  "//stamped_at": "provenance only -- ⛔ NOT part of content_hash. A timestamp in the hash would churn on every build in an auto-committing repo (doctrine/release §2).",
  "algorithm": "sha256 over '<posix path> <sha256 of content>\\n' per file, sorted by path, utf-8. Per-file content is the file's bytes with CRLF normalised to LF unless it holds a NUL, so the hash survives git's line-ending rewrite and means the same thing on every platform.",
- "content_hash": "sha256:ae5764b5103370fd1dd5d184c2399c59801de2e80e7e75a03531c54af00de26e",
+ "content_hash": "sha256:a5bf7e16a8ab9f688bf24a659545794938d63913b4d1691b42cf555b4d73dfcb",
  "file_count": 76,
  "files": {
   "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
@@ -73,7 +73,7 @@
   "hato/report.py": "a8bd50a5df0c63bbdf8be8dff4836450d0ffb35a7ccdbf3c79dde34600ff0d3a",
   "hato/resolution.py": "406fdc9f0156f8bb7b99d8a477813443ebe90f712ab62cf86e424035217d4fb9",
   "hato/retries.py": "1e228ab0271539035f6d5604c42d149cdd86854b1a4baa105f24268a6e5ada2b",
-  "hato/runlock.py": "63cebd273dc62543b79d1128f9b223fea19f2d2be570a6564a34754ffb55d716",
+  "hato/runlock.py": "72a2b4eacc950ddb57853b4bd6d18ee8e2e08ee471e3ccb0b5d0e1c54c709589",
   "hato/schedule.py": "a2fce8185239f20e7733827b415b9492608e83fb42d6a2825121368bdfa9a533",
   "hato/startup.py": "10d303cdf80a4707717e6dc67cee15993a05ac561492f72223a07c932e529c58",
   "hato/state.py": "68126380c4a87ed05a160e167726f73c440e3b644f2be0cfc1340994e34dd709",
@@ -83,5 +83,5 @@
   "pyproject.toml": "158a847de5a042f6cb89e0a70482098a7635566381c6cc1d62e233985cf7ea42"
  },
  "release": "1.0.2",
- "stamped_at": "2026-09-23T18:26:44+00:00"
+ "stamped_at": "2026-09-23T18:46:54+00:00"
 }

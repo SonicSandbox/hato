@@ -24,6 +24,16 @@ import pytest
 
 from hato import tray, watch
 
+#: ⛔ THE WATCHER'S NAMES ARE WINDOWS'. `ReadDirectoryChangesW` reports a relative
+#: name with backslashes (`Old\frieren - 01.mkv`); on POSIX a backslash is a FILENAME
+#: character, so the name is not inside `Old` and the skip rule answers differently.
+#: Measured on the first CI run of 1.0.2 (2026-09-23), red on ubuntu and macOS with
+#: the product right -- the watcher only exists on Windows. It runs there: locally,
+#: in the mutation gate, and in CI's three Windows jobs.
+WINDOWS_NAMES = pytest.mark.skipif(
+    not sys.platform.startswith("win"),
+    reason="the watcher's notification names are Windows', backslash-separated")
+
 
 class FakeClock(object):
     u"""⭐ So a check about a SIXTY SECOND delay does not take sixty seconds."""
@@ -207,6 +217,7 @@ def test_an_empty_notification_wakes_nothing():
     assert watch.is_interesting_arrival(None, root=u"C:\\watched") is False
 
 
+@WINDOWS_NAMES
 def test_an_arrival_inside_a_SKIPPED_SUBFOLDER_does_not_start_a_countdown():
     u"""🚨 Sonic, 2026-09-22: *"it found files in a folder that is inside a
     blacklisted folder ... it noticed it but didn't seem to do anything with
@@ -1125,6 +1136,7 @@ def test_a_video_arriving_during_a_run_waits_for_the_lock_instead_of_being_lost(
         u"the wait was not re-announced while it waited: %d write(s)" % seen[1])
 
 
+@WINDOWS_NAMES
 def test_a_folder_added_in_settings_while_watching_is_watched(tmp_path, monkeypatch):
     u"""🚨 S02. The settings were read once, at start: a folder added later was
     never watched, and the window said "watching". ⭐ The new folder is watched,
@@ -1236,11 +1248,21 @@ def test_the_same_file_problem_is_said_once_and_a_new_one_again(tmp_path, monkey
     monkeypatch.setenv("HATO_CACHE", str(tmp_path))
     said = []
     due = watch._DueFile(complain=said.append)
-    retries.path().write_text(u'{"due": {"x": 1}}', encoding="utf-8")
+    moment = [time.time() - 100]
+
+    def write(text):
+        # ⚠ EACH WRITE STAMPED APART. The tray re-reads on (mtime, size); the last
+        # two payloads are the SAME size, and on a fast CI disk they landed in the
+        # same timestamp tick -- one file, as far as the stamp could tell (first CI
+        # run of 1.0.2, 2026-09-23). A real rewrite is a run, seconds apart.
+        retries.path().write_text(text, encoding="utf-8")
+        moment[0] += 1
+        os.utime(str(retries.path()), (moment[0], moment[0]))
+    write(u'{"due": {"x": 1}}')
     assert due() == [] and len(said) == 1 and u"no list of dates" in said[0], said
-    retries.path().write_text(u'{"due": {"y": 22}}', encoding="utf-8")   # another write, same fault
+    write(u'{"due": {"y": 22}}')                                          # another write, same fault
     assert due() == [] and len(said) == 1, u"the same fault was said again: %s" % said
-    retries.path().write_text(u'{"due": [1000200]}', encoding="utf-8")
+    write(u'{"due": [1000200]}')
     assert due() == [] and len(said) == 2 and u"not a date" in said[1], said
 
 

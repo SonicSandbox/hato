@@ -68,6 +68,14 @@ DENIED_MAX_AGE = 24 * 3600.0
 #: run of this boot to own it. ⚠ Slack for the tick count's own imprecision.
 BOOT_SLACK = 60.0
 
+#: 🚨 How far AHEAD of this process's clock a lock written just now can be stamped.
+#: The filesystem and `time.time()` tick at different resolutions, so a lock another
+#: run wrote a moment ago can carry an mtime a few milliseconds in the future --
+#: and L5's rule (a negative age is "stamped in the future", so FREE) then took over
+#: a lock that was being written at that instant. Measured by the first CI run of
+#: 1.0.2 (Windows, py3.12), 2026-09-23. A real future stamp is days, not seconds.
+CLOCK_SLACK = 2.0
+
 #: `lock_state` answers.
 FREE, HELD, UNUSABLE = "free", "held", "unusable"
 
@@ -225,8 +233,9 @@ def _judge(raw, written, now=None):
     if info is None:
         # ⚠ A NEGATIVE AGE IS NOT "BEING WRITTEN". A lock stamped in the future
         # (a clock set back, a file copied in) read as a run starting, for days
-        # (ADVERSARY 2026-09-22 L5).
-        if 0 <= age < GRACE_SECONDS:
+        # (ADVERSARY 2026-09-22 L5). 🚨 But a few MILLISECONDS negative is a lock
+        # written just now by a clock that ticks finer than ours -- CLOCK_SLACK.
+        if -CLOCK_SLACK <= age < GRACE_SECONDS:
             return HELD, dict(detail="another hato run is starting right now "
                                      "(its lock is still being written)")
         return FREE, ("took over an unreadable run lock last written %s, left by a run that "

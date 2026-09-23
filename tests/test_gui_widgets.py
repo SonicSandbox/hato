@@ -50,6 +50,16 @@ from hato.gui import run as gui_run
 HERE = os.path.dirname(os.path.abspath(__file__))
 GUI_DIR = os.path.join(os.path.dirname(HERE), "hato", "gui")
 
+#: ⛔ THIS FILE'S LIBRARY IS A WINDOWS ONE -- its videos live under `D:\Anime\...`.
+#: On POSIX a backslash is a FILENAME character, so none of them sits under the
+#: folders the fixture configures, and every rule that asks "is this video inside a
+#: watched folder" answers differently. Measured on the first CI run of 1.0.2
+#: (2026-09-23): six checks red on ubuntu and macOS, the product right on each. They
+#: run on Windows -- locally, in the mutation gate, and in CI's three Windows jobs.
+WINDOWS_LIBRARY = pytest.mark.skipif(
+    not os.name == "nt",
+    reason="the fixture library is D:\\Anime\\...; on POSIX a backslash is a filename character")
+
 
 # ---------------------------------------------------------------------------
 # one QApplication for the whole module
@@ -3307,6 +3317,7 @@ def test_the_row_that_stays_says_when_hato_looks_again(qapp):
         assert said in head.best.text(), (watching, head.best.text())
 
 
+@WINDOWS_LIBRARY
 def test_a_row_the_newer_memory_no_longer_lists_has_been_settled(qapp):
     u"""A pick landed or a subtitle appeared since the snapshot: the memory, which
     asks the DISK, is the newer answer."""
@@ -3822,6 +3833,7 @@ def test_an_unreadable_store_reaches_the_window_as_a_failure_through_a_real_chil
     assert window.state.problems_error, u"the failure was not said"
 
 
+@WINDOWS_LIBRARY
 def test_a_refresh_asked_for_while_one_is_in_flight_is_queued_and_dated_by_its_asking(qapp):
     u"""A2. The run's own refresh was DROPPED while another was in flight; that
     one's answer -- the DB before the run -- landed newer than the run's rows and
@@ -3870,6 +3882,7 @@ def test_a_run_that_meets_the_lock_leaves_the_last_run_on_screen(qapp, monkeypat
     assert window.state.tallies()[gui_run.ADDED] == added_before > 0
 
 
+@WINDOWS_LIBRARY
 def test_a_look_again_on_one_row_never_brings_back_a_row_memory_settled(
         qapp, monkeypatch, tmp_path):
     u"""A4. One flag: during a look-again on row Y every stale snapshot row beat
@@ -4276,6 +4289,7 @@ def test_the_window_tells_an_older_tray_from_its_real_pid_file(qapp, tmp_path, m
     assert win.tray_is_old(), u"a 1.0.1 tray was not recognised as an older one"
 
 
+@WINDOWS_LIBRARY
 def test_a_look_again_is_newer_only_about_its_own_video(qapp):
     u"""A4, through the stream. A look-again at ONE row used to make the whole
     snapshot newer than hato's memory -- so a row the memory had settled since
@@ -4365,6 +4379,7 @@ def test_every_trouble_row_says_its_own_reason(qapp):
     assert u"SAME subtitle file" in text and u"holds two episodes" in text, text
 
 
+@WINDOWS_LIBRARY
 def test_the_windows_one_identity_for_a_row_is_the_normalised_video():
     u"""A7 at the root. The pick in flight, the open row and the waits all key on
     `State.key` -- and every check reached it through a merge that normalises
@@ -4377,6 +4392,7 @@ def test_the_windows_one_identity_for_a_row_is_the_normalised_video():
         gui_app.State.key(row), gui_app.State.key(other))
 
 
+@WINDOWS_LIBRARY
 def test_a_video_added_under_two_spellings_is_counted_once():
     u"""A7 in the footer: ADDED counts each video once, whatever it is spelled."""
     row = added(1)

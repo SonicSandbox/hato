@@ -1384,7 +1384,13 @@ def test_a_lock_whose_pid_now_belongs_to_another_program_is_taken_over(tmp_path)
         lock.release()
 
 
-def test_an_unreadable_lock_is_respected_while_fresh_and_taken_over_once_stale(tmp_path):
+def test_an_unreadable_lock_is_respected_while_fresh_and_taken_over_once_stale(tmp_path,
+                                                                              monkeypatch):
+    # ⚠ THE MACHINE BOOTED LONG AGO, SAID OUT LOUD. A CI VM starts minutes before
+    # the job, so a lock backdated an hour was "written before the last boot" --
+    # a different rule, correctly -- and this check went red on the first CI run
+    # of 1.0.2 (2026-09-23). The table below fakes the boot for the same reason.
+    monkeypatch.setattr(runlock, "_boot_time", lambda: time.time() - 10 * 86400)
     path = tmp_path / "hato.lock"
     path.write_bytes(b"")
     try:
@@ -1449,6 +1455,13 @@ def _lock_as(path, how):
         path.write_bytes(b"{")
         _aged(path, -2 * 86400)
         return runlock.FREE
+    if how == "unreadable, stamped a moment ahead":
+        # 🚨 CI, 2026-09-23 (Windows, py3.12): a lock written JUST NOW can carry an
+        # mtime a few ms ahead of `time.time()`, and was taken over as "from the
+        # future" while another run was writing it. Half a second is granularity.
+        path.write_bytes(b"")
+        _aged(path, -0.5)
+        return runlock.HELD
     if how == "nested JSON, being written":
         path.write_bytes(b"[" * 100000 + b"]" * 100000)
         return runlock.HELD
@@ -1483,7 +1496,8 @@ def test_the_machines_last_start_is_known_where_the_lock_rule_needs_it():
 
 @pytest.mark.parametrize("how", [
     "none", "this live run", "denied, fresh", "denied, a day old", "from before the last boot",
-    "empty, being written", "unreadable, stamped in the future", "nested JSON, being written",
+    "empty, being written", "unreadable, stamped in the future",
+    "unreadable, stamped a moment ahead", "nested JSON, being written",
     "nested JSON, an hour old", "a folder where the lock goes"])
 def test_the_tray_and_acquire_read_every_lock_the_same_way(tmp_path, monkeypatch, how):
     u"""ADVERSARY 2026-09-22 L2-L5, one table. The tray asks `lock_state` before

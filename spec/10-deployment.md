@@ -217,7 +217,7 @@ handles that; hato inherits it and must not defeat it** by pinning the accel ext
 | --- | --- |
 | **v1.0.0** | 2026-09-19. Six real defects found by using it; see the 1.0.1 notes |
 | ⭐ **v1.0.1** | `hato-1.0.1-windows-x64.zip` — **tag `3114321`, every gate green**: `tests` 13/13, `release` 2/2 (stamp gate included), suite 27/1616, smoke 20/20 against the copy unpacked outside the repo, and the **published asset downloaded and hash-verified** against the local artifact |
-| ⭐ **v1.0.2** | `hato-1.0.2-windows-x64.zip`, 2026-09-23 — Layer 8, its adversarial pass, and D2 (the daily run registers a real task). Stamp `sha256:ae5764b5…`; local zip `sha256 9f52c032…12763`, 70,651,545 bytes; suite 29 suites, smoke **29/29** against the copy unpacked outside the repo; mutation gate 766/766 + M8y 82/82. Tag, CI jobs and the published hash: ⏳ |
+| ⭐ **v1.0.2** | `hato-1.0.2-windows-x64.zip`, 2026-09-23 — Layer 8, its adversarial pass, and D2 (the daily run registers a real task). Stamp `sha256:a5bf7e16…`; local zip `sha256 6dc4d797…72615`, 70,650,768 bytes; suite 29 suites / 1,982 checks; smoke **29/29** against the copy unpacked outside the repo; mutation gate 766/766 + M8y 83/83. Tag, CI jobs and the published hash: ⏳ |
 
 🚨 **THE RELEASE SEQUENCE IS IN `LEDGER.md` §delivery, as *"THE RELEASE SEQUENCE THAT
 ACTUALLY HOLDS"*.** It is one list and it lives in one place; do not restate it here.
