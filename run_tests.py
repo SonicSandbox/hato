@@ -144,6 +144,38 @@ def coverage_of(suite, all_harnesses):
     return covered
 
 
+#: Folders that hold no source of ours. ⚠ Top-level build outputs and caches only.
+NOT_SOURCE = {".git", "__pycache__", ".pytest_cache", "_runs", "dist", "build",
+              "node_modules", ".venv", "venv"}
+
+
+def unparsable(root=None):
+    """Every .py under the project that does not PARSE. -> [(path, "line N: why")]
+
+    ⭐ HANDOFF §5: *"a `py_compile` gate before any shell-written `.py` -- the
+    heredoc trap has hit five times"* (six, by 2026-09-22). A suite only notices
+    a broken file it IMPORTS; `packaging/`, `gui-shots/` and a probe copied in
+    are imported by none, so one could sit broken until the day it is needed.
+    ⚠ `compile()`, never `py_compile`: that writes a .pyc into the vault.
+    """
+    root = Path(root) if root is not None else HERE
+    bad = []
+    for folder, dirs, files in os.walk(str(root)):
+        dirs[:] = sorted(d for d in dirs if d not in NOT_SOURCE)
+        for name in sorted(files):
+            if not name.endswith(".py"):
+                continue
+            path = Path(folder) / name
+            try:
+                source = path.read_text(encoding="utf-8")
+                compile(source, str(path), "exec", dont_inherit=True)
+            except SyntaxError as exc:
+                bad.append((path, "line %s: %s" % (exc.lineno, exc.msg)))
+            except (OSError, UnicodeDecodeError, ValueError) as exc:
+                bad.append((path, "%s: %s" % (type(exc).__name__, exc)))
+    return bad
+
+
 def self_check(cfg):
     found = harnesses_on_disk(cfg)
     excused = cfg["test"].get("excused", {}) or {}
@@ -514,6 +546,13 @@ def main(argv=None):
         stderr("  test.suites in hato.config.json, or excuse it there WITH THE REASON.")
         return EXIT_ORPHAN
     print("  OK  no orphans")
+    broken = unparsable()
+    if broken:
+        stderr("\nTOOLING FAULT -- a .py file here does not PARSE (a heredoc, a half-edit):")
+        for path, why in broken:
+            stderr("  %s  %s" % (path.relative_to(HERE), why))
+        return EXIT_TOOLING
+    print("  OK  every .py parses")
     if verify_only:
         return EXIT_OK
 

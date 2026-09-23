@@ -118,6 +118,22 @@ LAYER 7 — THE WINDOW. Added 2026-09-18; the design is RULED (gui-mock/mock2.ht
   ├── 7f  The tray watcher — a SEPARATE process, ctypes only
   └── 7g  The exe
 
+LAYER 8 — NEEDS YOU PERSISTS, AND EVERY WAIT SAYS SO. Added 2026-09-22 (HANDOFF §4)
+  ├── 8a  ✅ A dry run writes nothing
+  ├── 8b  ✅ The record keeps what a pick needs     (subtitle_hash, match_rate)
+  ├── 8c  ✅ The open-problems view                 ← hato problems
+  ├── 8d  ✅ The gate keeps the candidates          (pipeline.py:965)
+  ├── 8e  ✅ Needs you persists, and says when
+  ├── 8f  ✅ Probably not out yet  + Wait for it    (amended: D11, the slide)
+  ├── 8g  ✅ Clear hato's memory                    (amended: dry unless --yes)
+  ├── 8h  ✅ The retry actually happens             (the tray wakes at the due time)
+  ├── 8j  ✅ Try harder · 8k ✅ network drive → D8, a defect in the RELEASED bytes
+  ├── S01 · S02 ✅ the tray's two deferred silent losses (ADVERSARY-2026-09-18)
+  └── 8z  ✅ THE ADVERSARIAL PASS — run and CLOSED: ADVERSARY-2026-09-22.md
+           79 reproduced + 11 suspected + 32 wrong-reason checks → every row
+           fixed (naming its check AND its mutant) / dropped / deferred.
+           ⛔ Still UNRELEASED — 1.0.2 is Sonic's call
+
 LAYER 6 — release
 ```
 
@@ -1221,7 +1237,247 @@ miss that holds the retry until tomorrow. For a finished show it works.
 
 ---
 
-## Step 6 — Release — ✅ PUBLISHED TO GITHUB 2026-09-17. ⛔ NO PyPI, RULED
+## ⭐ LAYER 8 — NEEDS YOU PERSISTS, AND EVERY WAIT SAYS SO. Added 2026-09-22
+
+> **Specified by Sonic in `HANDOFF.md` §4 (2026-09-22) and governed by one FROZEN rule,
+> now in `workflows/build-ui.md` §*Standing Rules*:** *when the app decides something on a
+> person's behalf, the decision needs a surface — say it was handled, say when it resolves,
+> and keep the manual choice one click away.*
+>
+> 🚨 **PART 1 DEFECT, recorded: §4 had no runbook steps.** These are them. ⚠ **Layer 8 is
+> edits to a SHIPPED app**, so unlike Layers 1–7 almost every step changes an existing
+> file. The orchestrator makes those edits serially; a builder is dispatched only for a
+> step that is a new module (8c) or a read-only investigation (8k).
+>
+> ⭐ **MEASURED BEFORE ANY CODE (2026-09-22, `--dry-run --json` + a read-only DB probe +
+> a two-arm pick probe on a real pair).** Five things beyond §4, each with its evidence:
+>
+> | # | Found | Evidence |
+> | --- | --- | --- |
+> | D1 | 🚨 **`--dry-run` overwrites the window's memory.** `commands/run.py` calls `lastrun.save` for every run, dry or not, and the window paints a PLANNED row as *"something went wrong"* | The handoff's own first command did it: `last-run.json` saved 18:35:42, 68 rows, `dry_run: true` |
+> | D2 | 🚨 **The title bar's *"runs automatically at 03:00"* switch registers nothing.** `config.py` says so itself (*"Registering a real Windows scheduled task is still unbuilt"*); no task named hato exists | Not one of 148 recorded attempts is near 03:00 local. The retry that *"fetched unprompted"* on 09-21 00:05 was a run someone else triggered — a new download reaching the tray. ✅ **BUILT as 8y, 2026-09-23 — Sonic ruled *"yes to the run automatically"*** |
+> | D3 | ⛔ **"Try 3 more candidates" cannot try anything for 24 hours.** It runs the video's folder without `--force`, and every REFUSED row has just recorded a soft negative, so the gate answers SKIPPED/negative | `pipeline.py:965` — the same line as 4a's second cause |
+> | D4 | ⛔ **After the retry window, an episode whose offered candidates were all refused comes back REFUSED with ZERO attempts** — `_all_refused(already=True)` passes `()` — so the pick row it produces has nothing to pick | `pipeline.py:1354` |
+> | D5 | 🚨 **The window never loads the blacklist.** `state.blacklist` starts `[]` and is only ever filtered; the card, its count and the stale-row sweep are fed by test fixtures alone | `app.py:333` — no loader anywhere |
+> | D6 | 🚨 **A manual pick of a shown candidate cannot succeed, and the window says it did.** Every card on *Needs you* is a candidate the timing check already refused; `hato sync` runs the SAME deterministic check. `commit_pair` paints *"paired · <name>"* in green without reading the child | Two arms, real pair (Tsuihou 12 + NanakoRaws E12, write=False, results=False): **no force → REFUSED, 70%, same reason as the DB row**; tsubasa `force=True` → *"WRITTEN UNDER --force. The pairing was accepted; the alignment was NOT"* |
+> | D7 | 🚨 **Every manual pick ever made died on a usage error.** The window ran `hato sync <video> <sub> --json`, and `sync` had no `--json`: exit 2, nothing written — under a row already painted *paired* | The child's own stderr, read for the first time in 8e |
+> | D8 | 🚨 **The RELEASED 1.0.1 exe cannot scan a folder holding a name only guessit can read.** tsubasa asks guessit about a Western-style name its own parsers cannot number; guessit imports babelfish, which reads `data/iso-3166-1.txt` at import, and PyInstaller 6.18 has no hook for any of the three — code in the archive, data not. `parse_guessit` guards only `ImportError`, so the **whole folder** fails: *"none of the 1 folder(s) given could be scanned (FileNotFoundError …)"*. ⚠ The likely cause of 4f's *"network drive: FAILED"* — unproven without Sonic's message | Two arms × two builds on the released bytes: `The.Show.Special.1080p.WEB.x264-GRP.mkv` → **exit 1**; an anime name → exit 0; source mode → exit 0 both. The `_internal/` of 1.0.1 has no `babelfish/`, `guessit/` or `rebulk/` at all |
+> | D9 | ⚠ **A mapped drive and its UNC path are two strings.** `Z:\Anime` and `\\nas\share\Anime` name one folder, and `under_any` compares spellings — a skip folder written one way does not cover a video found the other | Read from source during 4f's investigation. **Deferred** (below) — not a reproduction |
+> | D10 | 🚨 **A real row's season is printed as a bare number.** The wire carries tsubasa's INT; every window fixture carried the STRING `"S2"`. Real runs showed *"2 · 3 added"* beside a show and *"· 4"* after a filename, which reads as a count | The first shot seeded with `hato problems`'s real rows (L8-14) |
+> | D11 | 🚨 **The fit SLIDES a release that is behind the folder.** It takes the offset where most videos land, so S04E01–22 against videos 21–23 lands three at −1 and two at the true 0. Timing refuses every file it then offers (the safety net holds) — but an airing episode reaches *Needs you* as a pick of OTHER episodes' files, and `max − offset` of that placement says it is on offer | Sonic's own Iruma-kun S4 23 (2026-09-20) was offered **E22, E20 and E03** — the fit's anchors, exactly. Reproduced on the real `episodes.align` (`test_sonics_iruma_s4_23_…`, whose control asserts the slide) |
+>
+> ⛔ **Do not redo:** the 24-hour retry (`state.py` `SOFT_DAYS`), `paths.under_any`, and
+> the state key surviving a move (`cache.py` `video_hash`). ⛔ **`last-run.json` stays a
+> SNAPSHOT** — a 3 a.m. run overwriting it is a feature; persistence comes from a view over
+> the state DB.
+
+> ## ✅ LAYER 8 BUILT, 2026-09-22 — every step, its proof, its mutants
+>
+> | Step | Status | The proof that was RUN | Mutants |
+> | --- | --- | --- | --- |
+> | 8a | ✅ | a dry run leaves `last-run.json` byte-identical; `--only` leaves it too; the loader reads 1.0.1's dry snapshot as no memory | M8a 4/4 |
+> | 8b | ✅ | ⭐ **the RELEASED 1.0.1 exe read a migrated copy of Sonic's DB exactly as an untouched one** (148 rows, persistent, nothing set aside) — `state --stat --json`, both arms | M8b 11/11 |
+> | 8c | ✅ | `hato problems` over a copy of Sonic's DB: **2 open** (Iruma-kun S4 23, Slime S4 23), 2.1 s; the other refusals in his history were found on retries 09-21 — checked row by row | M8c 31/31 |
+> | 8d | ✅ | run 1 refuses → run 2 inside the window carries all of them, with rates and files | M8d 6/6 |
+> | 8e | ✅ | the window, shot at every state (L8-01…16) and LOOKED at; D6 leans *use it anyway* (`PICK_OVERRIDES_TIMING`, a ruling); D7 closed (`hato sync --json`) | M8e 33/33 |
+> | 8f | ✅ **amended** | Sonic's own shapes: Iruma 23 and Honzuki 22 highlight, Tsuihou 12 and Tetsunabe 09 do not — on the real alignment | M8f 27/27 |
+> | 8g | ✅ **amended** | the dry count over copies of Sonic's two stores: 60 videos, 148 tries, 14 shows; a second dry count left both byte-identical | M8g 20/20 |
+> | 8h | ✅ | a fake clock: a date passes → one run; never twice; a date already due at start is the catch-up run's; dates seconds apart are one run | M8h 14/14 |
+> | 8j | ✅ in 8e | *Try 3 more* is `--retry-now --only <video> --candidates 3` (D3) | M8e-17 |
+> | 8k | ✅ **measured** | → D8, above: a real defect in the released bytes, fixed in `packaging/hato.spec` and proven on NEW bytes — smoke **23/23** on the zip unpacked outside the repo, including *"a name only guessit reads is scanned"* | — |
+> | S01 · S02 | ✅ | ADVERSARY-2026-09-18's two deferred silent losses, closed: the tray waits for a held lock instead of spawning into it; the settings are re-read on the tick and the watchers follow | M8s 12/12 |
+> | **8y** | ✅ **2026-09-23** | ⭐ **D2 — the 03:00 switch registers a REAL task.** A real trigger fired the real chain (`pythonw hato-watch.pyw --scheduled` → hato hidden) against an isolated store: cwd `C:\Windows\system32`, exit 0, one log block, 0 API calls — and, two-arm, **no console window**, where a console program started the same way got one. The real schtasks kept the battery settings (a suite check, under its own task name). Every state shot and LOOKED at (L8-17…21) — which caught two defects: *"next run in 4 hours"* beside an OFF switch (a fixture-only field), and *"(Access is denied.)."* · ⚠ and the full runner HUNG on a pre-existing race in `runlock.release()` (a delete refused while a waiter reads the lock), found, proven two-arm and fixed · and the returning-client shot over a copy of Sonic's store caught *"0 videos"* on every real window's title (a fixture-only field; the class swept) and a run's NOTE cut at the window edge mid-path (Qt does not wrap a label unless told to; the class swept — four lines now wrap) | **M8y 82/82** — 4 older mutants re-aimed where D2 moved their code (M8e-12/13, M8zt-44, M8zw-33) |
+>
+> 🚨 **PART 1 DEFECTS, recorded where they were found:**
+>
+> - **8f's formula could not have worked.** *"max(episodes) − offset"* reads a placement,
+>   and D11 slides the placement exactly when the episode is late. Built instead
+>   (`episodes.newest_offered`): a release in the video's own season is read at its own
+>   number (a same-season release cannot number an episode LOWER, so a negative placement is
+>   the slide; one positive offset is a release numbering on through the season); another
+>   numbering counts at ONE offset; a guess, or a release placed nowhere, counts for nothing.
+>   And 4c asked for a BUTTON, which the step never named: **Wait for it** on every pick,
+>   highlighted only one past the newest, putting the row away until its own retry date
+>   (`window-waits.json`, kept by the window; a new date or the date passing brings it back).
+> - **8g, dry by default.** `doctrine/robustness` §destructive: `hato state --clear` only
+>   COUNTS; `--yes` clears. ⛔ And the dry count takes **no run lock** — the window asks for it
+>   to draw its card, and a lock taken for that made a tray run starting at the same moment
+>   scan nothing.
+> - **8h's file** is `retries-due.json` (the run writes the state DB's future retry dates;
+>   the tray reads them through `hato.retries`, stdlib only). Dates seconds apart coalesce
+>   into one run — a run fired between two finds the second still waiting.
+>
+> ⏸ **Deferred, with the reason:** D9 (no reproduction; the fix is a canonical-path compare
+> that must not break `under_any`'s measured prefix rules) · D11's cause in the fit itself
+> (the matcher is the load-bearing core; 8f says what it does rather than changing it —
+> **a ruling for Sonic**, with a lean in `HANDOFF.md`).
+>
+> ## ✅ 8z — THE ADVERSARIAL PASS: RUN AND CLOSED 2026-09-22/23
+>
+> Three fresh agents, one per surface (window · data · tray and packaging), each working
+> in its own `%TEMP%` copy. **79 findings reproduced, 11 suspected, and 32 checks shown to
+> pass for the wrong reason** — after every step above was ticked, with its mutants killed.
+> ⭐ **Every 🚨 finding sat at a SEAM between two halves that were each green:** a run's
+> copy of a row against memory's copy (A5 — one click wrote the wrong episode's file), an
+> exit code's meaning (A12), the run's language against the stored one (F1), the entry that
+> was escalated to against the one that was recorded (F13), the window against an OLDER tray
+> (V1), and the retry file rewritten by a run that holds the lock across a due date (R1).
+>
+> ▶ **`ADVERSARY-2026-09-22.md` is the register: 94 fixed · 6 dropped · 4 deferred**, every
+> `fixed` row naming the check that catches it and the mutants that prove the check can
+> fail. Three builders wrote one mutant list per surface (`m8zw` 72 · `m8zd` 56 · `m8zt`
+> 59 — **187, every one killed**) and put every fix back; 31 older mutants whose code the
+> fixes had moved were re-aimed.
+>
+> 🚨 **Putting the fixes back found 30 pieces of them no check could see** — each survived
+> every check near it until one was written for it. ⭐ The builders found them with GAP
+> PROBES: a candidate mutation run against whole suite files, expected to survive; one
+> that does is a piece of a fix nothing would miss.
+>
+> 🚨 **And the fix pass found these, all recorded there:** F4e — a whole-show release read
+> as the gap between two counts, which produced the rule *season 1 and the absolute count
+> are one count; between the absolute count and a later season the offset is never 0 and
+> runs one way* (and whose first fix, reasoned rather than measured, broke Sonic's own
+> Tsuihou 12) · P1 — the D1 fix tripped the dependency-truth check, correctly · H1 — a
+> witness that SKIPS in the mutation copy (no ffmpeg there) reads as a survivor · and the
+> window's merge ordering rows by `time.monotonic()`, which ties on Windows.
+>
+> **Proof, as run:** the rebuilt exe's smoke **26/26** on the zip unpacked outside the repo,
+> including the two new checks — 5d (each parser numbers a name inside the frozen build,
+> two-arm: it fails in guessit's own words with babelfish's data removed from a copy) and 9
+> (the notice names all **37** packages the bytes carry) · ⭐ **the full mutation gate, 2026-09-23:
+> 766 mutants, 762 killed in the run (80 min); the 4 it reported were stale mutants in OLDER
+> lists, each fixed and re-run killed against the current tree (`GATE-1…4` in the register) —
+> 766/766** · the full runner: see `CONTEXT.md`'s Stage line · the Layer 8 reshoot, LOOKED at.
+
+### Step 8a — A dry run writes nothing
+
+**surfaces:** `data` `ui`
+**depends on:** 7i (the run writes `last-run.json`)
+
+| | |
+| --- | --- |
+| **Build** | `commands/run.py` skips `lastrun.save` on `--dry-run` · the window's loader treats a snapshot whose summary says `dry_run` as no rows (the file already on Sonic's disk is one, and 1.0.1 still writes them) |
+| **Prove** | `hato <folder> --dry-run --json` leaves `last-run.json` byte-identical, mtime unchanged; a real run over the same fixture rewrites it |
+| **Test** | both directions, through `cli.main` · the window loading a dry-run snapshot shows no rows and says nothing false |
+| **Expected** | ⛔ `--dry-run`'s help says *"write nothing"*, and now it is true |
+
+### Step 8b — The record keeps what a pick needs
+
+**surfaces:** `data`
+**depends on:** 1b
+
+| | |
+| --- | --- |
+| **Build** | `attempts.subtitle_hash` — the column `02-data-model.md` specifies and nothing ever filled — gets the downloaded candidate's content hash · a new nullable `match_rate` · a new nullable `newest_offered` (8f) · `Cache.find(digest, name)` and a size-checked name lookup for rows written before this step |
+| **Prove** | a refusal recorded now round-trips to the cached file and its rate; Sonic's real DB opens unchanged under the frozen 1.0.1 exe's reader (additive columns, **no version bump**) |
+| **Test** | an old-shape v2 DB gains the columns on open and keeps every row · an INSERT naming only the old columns still works (that is what 1.0.1 does) · a legacy row finds its blob by name and size, and refuses a same-name blob of another size |
+| **Expected** | ⛔ No `SCHEMA_VERSION` bump: a v3 file would make the running 1.0.1 exe fall back to an in-memory DB and repeat every download |
+
+### Step 8c — The open-problems view
+
+**surfaces:** `data` `logic`
+**depends on:** 8b
+
+| | |
+| --- | --- |
+| **Build** | `StateDB.problems(lang)` — per video, its latest state and every candidate tried since its last success, blacklist excluded · `hato/problems.py` filters that by the DISK (the video exists, is under a configured folder and not a skipped one, and has no subtitle present) and shapes each as a `{"type": "video"}` row · `hato problems [--json]` |
+| **Prove** | against a copy of a fixture DB: a refused episode, a waiting one and a resolved one → exactly the first two, each with its candidates and when it is next looked at |
+| **Test** | each kind · a subtitle appearing removes the row with no DB write · blacklisted, outside-the-folders and missing videos are excluded · legacy rows · ⛔ zero network |
+| **Expected** | ⛔ The DB still only PREVENTS work; this is a read. The disk decides what is resolved |
+
+### Step 8d — The gate keeps the candidates
+
+**surfaces:** `logic`
+**depends on:** 8b
+
+| | |
+| --- | --- |
+| **Build** | Every problem outcome carries `tried_before` — the candidates tried in EARLIER runs, from the DB, with their local file: the negative skip (`pipeline.py:965`), `_all_refused(already=True)` (D4), a fresh REFUSED, and a CONFIDENT that follows earlier refusals (*"found on a retry"*). `attempts` keeps meaning *this run* |
+| **Prove** | run 1 refuses 3 → run 2 inside the window: the SKIPPED/negative row carries all 3 with their rates and paths |
+| **Test** | each of the four shapes · ⛔ nothing is downloaded or requested to build `tried_before` |
+| **Expected** | ⛔ The outcome words do not change. A skip is still a skip; it now says what it is waiting on |
+
+### Step 8e — Needs you persists, and says when
+
+**surfaces:** `ui`
+**depends on:** 8c, 8d
+
+| | |
+| --- | --- |
+| **Build** | The window merges `hato problems --json` with the run's rows into ONE Needs-you list (a pure function in `gui/run.py`) · a row reads *"retrying in 14h"* / *"retry due — next run"* · the pick uses every candidate ever tried and **reads the child's verdict** before it says *paired* (D6) · *Look again now* on a row (`--retry-now --only <video>`, D3) · Settings says the interval · a success after refusals says it was found on a retry · the blacklist card loads the real blacklist (D5) |
+| **Prove** | the real window over a lab: refuse → reopen → re-run inside the window → the row is still there, with its candidates and its countdown. LOOK at every state |
+| **Test** | the merge, both ways · a refused pick leaves the row asking · every new control is wired · ⛔ the word *refused* never reaches a person |
+| **Expected** | ⭐ The ruled design, extended, not redesigned |
+
+### Step 8f — *Probably not out yet*
+
+**surfaces:** `logic` `ui`
+**depends on:** 8d, 8e
+
+| | |
+| --- | --- |
+| **Build** | At a NOT_FOUND or all-refused ending the pipeline records `newest_offered` — the newest episode any PLACED release offers, in the video's own numbering (per release: `max(episodes) - offset`). The window highlights *wait for it* only when the video's episode is exactly one higher |
+| **Prove** | Sonic's own history: Iruma-kun S4 23 (newest offered E22) and Honzuki S4 22 (newest E21) highlight; Tsuihou 12 and Tetsunabe 09 do not |
+| **Test** | seasonal and absolute releases in one entry (06 §2) · a release placed nowhere counts for nothing · the unhighlighted case still offers the button |
+
+### Step 8g — Clear hato's memory
+
+**surfaces:** `data` `ui`
+**depends on:** 8c
+
+| | |
+| --- | --- |
+| **Build** | `hato state --clear [--blacklist]` under the run lock: attempts, retries and remembered shows; the blacklist only when asked · Settings: a card that names what goes and what stays, and a themed confirm |
+| **Test** | refused while a run holds the lock · counts reported · the blacklist survives unless named · ⛔ no subtitle, kept original, setting or key is touched |
+
+### Step 8h — The retry actually happens
+
+**surfaces:** `delivery` (a resident process)
+**depends on:** 8c
+
+| | |
+| --- | --- |
+| **Build** | Every real run writes the next due retry to a small file; the tray watcher wakes at it and runs · the window's countdown is honest about what will run it (tray on → *"in 14h"*; off → *"the next time hato runs"*) |
+| **Test** | a fake clock: due passes → one run; not twice for the same due; a due in the past at start is covered by the catch-up run · ⛔ the watcher still imports neither a toolkit nor the pipeline |
+
+### Step 8j — Try harder works (4e) · Step 8k — Network drive (4f): measure first
+
+8j is 8e's *Look again now* with a larger cap. 8k is a read-only investigation (a builder,
+isolated store); **no code until it has a failure message.**
+
+### Step 8y — D2: the 03:00 switch registers a real task
+
+**surfaces:** `ui` `delivery` · shelling out
+**depends on:** 7e, 7f, 7h (`startup.py` is the model)
+
+| | |
+| --- | --- |
+| **Build** | `hato/schedule.py` — ⛔ **Task Scheduler is the only state** (no config key; `schedule` is only the time). Registered from hato's own XML with the battery settings written out; the start never already past; READ BACK after every write · `watch.py --scheduled` — the windowless program the task starts, which runs hato hidden with `--wait` and hands back its exit code (logged when not 0) · the window: the switch read from the task on open, asking Windows on a click, the time field re-registering, a note beside it when the task is off or changed in Task Scheduler or refused, *"next run in 22h"* derived, the retry sentences naming the daily run, and no switch where nothing can schedule |
+| **Prove** | 🚨 **One real scheduled execution, its log read** (`10-deployment.md`) — and two-arm: the real chain shows no console window where a console program does |
+| **Test** | `test_schedule.py` over **recorded** schtasks output (the SID and machine name scrubbed), a fake schtasks that prints back in the console's code page, and ONE real-scheduler check under its own name · `test_gui_widgets.py` §D2 · ⛔ the suite runs with `HATO_NO_SCHEDULER=1` (`conftest.py`) |
+| **Expected** | ⛔ Nothing in the suite, the smoke or the build registers the person's own `hato` task — **turning it on is theirs to do** |
+
+🚨 **PART 1 DEFECT, recorded: `05-interface.md` specified this switch — *"registers or
+removes the Windows scheduled task, and says when it next runs"* — and no step ever built
+it.** 7e built the time field and the config value; nothing owned the task. It shipped in
+1.0.0 and 1.0.1 as a switch that could not be turned off and turned nothing on.
+
+---
+
+## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.1`, 2026-09-19. ⛔ NO PyPI, RULED
+
+> ⭐ **`v1.0.1` IS LIVE AND EVERY GATE IS GREEN** — `tests` 13/13, `release` 2/2 with the
+> stamp gate passing for the first time, suite 27 suites / 1616 checks, smoke 20/20
+> against the copy unpacked outside the repo, and the **published asset downloaded and
+> hash-verified** against the local artifact. Tag `3114321`.
+>
+> ▶ **The sequence, the traps and the two cuts of 1.0.1 are in `spec/10-deployment.md`
+> §*RELEASED* and `LEDGER.md` §delivery.** ⛔ Do not restate them here; the block below
+> is the *wheel/audit* half, which is parked.
+>
+> ⚠ **The line below saying a tagged release "waits for the GUI" is SATISFIED** — the
+> window shipped at 7c–7h and the release followed. Kept for the record of the gate.
 
 > ✅ **`github.com/SonicSandbox/hato` — first commit `15f06c6`, 123 files, 41,391 lines.**
 > Pushed by the orchestrator on Sonic's go, after: the deploy key verified against the repo

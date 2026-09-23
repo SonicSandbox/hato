@@ -34,6 +34,7 @@ import tsubasa
 
 from hato import cache as cache_module, client as client_module, credentials, keep, \
     pipeline, port, present, resolution, state
+from hato import report as report_module
 from hato.cache import Cache
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -264,6 +265,27 @@ def test_a_refusal_states_what_was_measured_and_what_would_change_it(tmp_path):
     assert refused[0].retry_after is not None
     assert len(refused[0].attempts) == 2
     assert lab.rows()[pipeline.REFUSED] == 4        # 2 videos x 2 candidates
+
+
+def test_a_refusal_is_recorded_with_its_file_and_how_close_it_came(tmp_path):
+    """⭐ RUNBOOK 8b. What lets a refused candidate be OFFERED again after this run
+    is forgotten: the content hash finds the downloaded file in the working cache,
+    and the rate says how close it came. ⚠ `subtitle_hash` had been passed as None
+    since 1b, so tomorrow's run knew a refusal happened and not what it was."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    lab.decide = lambda name: dict(outcome=port.REFUSED, match_rate=0.31,
+                                   reason=u"31% match -- the timing does not hold")
+    lab.run(candidates=2)
+
+    rows = lab.db.candidates(lab.hash_of(u"frieren S2 - 01.mkv"), u"ja")
+    assert len(rows) == 2
+    for row in rows:
+        assert row.match_rate == pytest.approx(0.31)
+        assert row.subtitle_hash and len(row.subtitle_hash) == 64
+        found = lab.cache.find(row.subtitle_hash, keep.download_name(row.jimaku_filename, u"ja"))
+        assert found is not None and found.is_file(), (
+            u"%s was recorded, but the file it names is not where the cache would put "
+            u"it -- a person could not be offered it again" % row.jimaku_filename)
 
 
 def test_an_error_names_the_video_and_writes_nothing(tmp_path):
@@ -816,6 +838,186 @@ def test_every_candidate_refused_records_a_soft_negative(tmp_path):
     assert lab.spent == 0
     assert report.results[0].skip == pipeline.NEGATIVE
     assert u"refused by timing" in report.results[0].reason
+
+
+# ---------------------------------------------------------------------------
+# 7b. ⭐ RUNBOOK 8d -- a refused episode keeps its candidates on offer
+# ---------------------------------------------------------------------------
+
+def refuse_everything(lab, rate=0.31):
+    lab.decide = lambda name: dict(outcome=port.REFUSED, match_rate=rate,
+                                   reason=u"%d%% match -- the timing does not hold"
+                                          % round(rate * 100))
+
+
+def test_a_run_inside_the_retry_window_still_offers_yesterdays_candidates(tmp_path):
+    u"""🚨 4a's SECOND CAUSE (`pipeline.py`, the negative skip). A run inside the
+    retry window answered SKIPPED/negative with a reason and a date and NONE of the
+    files that had just been refused -- so a row a person could pick from became a
+    quiet *"waiting to retry"*, and the pick was gone. Sonic *"never got to"* pick
+    Tsuihou.
+
+    ⛔ And it must still cost nothing: no request, no download.
+    """
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    refuse_everything(lab)
+    first = lab.run(candidates=2)
+    refused, = first.results
+    tried = sorted(a.name for a in refused.attempts)
+    assert len(tried) == 2 and refused.tried_before == ()
+
+    lab.downloads = []
+    again = lab.run(candidates=2)
+
+    waiting, = again.results
+    assert waiting.skip == pipeline.NEGATIVE
+    assert lab.spent == 0 and lab.downloads == [], "remembering cost a request"
+    assert sorted(t.name for t in waiting.tried_before) == tried, (
+        u"the run inside the retry window forgot the candidates a person could pick")
+    for t in waiting.tried_before:
+        assert t.match_rate == pytest.approx(0.31)
+        assert t.path and os.path.isfile(t.path), u"%s is offered with no file" % t.name
+    wire = report_module.as_dict(waiting)
+    assert sorted(t[u"name"] for t in wire[u"tried_before"]) == tried
+    assert wire[u"attempts"] == [], u"`attempts` must keep meaning THIS run"
+
+
+def test_after_the_window_an_episode_with_nothing_new_still_offers_the_old_ones(tmp_path):
+    u"""🚨 D4 (RUNBOOK 8d). Once every offered candidate has been refused, the
+    retry after the window downloads nothing -- correctly -- and came back
+    REFUSED with ZERO attempts, so the pick row it made had nothing to pick."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    refuse_everything(lab)
+    first = lab.run(candidates=99)
+    everything = sorted(a.name for a in first.results[0].attempts)
+    lab.now[0] += timedelta(days=1, minutes=1)
+
+    lab.downloads = []
+    later = lab.run(candidates=99)
+
+    stuck, = later.results
+    assert stuck.outcome == pipeline.REFUSED and stuck.attempts == ()
+    assert lab.downloads == []
+    assert sorted(t.name for t in stuck.tried_before) == everything, (
+        u"every candidate had been refused, and the row offered none of them")
+
+
+def test_a_fresh_refusal_keeps_this_runs_files_and_earlier_ones_apart(tmp_path):
+    u"""⭐ `attempts` is THIS run, `tried_before` is every earlier one -- the counts,
+    the report and the byte total all read `attempts` that way, and a pick row
+    shows both."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    refuse_everything(lab)
+    first = lab.run(candidates=2)
+    before = set(a.name for a in first.results[0].attempts)
+    lab.now[0] += timedelta(days=1, minutes=1)
+
+    second = lab.run(candidates=2)
+
+    row, = second.results
+    now = set(a.name for a in row.attempts)
+    assert row.outcome == pipeline.REFUSED and len(now) == 2
+    assert set(t.name for t in row.tried_before) == before
+    assert not now & before, u"a file tried in this run was listed as tried before"
+
+
+def test_a_success_after_refusals_says_what_was_tried_before(tmp_path):
+    u"""⭐ The retry worked -- and the only way a person could learn that is if the
+    success still carries what was refused on the way (RUNBOOK 8e says it)."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    refuse_everything(lab)
+    first = lab.run(candidates=2)
+    before = sorted(a.name for a in first.results[0].attempts)
+    lab.now[0] += timedelta(days=1, minutes=1)
+    lab.decide = lambda name: {}                      # the next candidate holds
+
+    second = lab.run(candidates=2)
+
+    found, = second.results
+    assert found.outcome == pipeline.CONFIDENT and found.wrote
+    assert sorted(t.name for t in found.tried_before) == before
+
+
+def test_a_video_moved_while_it_waits_is_remembered_where_it_is_now(tmp_path):
+    u"""⭐ RUNBOOK 8e. The skip inside the retry window records nothing, so a
+    video moved while it waited kept its OLD path in the state DB -- and the
+    problems view, which asks the disk, dropped it. ⛔ And a dry run, which
+    writes nothing, does not correct it either."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    refuse_everything(lab)
+    lab.run(candidates=2)
+    video_hash = lab.hash_of(u"frieren S2 - 01.mkv")
+    moved = lab.media / u"sub" / u"frieren S2 - 01.mkv"
+    moved.parent.mkdir()
+    os.replace(str(lab.media / u"frieren S2 - 01.mkv"), str(moved))
+
+    lab.run(candidates=2, dry_run=True)
+    before, = [p for p in lab.db.problems(u"ja") if p.video_hash == video_hash]
+    assert before.video_path != str(moved), u"a dry run wrote to the state DB"
+
+    lab.run(candidates=2)
+    after, = [p for p in lab.db.problems(u"ja") if p.video_hash == video_hash]
+    assert os.path.normcase(after.video_path) == os.path.normcase(str(moved)), (
+        u"the problem still names the place the video left")
+
+
+def test_look_again_now_tries_the_next_files_inside_the_retry_window(tmp_path):
+    u"""🚨 D3, TWO ARMS. The window's *Try 3 more candidates* ran the video's folder
+    with no flag at all, and every refusal has just recorded a soft negative -- so
+    for the 24 hours after one, the only time anybody presses it, the gate said
+    "waiting to retry" and NOTHING was tried.
+
+    ⭐ `retry_now` looks past the WAIT and nothing else: the files already refused
+    are still never downloaded again.
+    """
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    refuse_everything(lab)
+    first = lab.run(candidates=2)
+    refused_once = set(a.name for a in first.results[0].attempts)
+
+    lab.downloads = []
+    plain = lab.run(candidates=2)                       # arm A: what the button did
+    assert plain.results[0].skip == pipeline.NEGATIVE and lab.downloads == []
+
+    again = lab.run(candidates=2, retry_now=True)       # arm B: look again now
+    row, = again.results
+    assert len(lab.downloads) == 2, u"looking again tried nothing"
+    assert not set(lab.downloads) & refused_once, (
+        u"a file already refused for this video was downloaded again")
+    assert set(a.name for a in row.attempts) == set(lab.downloads)
+    assert set(t.name for t in row.tried_before) == refused_once
+
+
+def test_look_again_now_still_honours_the_blacklist(tmp_path):
+    u"""⛔ It overrules hato's own WAIT; the blacklist is the person's instruction."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    lab.db.blacklist_add(lab.hash_of(u"frieren S2 - 01.mkv"), note=u"not wanted")
+    report = lab.run(retry_now=True)
+    assert report.results[0].skip == pipeline.BLACKLISTED and lab.downloads == []
+
+
+def test_only_keeps_the_run_to_the_named_video(tmp_path):
+    u"""⭐ `only` -- one row's *Look again now* must not become a run over the
+    whole folder (which is what the old button did)."""
+    lab = Lab(tmp_path, names=episodes_up_to(3))
+    report = lab.run(only=[lab.media / u"frieren S2 - 02.mkv"])
+    assert [r.name for r in report.results] == [u"frieren S2 - 02.mkv"]
+    assert all(u"S2 - 02" in name for name in lab.downloads)
+
+
+def test_one_video_is_offered_what_the_whole_folder_would_offer_it(tmp_path):
+    u"""🚨 `only` MUST NOT SHRINK THE ALIGNMENT. A release's numbering is fitted
+    against the FOLDER's range (entry 11446 numbers season 2 as 29-38); filtered
+    at discovery, one video alone has no range at all -- *"the known soft spot"*
+    -- and *Look again now* would be offered less than the run that refused it."""
+    lab = Lab(tmp_path)
+    five = u"frieren S2 - 05.mkv"
+    whole = lab.by_name(lab.run(dry_run=True))[five]
+    alone = lab.by_name(lab.run(dry_run=True, only=[lab.media / five]))[five]
+    assert whole.candidates_offered > 1
+    assert alone.candidates_offered == whole.candidates_offered, (
+        u"one video alone was offered %d files where the folder's run offers %d"
+        % (alone.candidates_offered, whole.candidates_offered))
 
 
 def test_a_video_that_cannot_be_numbered_stops_re_listing_the_entry(tmp_path):
@@ -1704,6 +1906,71 @@ def test_an_entry_whose_every_candidate_is_refused_escalates_to_the_next_entry(t
         resolution.cache_key(u"frieren")).entry_id == ENTRY
 
 
+def _escalating_lab(tmp_path):
+    u"""Two videos on a wrong entry; the right one wins 31 and refuses 32."""
+    lab = Lab(tmp_path, names=[u"frieren - 31.mkv", u"frieren - 32.mkv"])
+    lab.client = WrongSeasonThenRight(lab.real)
+    lab.decide = lambda name: (
+        {"outcome": port.CONFIDENT}
+        if not name.startswith(WRONG_SEASON) and (u"- 31" in name or u"[31]" in name)
+        else {"outcome": port.REFUSED, "reason": u"the timing does not hold"})
+    return lab
+
+
+def test_an_alternate_entrys_files_are_recorded_under_that_entry(tmp_path):
+    u"""ADVERSARY 2026-09-22 F13. The alternate's files were RECORDED under the
+    FIRST entry's id -- `_candidates` read the entry off a `show.resolved` not yet
+    moved -- so the refusal check, which keys on the entry, never found them,
+    and a later *Look again* downloaded files already refused for the video."""
+    lab = _escalating_lab(tmp_path)
+    report = lab.run(candidates=2)
+    show, = report.shows
+    assert show.resolved.entry_id == ENTRY, u"the control: the alternate won for 31"
+    entries = sorted(set(e for (e,) in lab.db._conn.execute(
+        "SELECT jimaku_entry FROM attempts WHERE jimaku_filename NOT LIKE ?",
+        (WRONG_SEASON + u"%",))))
+    assert entries == [ENTRY], (
+        u"the right entry's files were recorded under entr%s %s, not %d"
+        % (u"y" if len(entries) == 1 else u"ies", entries, ENTRY))
+    refused_32 = [n for (n,) in lab.db._conn.execute(
+        "SELECT jimaku_filename FROM attempts WHERE video_path LIKE '%32.mkv' "
+        "AND outcome = 'REFUSED' AND jimaku_filename NOT LIKE ?", (WRONG_SEASON + u"%",))]
+    assert refused_32, u"the control: 32 refused the right entry's files in run 1"
+    del lab.downloads[:]
+    lab.run(candidates=2, retry_now=True, only=[str(lab.media / u"frieren - 32.mkv")])
+    again = [n for n in lab.downloads if n in refused_32]
+    assert again == [], (
+        u"--retry-now downloaded %d file(s) already refused for this video: %s"
+        % (len(again), again))
+
+
+def test_an_alternate_that_wins_nothing_leaves_the_show_on_its_entry(tmp_path):
+    u"""ADVERSARY 2026-09-22 F13, the other half. The alternate is the entry only
+    WHILE its files are tried; when it wins nothing the show goes back to the
+    entry it was on -- or the rest of the run (its note, its negative, the next
+    alternate's *"instead of"*) names an entry that was only ever tried."""
+    lab = _escalating_lab(tmp_path)
+    lab.decide = lambda name: {"outcome": port.REFUSED, "reason": u"the timing does not hold"}
+    report = lab.run(candidates=2)
+    show, = report.shows
+    assert ENTRY in lab.client.entries, u"the control: the alternate entry was tried"
+    assert show.resolved.entry_id != ENTRY, (
+        u"an alternate that won nothing was left as the show's entry (%d)" % ENTRY)
+
+
+def test_a_first_ever_success_on_an_alternate_entry_is_not_found_on_a_retry(tmp_path):
+    u"""ADVERSARY 2026-09-22 F14. What a video tried in EARLIER runs was read again
+    for the alternate's pass -- after this run had recorded the first entry's
+    refusals -- so a first run's success said *"found on a retry"*."""
+    lab = _escalating_lab(tmp_path)
+    report = lab.run(candidates=2)
+    won = lab.by_name(report)[u"frieren - 31.mkv"]
+    assert won.outcome == pipeline.CONFIDENT, u"the control: the alternate won 31"
+    assert won.tried_before == (), (
+        u"the first run ever carried %d earlier file(s) -- the window would say *found on "
+        u"a retry*: %s" % (len(won.tried_before), [t.name for t in won.tried_before]))
+
+
 def test_a_low_confidence_show_whose_entry_held_nothing_is_identified_again(tmp_path):
     u"""🚨 THE EPISODE NUMBER IS EVIDENCE ABOUT THE ENTRY, and it was in hand and
     unused. `_forget` fired only when a video had been ATTEMPTED and refused --
@@ -1976,3 +2243,67 @@ def test_a_real_write_that_cannot_land_is_an_ERROR_and_silences_nothing(real_vid
     assert one.retry_after is None
     assert lab.rows()[pipeline.NOT_FOUND] == 0        # ⛔ nothing was silenced
     assert lab.names_in(lab.media) == [u"frieren S2 - 01.mkv"]
+
+
+def test_both_endings_that_wait_record_the_newest_episode_on_offer(tmp_path):
+    u"""⭐ RUNBOOK 8f. The capture's season runs 1-10; episode 11 is one past it.
+    Whether it ends NOT_FOUND or all-refused, the newest episode on offer (10)
+    is RECORDED with the negative -- `hato problems` reads it from there, after
+    the run is gone -- and carried on the row, so the window can say *probably
+    not out yet*. ⛔ Nothing is requested or downloaded to know it."""
+    lab = Lab(tmp_path, names=episodes_up_to(11))
+    refuse_everything(lab)
+    report = lab.run(candidates=1)
+    rows = lab.by_name(report)
+
+    for name in (u"frieren S2 - 11.mkv", u"frieren S2 - 05.mkv"):
+        row = rows[name]
+        assert row.outcome in (pipeline.NOT_FOUND, pipeline.REFUSED), (name, row.outcome)
+        assert row.newest_offered == 10, (name, row.newest_offered)
+        assert report_module.as_dict(row)[u"newest_offered"] == 10, name
+        latest, = [p.latest for p in lab.db.problems(u"ja")
+                   if p.video_hash == lab.hash_of(name)]
+        assert latest.newest_offered == 10, (
+            u"%s: the negative did not record it, so the memory would lose it" % name)
+    assert pipeline.VideoResult(u"x.mkv", pipeline.CONFIDENT).newest_offered is None
+
+
+def test_a_not_found_records_the_newest_episode_on_offer(tmp_path):
+    u"""⭐ RUNBOOK 8f, the OTHER ending. Episodes 1-10 fit both numberings cleanly
+    (0 and +28), and 24 lands on nothing -- a plain NOT_FOUND through
+    `_not_found`, which must record the newest on offer too. (24 is fourteen
+    past it: recorded, and correctly NOT *probably not out yet*.)"""
+    lab = Lab(tmp_path, names=episodes_up_to(10) + [u"frieren S2 - 24.mkv"])
+    refuse_everything(lab)
+    report = lab.run(candidates=1)
+    row = lab.by_name(report)[u"frieren S2 - 24.mkv"]
+    assert row.outcome == pipeline.NOT_FOUND and not row.attempts, (
+        u"the control: 24 must end NOT_FOUND with nothing tried -- %s, %d tried"
+        % (row.outcome, len(row.attempts)))
+    assert row.newest_offered == 10, row.newest_offered
+    latest, = [p.latest for p in lab.db.problems(u"ja")
+               if p.video_hash == lab.hash_of(u"frieren S2 - 24.mkv")]
+    assert latest.newest_offered == 10, u"the NOT_FOUND did not record it"
+
+
+def test_a_run_inside_the_retry_window_carries_the_same_facts_as_hatos_memory(tmp_path):
+    u"""ADVERSARY 2026-09-22 A5. The skip a run makes inside the retry window
+    reaches the window DURING every run, and it said `candidates_offered: 0`
+    with no `newest_offered`: a late episode turned from *"probably not out
+    yet"* into a pick with another episode's file OUTLINED, and *Look again*
+    claimed every file had been tried. ⭐ The newest on offer is the negative's
+    own; how many the entry holds is UNKNOWN -- this run never listed it."""
+    lab = Lab(tmp_path, names=episodes_up_to(11))
+    refuse_everything(lab)
+    first = lab.by_name(lab.run(candidates=1))[u"frieren S2 - 11.mkv"]
+    assert first.newest_offered == 10, u"the control: run 1 knew the newest on offer"
+    lab.now[0] += timedelta(hours=1)                   # inside the 24-hour wait
+    row = lab.by_name(lab.run(candidates=1))[u"frieren S2 - 11.mkv"]
+    assert row.skip == pipeline.NEGATIVE, u"the control: run 2 skips it, waiting"
+    said = report_module.as_dict(row)
+    assert said[u"newest_offered"] == 10, (
+        u"the run's copy of a late episode lost *probably not out yet*: %r"
+        % said[u"newest_offered"])
+    assert said[u"candidates_offered"] is None, (
+        u"a run that never listed the entry said it offered %r files"
+        % said[u"candidates_offered"])

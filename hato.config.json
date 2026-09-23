@@ -58,6 +58,12 @@
         "why": "Step 7h. Starting with Windows. NOTHING HERE TOUCHES THE REAL REGISTRY -- every check reads or drives an injected fake, because a suite that adds a real login entry changes the developer's machine and leaves it changed. The check that earns its keep is the SOURCE command: hato is not installed as a distribution (measured -- `import hato` raises ModuleNotFoundError from any directory but its own), so a login entry running `pythonw -m hato.watch` would fail at every boot AND fail invisibly, since pythonw has no console to print the traceback to. `hato-watch.pyw` exists because a script's own folder goes on sys.path, and these checks are what refuses a 'simplification' back to -m. Also pins that the frozen entry is hato-watch.exe and never hato.exe (which is the WINDOW, and would throw a window in somebody's face at every login), that the command is quoted by Windows' own rule, and that there is NO config key for any of it -- the registry is the only state, so the switch cannot read ON while nothing runs."
       },
       {
+        "name": "schedule",
+        "cmd": ["-m", "pytest", "tests/test_schedule.py", "-q", "--no-header"],
+        "default": true,
+        "why": "D2 (2026-09-23). The 'runs automatically at 03:00' switch read ON for days over no task at all -- it was drawn from bool(cfg.schedule), which is always true, and turning it off sent schedule=off, which the config refuses. Task Scheduler is now the only state. These checks hold the task to what makes it RUN: the battery settings written out (the 2026-09-17 trap -- the default does not start on battery and reports Last Result 0 for a run that never happened), a start never already past, a windowless program (a console program from Task Scheduler is a window over whatever the person is doing), and a read-back that survives schtasks printing a non-ASCII path as '?'. A hand-made task on the defaults reads as needing repair, never as fine. NOTHING HERE TOUCHES THE REAL TASK SCHEDULER except ONE check, which opts in under its own task name with a harmless action and removes it whatever happens -- because only Windows can say whether it kept the battery settings it was given."
+      },
+      {
         "name": "gui_run",
         "cmd": ["-m", "pytest", "tests/test_gui_run.py", "-q", "--no-header"],
         "default": true,
@@ -92,6 +98,12 @@
         "cmd": ["-m", "pytest", "tests/test_state.py", "-q", "--no-header"],
         "default": true,
         "why": "Step 1b. The state DB through its one accessor: refusals per (video x subtitle), negative-cache expiry at 7 and 30 days, a reason on every non-confident row, corrupt-DB recovery, WAL, the run lock. Structurally cannot cover the canonicity table end to end -- the filesystem half is the fetch loop's (RUNBOOK 4b)."
+      },
+      {
+        "name": "problems",
+        "cmd": ["-m", "pytest", "tests/test_problems.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Step 8c. The open-problems view: the state DB proposes, the disk decides -- a subtitle that appeared, a video gone, moved out, skipped, blacklisted or replaced by another rip takes its row off, each beside a control that stays; the outcome and files a pick needs; `hato problems [--json]` never says refused, never creates a DB, zero network. Cannot cover the window merging these rows with a run's -- that is gui_run's."
       },
       {
         "name": "names",

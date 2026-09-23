@@ -106,6 +106,21 @@ def _windowless(executable):
     return executable
 
 
+def watcher_argv():
+    u"""How something OUTSIDE hato starts the watcher's program. -> [str]
+
+    ⭐ ONE ANSWER, TWO CALLERS: this module's login entry, and the daily task
+    (`hato/schedule.py`), which starts the same windowless program with one
+    flag. Both run with no environment and a working directory of Windows'
+    choosing, which is why the source route is the `.pyw` and never `-m`.
+    """
+    if getattr(sys, u"frozen", False):
+        return [os.path.join(os.path.dirname(sys.executable),
+                             u"hato-watch.exe" if supported() else u"hato-watch")]
+    return [_windowless(sys.executable),
+            os.path.join(_repo_root(), u"hato-watch.pyw")]
+
+
 def command():
     u"""The exact command line Windows should run at login. -> str
 
@@ -113,13 +128,7 @@ def command():
     this path has spaces in it on the machine it was written on. ⛔ Hand-built
     quoting is how a registry entry silently becomes two arguments.
     """
-    if getattr(sys, u"frozen", False):
-        exe = os.path.join(os.path.dirname(sys.executable),
-                           u"hato-watch.exe" if supported() else u"hato-watch")
-        return subprocess.list2cmdline([exe])
-    return subprocess.list2cmdline(
-        [_windowless(sys.executable),
-         os.path.join(_repo_root(), u"hato-watch.pyw")])
+    return subprocess.list2cmdline(watcher_argv())
 
 
 def registered():
@@ -256,4 +265,4 @@ def set_enabled(on):
 
 __all__ = ["APPROVED_KEY", "RUN_KEY", "VALUE_NAME", "StartupError",
            "approved", "command", "disable", "enable", "is_enabled",
-           "is_stale", "registered", "set_enabled", "supported"]
+           "is_stale", "registered", "set_enabled", "supported", "watcher_argv"]

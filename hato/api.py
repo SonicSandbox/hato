@@ -155,7 +155,9 @@ class Result(object):
     `candidates_tried`
         how many candidates were downloaded and retimed for this video. ⚠ This
         is the spec's name for `len(VideoResult.attempts)`; `candidates_offered`
-        is how many the entry held, which is usually larger.
+        is how many the entry held, which is usually larger -- ⚠ or None when
+        this run never listed the entry: a video skipped while it waits for its
+        retry, and every row `hato problems` remembers.
     `api_calls`
         ⚠ ALWAYS 0, and it is not a bug here: metered calls are spent per SHOW
         (one search and one file listing serve every video of it), so no

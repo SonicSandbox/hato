@@ -135,7 +135,8 @@ def collect(**kw):
 
 
 REQUIRED = ["key", "search", "rate limit", "files", "download", "tsubasa",
-            "self_check", "track reader", "unrar", "py7zr", "cache", "config", "api calls"]
+            "self_check", "track reader", "anitopy", "guessit", "unrar", "py7zr", "cache",
+            "config", "api calls"]
 
 
 # -- the readout ---------------------------------------------------------------
@@ -246,6 +247,51 @@ def test_the_track_reader_line_says_missing_and_blocked_when_it_does_not(monkeyp
     line = next(l for l in collect(session=FakeSession()).lines if l.label == "track reader")
     assert line.state == doctor.MISSING
     assert "embedded_subs" in line.text and "4b" in line.text
+
+
+def _parser_line(ro, name):
+    return next(l for l in ro.lines if l.label == name)
+
+
+def test_each_optional_parser_is_asked_to_parse_a_name_itself():
+    u"""ADVERSARY 2026-09-22 D1. tsubasa's wrapper swallows a parser that raises,
+    so a run cannot tell a working guessit from a broken one -- the doctor asks
+    the parser directly, with a name it must number."""
+    ro = collect(session=FakeSession())
+    for name in (u"anitopy", u"guessit"):
+        line = _parser_line(ro, name)
+        assert line.state == doctor.OK and u"-> episode" in line.text, (name, line.text)
+
+
+def test_a_parser_that_imports_and_cannot_parse_is_FAILED_with_its_own_words(monkeypatch):
+    u"""⭐ The frozen build's failure shape: the import works, the parse raises
+    (babelfish's converters left out). tsubasa hides it; this must not."""
+    import guessit as _guessit_pkg
+
+    def broken(filename, *a, **k):
+        raise ValueError(u"no converter for country code")
+
+    monkeypatch.setattr(_guessit_pkg, u"guessit", broken)
+    line = _parser_line(collect(session=FakeSession()), u"guessit")
+    assert line.state == doctor.FAILED and u"no converter for country code" in line.text, line.text
+
+
+def test_a_parser_that_numbers_the_name_wrong_is_FAILED_not_OK(monkeypatch):
+    u"""D1's verdict: a parser that answers with the WRONG episode works as badly
+    as one that raises -- and every check drove a right answer or a raise, so the
+    comparison could be dropped unseen (found by the M8zd builder)."""
+    import guessit as _guessit_pkg
+    monkeypatch.setattr(_guessit_pkg, u"guessit", lambda filename, *a, **k: {u"episode": 4})
+    line = _parser_line(collect(session=FakeSession()), u"guessit")
+    assert line.state == doctor.FAILED and line.extra == [u"expected episode 5"], (
+        line.state, line.text, line.extra)
+
+
+def test_a_parser_that_is_not_installed_is_MISSING_not_a_fault(monkeypatch):
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, u"guessit", None)
+    line = _parser_line(collect(session=FakeSession()), u"guessit")
+    assert line.state == doctor.MISSING and u"not importable" in line.text, line.text
 
 
 def test_optional_archive_tools_are_reported_by_presence():

@@ -633,3 +633,129 @@ def test_the_generated_video_carries_a_japanese_text_track(real):
     assert tracks.ok is True, tracks.reason
     assert [t.text for t in tracks.tracks] == [True]
     assert real.video.stat().st_size < 2 * 1024 * 1024        # ⚠ keep it tiny
+
+
+# ---------------------------------------------------------------------------
+# 9. ⭐ RUNBOOK 8e -- a person's pick, through the EXACT command the window runs
+# ---------------------------------------------------------------------------
+
+def _scattered(media):
+    u"""A subtitle as long as the video's cues and sharing no single offset with
+    them -- REFUSED by timing, and not an ERROR (a too-long file trips the
+    duration guard instead, which force must NOT override)."""
+    import random
+    rng = random.Random(7)
+    wrong = media.cache_dir / (media.video.stem + u".ja.srt")
+    span = (media.starts[0], media.starts[-1])
+    _media.write_srt(wrong, _media.srt(sorted(rng.uniform(*span) for _ in media.starts)))
+    return wrong
+
+
+def _pick(capsys, video, subtitle, force=False):
+    u"""Run the WINDOW'S OWN argv through `cli.main`. -> (exit code, [objects])
+
+    🚨 THE SEAM THAT WAS NEVER TESTED. The window's checks asserted the argv's
+    SHAPE and this file asserted the port; nothing ran one through the other, so
+    `hato sync ... --json` died on a usage error for every pick ever made while
+    both sides were green.
+    """
+    import json
+    from hato import cli
+    from hato.gui import run as gui_run
+    argv = gui_run.argv_for_pair(video, subtitle, force=force)
+    code = cli.main(argv[len(gui_run.cli_argv()):])
+    out = capsys.readouterr().out
+    return code, [json.loads(line) for line in out.splitlines() if line.strip()]
+
+
+def test_the_windows_pick_is_a_command_hato_sync_accepts(tmp_path, capsys):
+    u"""🚨 D7, measured 2026-09-22: `usage: hato sync ... error: unrecognized
+    arguments: --json`, exit 2 -- on every pick the window has ever made."""
+    media = _media.build(tmp_path)
+    code, said = _pick(capsys, media.video, media.subtitle)
+    assert code != 2, u"the window's pick is still a usage error"
+    answer, = said
+    assert answer[u"type"] == u"pair"
+    assert answer[u"written"] is True and answer[u"forced"] is False
+    assert Path(answer[u"output_path"]).is_file()
+    assert code == 0
+
+
+def test_a_pick_under_a_configured_out_lands_where_every_run_looks(tmp_path, capsys,
+                                                                  monkeypatch):
+    u"""ADVERSARY 2026-09-22 F12 / A25. With `out` configured, a pick written
+    BESIDE the video is where no run and no `hato problems` looks -- the row
+    never settled, and the next run fetched again over the person's choice.
+    ⭐ One source of truth: `keep.target_dir` with the configured folder."""
+    import json
+    from hato import keep
+    media = _media.build(tmp_path)
+    out = tmp_path / u"Subs"
+    config_file = tmp_path / u"config.toml"
+    config_file.write_text(u"folders = [%s]\nout = %s\n" % (
+        json.dumps(str(media.media_dir)), json.dumps(str(out))), encoding="utf-8")
+    monkeypatch.setenv("HATO_CONFIG", str(config_file))
+
+    code, (answer,) = _pick(capsys, media.video, media.subtitle)
+    assert code == 0 and answer[u"written"] is True, answer
+    wanted = keep.target_dir(media.video, str(media.media_dir), str(out))
+    assert Path(answer[u"output_path"]).parent == Path(wanted), (
+        u"the pick landed in %s; every run looks for it in %s"
+        % (Path(answer[u"output_path"]).parent, wanted))
+    beside = [p.name for p in media.media_dir.iterdir() if p.suffix == u".srt"]
+    assert beside == [], u"a pick under `out` was ALSO written beside the video: %s" % beside
+
+    config_file.write_text(u"folders = [%s]\n" % json.dumps(str(media.media_dir)),
+                           encoding="utf-8")                    # the control: no `out`
+    other = _media.build(tmp_path / u"second")
+    code, (plain,) = _pick(capsys, other.video, other.subtitle)
+    assert Path(plain[u"output_path"]).parent == other.media_dir, plain[u"output_path"]
+
+
+def test_a_forced_pick_writes_the_file_and_says_whose_decision_it_was(tmp_path, capsys):
+    u"""⭐ Two arms on the REAL engine. Without force a refused pair writes nothing
+    -- which is why every pick the window offers could never succeed; with it the
+    file lands, the outcome stays REFUSED, and the answer says FORCED."""
+    media = _media.build(tmp_path)
+    wrong = _scattered(media)
+
+    code, (plain,) = _pick(capsys, media.video, wrong, force=False)
+    assert plain[u"outcome"] == port.REFUSED and plain[u"written"] is False
+    assert code == 1
+    assert not (media.media_dir / (media.video.stem + u".ja.srt")).exists()
+
+    code, (forced,) = _pick(capsys, media.video, wrong, force=True)
+    assert code == 0
+    assert forced[u"written"] is True and forced[u"forced"] is True
+    assert forced[u"outcome"] == port.REFUSED, (
+        u"a forced write must still say the timing did not hold")
+    assert forced[u"reason"].startswith(u"WRITTEN UNDER --force")
+    assert Path(forced[u"output_path"]).is_file()
+
+
+def test_the_stubs_forced_write_is_the_shape_the_engine_returns(tmp_path):
+    u"""⭐ Pinned against the measurement above: file landed, outcome REFUSED,
+    reason opening "WRITTEN UNDER --force". ⛔ And an occupied destination is
+    still refused -- force overrides the timing, never a person's file."""
+    video, subtitle = pair(tmp_path)
+    engine = port.stub_engine(outcome=port.REFUSED, reason=u"31% match")
+    result = port.sync(video, subtitle, engine=engine, force=True)
+    assert port.forced(result) and not port.wrote(result)
+    assert Path(result.output_path).is_file()
+    assert result.reason.startswith(u"WRITTEN UNDER --force")
+
+    again = port.sync(video, subtitle, engine=engine, force=True)
+    assert not again.output_path and again.write_failed is True, (
+        u"a second forced pick wrote over the first")
+
+
+def test_the_fetch_loop_never_forces(tmp_path):
+    u"""⛔ Only a PERSON may overrule the referee. The port's default is off, and
+    the pipeline's one call site passes nothing."""
+    video, subtitle = pair(tmp_path)
+    calls = []
+    port.sync(video, subtitle, engine=port.stub_engine(calls=calls))
+    assert calls[0][1]["force"] is False
+    source = (ROOT / "hato" / "pipeline.py").read_text(encoding="utf-8")
+    assert "force=True" not in source and "force=self" not in source.replace(
+        "force=self.s.force or self.s.retry_now", "")

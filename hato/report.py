@@ -960,8 +960,19 @@ def as_dict(result):
         "retry_after": _plain(result.retry_after),
         "attempts": [{"name": a.name, "outcome": a.outcome, "reason": a.reason,
                       "bytes": a.bytes, "match_rate": a.match_rate,
+                      "path": getattr(a, "path", None),
                       "tsubasa": tsubasa_dict(a.tsubasa)}
                      for a in result.attempts or ()],
+        # ⭐ RUNBOOK 8d. Candidates from EARLIER runs, never this one's -- what keeps
+        # a pick on offer after the run that made it is forgotten. `path` is the
+        # file as it is on disk now, or null when it is gone.
+        "tried_before": [{"name": t.name, "outcome": t.outcome, "reason": t.reason,
+                          "bytes": t.bytes, "match_rate": t.match_rate, "path": t.path,
+                          "when": _plain(t.when)}
+                         for t in getattr(result, "tried_before", None) or ()],
+        # ⭐ RUNBOOK 8f -- the newest episode on offer, in the video's numbering,
+        # so the window can say *probably not out yet*. null when nothing says.
+        "newest_offered": getattr(result, "newest_offered", None),
     }
 
 

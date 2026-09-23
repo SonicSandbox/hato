@@ -116,6 +116,10 @@ NOT_PUBLISHED = {
     "_mutants.mjs":     "imports ../app-kit, a vault-relative path -- it cannot run in a clone",
     "ADVERSARY-2026-09-18.md":
                         "an internal review register, same class as the ledgers",
+    "ADVERSARY-2026-09-22.md":
+                        "an internal review register, same class as the ledgers",
+    "REPORT-DRAFT-2026-09-23.md":
+                        "a session's working draft of its report to the owner; vault-only",
 }
 
 #: ⛔ Top-level DIRECTORIES that are deliberately not published. Same shape and

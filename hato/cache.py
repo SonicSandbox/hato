@@ -224,6 +224,34 @@ def _holds(path, size):
     return _stat.S_ISREG(st.st_mode) and st.st_size == size
 
 
+#: How long after an attempt its file may have been stored. ⚠ A download is
+#: stored BEFORE its attempt is recorded, so this only has to absorb a clock
+#: that is not quite monotonic -- a re-upload is fetched on a later run.
+NAMED_SLACK_SECONDS = 600
+
+
+def _mtime(path):
+    try:
+        return os.stat(str(path)).st_mtime
+    except OSError:
+        return float("inf")
+
+
+def _epoch_of(moment):
+    """A datetime (aware, or naive meaning UTC) or epoch seconds -> seconds, or None."""
+    if moment is None or isinstance(moment, bool):
+        return None
+    if isinstance(moment, (int, float)):
+        return float(moment)
+    try:
+        from datetime import timezone
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return moment.timestamp()
+    except (AttributeError, ValueError, OverflowError, OSError):
+        return None
+
+
 def _discard_file(path):
     """Best effort, and it NEVER raises -- it runs while another exception is on
     its way out, and must not replace it."""
@@ -266,6 +294,8 @@ class Cache(object):
 
     def __init__(self, root=None):
         self.root = Path(root) if root is not None else paths.cache_dir()
+        #: stored name -> [paths], built on the first `find_named` (S7)
+        self._named = None
 
     def __repr__(self):
         return "<hato Cache at %s>" % self.root
@@ -332,6 +362,11 @@ class Cache(object):
                               "copied %s) -- nothing was kept"
                               % (digest[:12], copied.hexdigest()[:12]))
             os.replace(str(tmp), str(final))
+            # ⚠ The name index is stale the moment the store gains a file: a
+            # same-name file stored after it was built made an AMBIGUITY look
+            # like one answer (the first run of the S7 index, caught by
+            # test_cache's two-candidate check).
+            self._named = None
         except BaseException:
             _discard_file(tmp)
             raise
@@ -379,6 +414,69 @@ class Cache(object):
         _remove_tree(folder)
 
     # -- reads ----------------------------------------------------------------
+
+    def find(self, digest, name):
+        """-> the Path `store(data, name)` put `data` at, or None when it is gone.
+
+        ⭐ RUNBOOK 8b. A refusal remembered in the state DB carries the content
+        hash of the file that was downloaded, so the SAME file can be offered to
+        a person again tomorrow without asking jimaku for it. ⛔ Nothing is
+        written, and a digest that is not a sha256 hex finds nothing rather than
+        building a path out of it.
+        """
+        if not isinstance(digest, str) or not re.match(r"^[0-9a-f]{64}$", digest):
+            return None
+        path = self._blob_path(digest, name)
+        return path if path.is_file() else None
+
+    def find_named(self, name, size, not_after=None):
+        """-> the one stored file called `name` whose size is `size`, or None.
+
+        ⚠ FOR ROWS RECORDED BEFORE RUNBOOK 8b, which carry no hash. The name alone
+        is not an identity -- a re-upload keeps its name and changes its bytes --
+        so the SIZE must agree too (jimaku lists it, and the download is exactly
+        it), and two such files are an ambiguity, answered with None rather than
+        with a guess.
+
+        `not_after` -- the moment the row was recorded (a datetime or epoch
+        seconds). 🚨 A re-timed re-upload keeps its name AND its size (timestamps
+        are fixed width), so the one file left in the cache could be a LATER
+        download, offered under the old row's verdict (ADVERSARY 2026-09-22 F11).
+        The refused file was stored when its attempt ran; a file stored well
+        after that is not it.
+
+        ⭐ The store's names are indexed ONCE per `Cache` -- a legacy row per video
+        per run used to walk the whole store each time (S7).
+        """
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            return None
+        if self._named is None:
+            self._named = self._index_names()
+        limit = _epoch_of(not_after)
+        # ⚠ The name AS STORED: `_blob_path` shortens it to the Windows path
+        # budget, which is the same for every blob folder (one depth, one digest
+        # length) -- so a stand-in digest of that length gives the stored name.
+        stored = self._blob_path(u"0" * 64, name).name
+        found = [path for path in self._named.get(stored, ())
+                 if _holds(path, size)
+                 and (limit is None or _mtime(path) <= limit + NAMED_SLACK_SECONDS)]
+        return found[0] if len(found) == 1 else None
+
+    def _index_names(self):
+        """-> {stored name: [paths]} over every blob. Creates nothing."""
+        index = {}
+        blobs = self.root / "blobs"
+        if not blobs.is_dir():
+            return index
+        for shard in blobs.iterdir():
+            if not shard.is_dir():
+                continue
+            for folder in shard.iterdir():
+                if not folder.is_dir():
+                    continue
+                for path in folder.iterdir():
+                    index.setdefault(path.name, []).append(path)
+        return index
 
     def stat(self):
         """-> {path, exists, bytes, entries, partial, work}. Creates nothing.

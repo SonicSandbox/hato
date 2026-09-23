@@ -130,6 +130,16 @@ internal decision statistic and means nothing to a person. `--verbose` and `--js
 | `--lang <code>` | Default `ja` |
 | `--no-recurse` · `--allow-ai` | Opt-outs |
 | ⭐ `--archives` | **Opt-IN, default OFF — ruled 2026-09-17.** Unpack `.zip` / `.7z` / `.rar` candidates in the cache dir. ⛔ Off, an archive-only candidate is skipped with a reason that names this flag — never silently |
+| `--retry-now` | *Look again now* (RUNBOOK 8e). Ignores the waiting period and nothing else: a file already refused for a video is never downloaded again, and a blacklist still stands |
+| `--only <video>` | Repeatable. Only these videos, from the folders given — and such a run leaves `last-run.json` alone. ⛔ A video no walk of this run could reach (outside every folder, in a skipped one, or in a subfolder under `--no-recurse`) exits **2**, never 0 having looked at nothing |
+| `--only-list <file>` | The same, one video per line (UTF-8, blank lines ignored) — the window's route past Windows' 32,767-character command line |
+| `--wait` | Queue behind a run that holds the lock (up to 3 h) instead of exiting *"busy"*. ⭐ Every run the tray starts passes it: the tray checks the lock and then spawns, and a run starting in that gap used to void the tray's |
+
+> ⚠ **Added 2026-09-22** by Layer 8 and its adversarial pass (`ADVERSARY-2026-09-22.md`).
+> The two views that go with them are `hato problems [--json]` (what still needs a person,
+> read from the state DB; ⛔ exits **1** with `"ok": false` when that store cannot be
+> read, never an empty *"nothing needs you"*) and `hato state --clear [--yes]` (dry
+> unless `--yes`) — RUNBOOK 8c and 8g.
 
 ---
 
@@ -408,7 +418,7 @@ settings panel from a `SCHEMA` (`01-scope.md` §*Evolution*).
 | ⭐ **A blacklist of videos** | *"a video in there that doesn't need / won't have subs, that you could easily blacklist it."* The store is `02-data-model.md` §Question 3; the window only adds and removes rows |
 | ⭐ **The repeatedly-failed list** | *"a video without subs yet (it was just released) so you would try again a day later each time (not soon unless prompted)."* The soft negative is now **1 day**, and *"unless prompted"* is a Retry on one row |
 | **Say what already has subtitles** | *"so that's visible but not the focus"* |
-| **The auto-run switch** | Registers or removes the Windows scheduled task, and says when it next runs |
+| **The auto-run switch** | Registers or removes the Windows scheduled task, and says when it next runs. ✅ **BUILT 2026-09-23 (RUNBOOK 8y — it had shipped as a switch that registered nothing, D2).** `hato/schedule.py`: Task Scheduler is the only state, read on every open; the task starts `hato-watch --scheduled` (no console window); *"next run in 22h"* is derived from the task and the clock; a task switched off or changed in Task Scheduler says so beside the switch; no switch where nothing can schedule |
 
 ⭐ **Manual pairing is a solved mechanism, not a new one.** hato already hands tsubasa an
 explicit pair (`sync([(video, subtitle)], write=True)`), so a manual pick only replaces

@@ -143,7 +143,7 @@ cleanly, the episode goes to **Needs you** instead of being written badly.
 
 | | |
 | --- | --- |
-| **Run every day** | A sweep at a time you pick. hato exits when it is done |
+| **Run every day** | A Windows scheduled task at a time you pick: hato starts, sweeps and exits. A day the computer sleeps through runs when it is next on |
 | **Watch for new videos** | Sits in the tray and runs a minute after something appears |
 | **Start with Windows** | hato is already watching when you sit down |
 
@@ -287,9 +287,12 @@ python -m hato extract      unpack one archive into the cache and list what came
 
 ### Scheduling it yourself
 
-**If you installed the app, you do not need any of this** — the **Run every day**
-switch in Settings registers it for you, and **Start with Windows** keeps the watcher
-running. This section is for driving it yourself.
+**If you installed the app, you do not need any of this** — the **every day at**
+switch in Settings (the same one sits in the title bar) registers a scheduled task
+named `hato` for you, with the battery settings below already set, and switching it
+off removes it. The task starts `hato-watch.exe --scheduled`, which runs the scan
+with no console window. **Start with Windows** keeps the watcher running. This
+section is for driving it yourself.
 
 ```bash
 python -m hato --quiet          # from a clone: cron, a systemd timer, Task Scheduler

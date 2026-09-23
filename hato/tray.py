@@ -120,6 +120,25 @@ def menu_commands(items):
     return out
 
 
+def tick_safely(on_tick, on_error=None):
+    u"""Run one tick; what it raises goes to `on_error`, never out. -> bool, it ran clean.
+
+    ⭐ PURE AND MODULE-LEVEL, so the guard is checkable with no message loop --
+    `pump` calls exactly this. ⛔ `on_error` failing too is swallowed: a
+    reporter that can raise is a second way to die while explaining the first.
+    """
+    try:
+        on_tick()
+        return True
+    except Exception as exc:                  # noqa: BLE001 -- see the docstring
+        if on_error is not None:
+            try:
+                on_error(exc)
+            except Exception:                 # noqa: BLE001
+                pass
+        return False
+
+
 def dispatch(items, command):
     u"""-> the callback for `command`, or None. ⛔ Never raises on a stray id.
 
@@ -244,6 +263,8 @@ def _dlls():
     user32.PostQuitMessage.argtypes = [ctypes.c_int]
     user32.DestroyWindow.argtypes = [wintypes.HWND]
     user32.DestroyWindow.restype = wintypes.BOOL
+    user32.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
+    user32.RegisterWindowMessageW.restype = wintypes.UINT
 
     shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD,
                                           ctypes.POINTER(NOTIFYICONDATAW)]
@@ -280,6 +301,8 @@ class Tray(object):
         self._data = None
         self._proc = None                     # ⛔ held; see _make_window
         self._running = False
+        #: The message Explorer broadcasts when the taskbar is recreated.
+        self._taskbar_created = None
 
     # -- putting it up ----------------------------------------------------
 
@@ -355,12 +378,34 @@ class Tray(object):
             raise TrayError("the tray icon could not be added: %s"
                             % ctypes.WinError(ctypes.get_last_error()))
         self._data = data
+        # ⚠ EXPLORER RESTARTS -- a crash, an update, a person killing it -- and the
+        # new taskbar has no icons: every program must add its own again, when
+        # this broadcast arrives. Without it the tray watched on, invisible, with
+        # no way to open it or stop it (ADVERSARY 2026-09-22, suspected).
+        self._taskbar_created = user32.RegisterWindowMessageW(u"TaskbarCreated") or None
         return self
+
+    def set_tooltip(self, text):
+        u"""Say something new on hover. -> bool, whether the shell took it.
+
+        ⭐ The tooltip is how a person learns what the tray is doing without
+        opening anything -- and it said the folder count read at START, after
+        Settings had changed it (ADVERSARY 2026-09-22 C5).
+        """
+        self.tooltip = text[:127]
+        if self._data is None:
+            return False
+        self._data.szTip = self.tooltip
+        return bool(self._shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self._data)))
 
     # -- messages ---------------------------------------------------------
 
     def _on_message(self, hwnd, message, wparam, lparam):
         user32 = self._user32
+        if self._taskbar_created and message == self._taskbar_created:
+            if self._data is not None:
+                self._shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self._data))
+            return 0
         if message == WM_TRAY:
             event = lparam & 0xFFFF
             if event in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
@@ -419,8 +464,13 @@ class Tray(object):
 
     # -- running ----------------------------------------------------------
 
-    def pump(self, on_tick=None, tick_ms=1000):
+    def pump(self, on_tick=None, tick_ms=1000, on_error=None):
         u"""The message loop. Blocks until `stop()`.
+
+        🚨 `on_tick` MAY NOT END IT. The loop owns the thread, so anything the tick
+        raises came out of here -- one unreadable file, and the tray died on every
+        start (ADVERSARY 2026-09-22 R7). It is handed to `on_error` and the loop
+        goes on; ⛔ with no `on_error`, it is swallowed rather than fatal.
 
         ⚠ `on_tick` is how the WATCHER's settle timer gets polled: this loop
         owns the thread, so anything periodic has to be invited in rather than
@@ -457,7 +507,7 @@ class Tray(object):
                     raise TrayError("the tray message loop failed: %s"
                                     % ctypes.WinError(ctypes.get_last_error()))
                 if message.message == WM_TIMER and on_tick is not None:
-                    on_tick()
+                    tick_safely(on_tick, on_error)
                     continue
                 user32.TranslateMessage(ctypes.byref(message))
                 user32.DispatchMessageW(ctypes.byref(message))
@@ -465,11 +515,11 @@ class Tray(object):
             if timer:
                 user32.KillTimer(self._hwnd, ctypes.c_void_p(1))
 
-    def run(self, on_tick=None):
+    def run(self, on_tick=None, on_error=None):
         u"""show() then pump(). -> None"""
         self.show()
         try:
-            self.pump(on_tick=on_tick)
+            self.pump(on_tick=on_tick, on_error=on_error)
         finally:
             self.close()
 
@@ -491,4 +541,4 @@ class Tray(object):
 
 
 __all__ = ["FIRST_COMMAND", "NOTIFYICONDATAW", "Tray", "TrayError",
-           "WM_TRAY", "dispatch", "menu_commands"]
+           "WM_TRAY", "dispatch", "menu_commands", "tick_safely"]

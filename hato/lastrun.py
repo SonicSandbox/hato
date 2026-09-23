@@ -67,7 +67,13 @@ def save(rows, summary, path=None):
 
 
 def load(path=None):
-    u"""-> (rows, summary, saved_at). Empty when there is nothing to remember."""
+    u"""-> (rows, summary, saved_at). Empty when there is nothing to remember.
+
+    ⚠ A DRY RUN'S SNAPSHOT IS NO MEMORY (RUNBOOK 8a). This version never writes
+    one, but hato 1.0.1 does, and one is sitting on Sonic's disk now -- its rows
+    are PLANNED, which the window paints as *"something went wrong"*. Read as
+    empty, a window keeps the real run it already had on screen.
+    """
     target = Path(path) if path is not None else paths.last_run_path()
     try:
         with open(str(target), encoding="utf-8") as handle:
@@ -78,6 +84,8 @@ def load(path=None):
         return [], {}, u""
     rows = payload.get(u"rows")
     summary = payload.get(u"summary")
+    if isinstance(summary, dict) and summary.get(u"dry_run"):
+        return [], {}, u""
     return (list(rows) if isinstance(rows, list) else [],
             dict(summary) if isinstance(summary, dict) else {},
             payload.get(u"saved_at") or u"")

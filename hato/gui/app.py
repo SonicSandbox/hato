@@ -323,9 +323,20 @@ class State(object):
         #: [*] A SINGLE VALUE, not a set: Needs-you is an accordion.
         self.open_pick = None
         # ---- settings, as `hato config --show --json` reports them ----
-        self.auto = True
+        #: ⭐ D2 -- IS THE DAILY RUN REGISTERED? Read from Task Scheduler
+        #: (`read_schedule`), never from the config: `bool(cfg.schedule)` said ON
+        #: for days over no task at all. ⛔ False until something was read.
+        self.auto = False
+        #: What the daily run's switch must say about the task it found -- off in
+        #: Task Scheduler, another copy's, set not to run on battery. u"" if fine.
+        self.auto_note = u""
+        #: What the LAST action on it came to, when that was a refusal. ⛔ Not
+        #: `auto_note`, which every re-read replaces.
+        self.schedule_said = u""
+        #: ⛔ Controls vanish where they would be meaningless: no Task Scheduler,
+        #: no switch (and an instruction instead).
+        self.auto_supported = True
         self.schedule = u"03:00"
-        self.next_run = u""
         self.watch = False
         self.folders = []
         self.skip_folders = []
@@ -355,18 +366,105 @@ class State(object):
         self.queued_names = []
         self.live = u""
         self.last_run = u""
-        self.video_total = 0
+        # ---- ⭐ RUNBOOK 8e: what hato remembers, and what a pick came to ----
+        #: `hato problems --json`'s rows, or None until it has answered. ⭐ The
+        #: store that outlives one run -- 4a's first cause was painting Needs
+        #: you from `last-run.json` alone, which is a snapshot by design.
+        self.remembered = None
+        #: monotonic moments the run's rows and the memory last changed, so the
+        #: newer of the two decides which copy of a row wins (`needs_you`).
+        self.rows_at = 0.0
+        self.remembered_at = 0.0
+        #: row key -> the file name clicked, while `hato sync` has not answered.
+        #: ⛔ Not `picked`: *paired* is said only when a file LANDED (D7).
+        self.pick_pending = {}
+        #: row key -> (word, why) -- what the last pick on that row came to.
+        self.pick_said = {}
+        #: row key -> the word of the pick that LANDED -- *paired* or *used*.
+        #: ⛔ Not `pick_said`, which a later failed pick overwrites: the row's
+        #: colour is what was WRITTEN (ADVERSARY 2026-09-22 A10).
+        self.picked_word = {}
+        #: the tray watcher is running, so a due retry WILL run (RUNBOOK 8h).
+        self.watching = False
+        #: ⭐ V1 -- a tray IS running, but an older one that keeps no promise.
+        self.old_tray = False
+        #: the soft and hard retry windows in days, as `hato problems` reports them.
+        self.retry_days = 1
+        self.hard_days = 30
+        #: ⭐ A1 -- why what hato remembers could not be read, when it could not.
+        #: ⛔ The window keeps what it had and SAYS so; it never empties Needs you
+        #: over an answer it could not trust.
+        self.problems_error = u""
+        #: ⭐ The keys a run streamed, and when the last one came -- newer than the
+        #: memory video by video, never the whole snapshot (A4).
+        self.live_keys = set()
+        self.live_at = 0.0
+        #: ⭐ A27 -- the memory was emptied ON PURPOSE (a clear): until the next
+        #: run, its silence settles nothing.
+        self.trust_rows = False
+        #: ⚠ INJECTABLE, so a check about "in 14h" does not depend on the wall.
+        self.now = None
+        # ---- ⭐ RUNBOOK 8g: clearing hato's memory ----
+        #: `hato state --clear --json`'s DRY count, or None until it answers.
+        self.memory = None
+        #: what the last clear came to, in words -- said under the card.
+        self.memory_said = u""
+        #: ⭐ HANDOFF 4c -- video key -> the retry date the person chose to wait
+        #: for (`run.apply_waits`). Kept in hato's folder by the window.
+        self.waits = {}
+
+    def daily(self):
+        u"""⭐ D2 -- the daily run's time while one is REGISTERED, else None.
+        Everything that says who will run a retry asks this, never `schedule`,
+        which is only a time and is set whether anything runs at it or not."""
+        return self.schedule if self.auto else None
+
+    def clock(self):
+        u"""-> now, timezone-aware."""
+        from datetime import datetime, timezone
+        return self.now if self.now is not None else datetime.now(timezone.utc)
+
+    #: The last moment handed out by `moment()`.
+    _moment = 0
+
+    def moment(self):
+        u"""The next moment in the window's own order. -> int, strictly rising.
+
+        ⚠ `rows_at`, `remembered_at` and `live_at` are COMPARED -- which copy of a
+        row is newer decides what Needs you shows. `time.monotonic()` ticks every
+        ~16 ms on Windows, so a row arriving just after the memory answered could
+        carry the SAME reading and lose the tie to an older copy. Measured by the
+        window's own suite. ⭐ A counter orders them exactly, and that is all
+        these ever needed: which came first.
+        """
+        self._moment += 1
+        return self._moment
 
     # -- identity ----------------------------------------------------------
 
     @staticmethod
     def key(row):
-        u"""A stable id for one row. -> unicode
+        u"""A stable id for one row -- its VIDEO. -> unicode
 
-        The video's own path: unique on a machine, survives a re-render, and
-        is what a manual pair is addressed to anyway.
+        The video's own path, NORMALISED: `run.problem_key`, the one identity
+        the merge, the tally and every per-row store use. ⚠ The raw path was a
+        second identity -- two spellings of one video painted two rows under a
+        badge of one, and a look-again replaced the wrong one (ADVERSARY
+        2026-09-22 A7).
         """
-        return row.get(u"video") or row.get(u"name") or u""
+        return gui_run.problem_key(row)
+
+    def in_scope(self, row):
+        u"""Could `hato problems` list this video at all? -> bool
+
+        ⚠ Only one under a configured folder and not under a skipped one. A run
+        over any other folder -- `hato D:\\Elsewhere` in a terminal -- has
+        refusals memory CANNOT list, and their absence settles nothing (A26).
+        """
+        from hato import paths as _paths
+        video = row.get(u"video") or u""
+        return bool(video and self.folders and _paths.under_any(video, self.folders)
+                    and not _paths.under_any(video, self.skip_folders))
 
     @staticmethod
     def word(row):
@@ -379,26 +477,46 @@ class State(object):
         u"""Every row the interface calls `word`, in arrival order."""
         return [row for row in self.rows if self.word(row) == word]
 
-    def unresolved(self):
-        u"""Needs-you rows nobody has picked for yet. -> [row]
+    def problems(self):
+        u"""⭐ RUNBOOK 8e -- THE ONE LIST Needs you paints. -> [row]
 
-        [*] THIS is what moves when a candidate is clicked, and it is why the
-        badge and the footer cannot be hardcoded: a pick changes the answer
-        without changing a single field on the wire.
+        The run's problem rows and the remembered ones, merged by
+        `run.needs_you`, which decides PER VIDEO: a row a run streamed after the
+        memory answered wins, the snapshot wins when it is the newer file, and
+        a row the newer memory no longer lists has been settled since -- unless
+        the memory could not have listed it.
         """
-        return [row for row in self.of(gui_run.NEEDS_YOU)
-                if self.key(row) not in self.picked]
+        live = self.live_keys if self.live_at > self.remembered_at else ()
+        merged = gui_run.needs_you(self.rows, self.remembered, live=live,
+                                   rows_newer=self.rows_at > self.remembered_at,
+                                   in_scope=self.in_scope, trust_rows=self.trust_rows)
+        # ⭐ 4c -- and a pick the person chose to wait on is a wait, until its date.
+        return gui_run.apply_waits(merged, self.waits, self.clock())
+
+    def picks(self):
+        u"""The problems a person can choose a file for, in list order."""
+        return [row for row in self.problems()
+                if gui_run.problem_kind(row) == gui_run.PICK]
+
+    def unresolved(self):
+        u"""Pick rows nobody has settled yet. -> [row]
+
+        [*] THIS is what moves when a pick lands, and it is why the badge and the
+        footer cannot be hardcoded: a pick changes the answer without changing a
+        single field on the wire. ⚠ A pick still waiting on `hato sync` is NOT
+        resolved -- it may yet not line up (D7).
+        """
+        return [row for row in self.picks() if self.key(row) not in self.picked]
 
     def tallies(self):
         u"""-> {interface word: n}. The ONE count. Both readers call this.
 
-        `run.counts` partitions the raw rows; the needs-you figure is then
-        replaced by the LIVE one, because a row a person has already paired is
-        no longer waiting on them even though its wire outcome has not moved.
+        `run.tally` partitions the run's rows AND the remembered problems, each
+        video once, and leaves out a row a person has already paired -- it is no
+        longer waiting on them even though its wire outcome has not moved.
         """
-        out = gui_run.counts(self.rows)
-        out[gui_run.NEEDS_YOU] = len(self.unresolved())
-        return out
+        done = [gui_run.problem_key({u"video": key}) for key in self.picked]
+        return gui_run.tally(self.rows, self.problems(), done=done)
 
     def need_count(self):
         u"""-> the number the badge shows and the footer says. One source."""
@@ -426,7 +544,7 @@ class State(object):
         for ident in order:
             title, season = ident
             skipped = len([row for row in self.rows
-                           if self.word(row) == gui_run.SKIPPED
+                           if gui_run.is_skipped(self.word(row))
                            and (row.get(u"title") or u"") == title])
             out.append((title, season, index[ident], skipped))
         return out
@@ -434,22 +552,39 @@ class State(object):
     def fully_skipped(self):
         u"""Shows where NOTHING was added -- one quiet line each.
 
-        -> [(title, n)] . *"visible, but not the focus."*
+        -> [(title, word, [episode])] . *"visible, but not the focus."*
+
+        🚨 GROUPED BY THE KIND OF SKIP, NOT JUST THE TITLE, AND IT CARRIES THE
+        EPISODE NUMBERS. Sonic, 2026-09-19: *"Katanai and tsuihou don't have it
+        even though it says its already subbed in the GUI"* and *"for the
+        'already subbed' i need the ep # in those titles as well."*
+
+        ⛔ This used to return `(title, count)` and the caller painted every one
+        of them *"— already subtitled"*. One of those two shows had downloaded
+        three candidates, kept none, and was waiting until tomorrow to try
+        again; the other had its subtitles inside the container. Neither had a
+        file, and the line said they were done.
+
+        ⚠ One show CAN now produce several lines -- episodes 1-3 finished and 4
+        waiting to retry is two different facts about one title, and collapsing
+        them is the defect this method just had.
         """
         added_titles = set(title for title, _s, _r, _k in self.shows())
         order = []
-        counted = {}
+        grouped = {}
         for row in self.rows:
-            if self.word(row) != gui_run.SKIPPED:
+            word = self.word(row)
+            if not gui_run.is_skipped(word):
                 continue
             title = row.get(u"title") or row.get(u"name") or u""
             if title in added_titles:
                 continue
-            if title not in counted:
-                counted[title] = 0
-                order.append(title)
-            counted[title] += 1
-        return [(title, counted[title]) for title in order]
+            ident = (title, word)
+            if ident not in grouped:
+                grouped[ident] = []
+                order.append(ident)
+            grouped[ident].append(row.get(u"episode"))
+        return [(title, word, grouped[(title, word)]) for title, word in order]
 
     def next_unresolved(self, after):
         u"""-> the key of the row that should open as `after` closes, or None.
@@ -463,13 +598,66 @@ class State(object):
         return None
 
 
+def episode_tail(episodes):
+    u"""*"ep 11"* · *"eps 4, 5, 6"* · *"12 episodes"*. -> text or u""
+
+    ⭐ Sonic asked for the episode number on these lines because two rows of one
+    show were otherwise indistinguishable -- the same complaint that put the
+    video filename on a *Needs you* row.
+
+    ⚠ `None` is a real value here: a video whose episode could not be parsed
+    still skips, and it must not render as *"ep None"*. Past a handful the
+    numbers stop helping and the COUNT is the useful fact.
+    """
+    known = [n for n in episodes if n is not None]
+    if not known:
+        n = len(episodes)
+        return u"" if n <= 1 else u"%d episodes" % n
+    known = sorted(set(known))
+    if len(known) > 4:
+        return u"%d episodes, %s–%s" % (len(known), known[0], known[-1])
+    if len(known) == 1:
+        return u"ep %s" % known[0]
+    return u"eps %s" % u", ".join(str(n) for n in known)
+
+
+#: 🚨 ONE TOOLTIP PER SKIP, AND EACH ONE HAS TO BE TRUE OF ITS OWN ROW.
+#: The single tooltip these replace said *"Every episode already carries a
+#: Japanese track, so it is already in sync and nothing was requested"* --
+#: painted under EVERY skip, including one that had downloaded three subtitles,
+#: kept none of them, and was waiting a day to try again.
+#:
+#: ⛔ None of these tells a person to change a setting that is not in the
+#: window. `skip_embedded` is `config.toml` only, so it is named as a file key
+#: and not as a Settings switch.
+QUIET_TIPS = {
+    gui_run.SKIPPED:
+        u"The Japanese subtitle is already sitting beside the video, so "
+        u"nothing was requested.",
+    gui_run.INSIDE_VIDEO:
+        u"The Japanese subtitles are inside the video file itself, so there is "
+        u"correctly no separate subtitle beside it — your player will find "
+        u"them. To fetch one anyway, set skip_embedded = false in config.toml.",
+    gui_run.RETRYING:
+        u"hato downloaded subtitles for this and none of them lined up with "
+        u"your copy, so nothing was written rather than writing one that is "
+        u"out of sync. It will try again on its own.",
+    gui_run.CANT_SYNC:
+        u"This video has no subtitle track inside it for hato to time a "
+        u"download against, so nothing was requested yet.",
+    gui_run.ON_SKIP_LIST:
+        u"You told hato to skip this one.",
+}
+
+
 def candidates(row):
     u"""The files hato already downloaded for this episode. -> [attempt]
 
     [X] NEVER THE WHOLE JIMAKU CATALOGUE -- `05-interface.md` §manual pairing.
-    These are `row["attempts"]`, which is exactly what was tried.
+    ⭐ RUNBOOK 8e: this run's attempts AND the ones remembered from earlier runs
+    (`tried_before`), one per file, best first -- `run.candidates_of` decides.
     """
-    return list(row.get(u"attempts") or ())
+    return gui_run.candidates_of(row)
 
 
 def candidate_path(attempt):
@@ -483,6 +671,46 @@ def candidate_path(attempt):
     return tsu.get(u"subtitle") or attempt.get(u"path") or None
 
 
+def tray_cost(frozen=None):
+    u"""What the tray costs, for the build this window IS. -> (short, detail)
+
+    ⚠ Two measurements, each with its moment -- a number in prose with no moment
+    is quoted for ever as though it were a constant (`processes.md`):
+      source  13.4 MB, 12.7 of it Python itself (`gui-mock/MEMORY.md`, 2026-09-18)
+      exe     30.6 MB against 96 MB for the window (`smoke_standalone.py`,
+              2026-09-22) -- every frozen process carries its own CPython
+    """
+    frozen = getattr(sys, u"frozen", False) if frozen is None else frozen
+    if frozen:
+        return (u"31 MB",
+                u"Measured, not estimated: 30.6 MB resident, against 96 MB for "
+                u"this window. Most of it is the Python the program carries with "
+                u"it; the watching itself costs under 1 MB. No window toolkit is "
+                u"loaded while it watches — the window is a separate program that "
+                u"starts when you open it.")
+    return (u"13 MB",
+            u"Measured, not estimated. 13.4 MB resident — and 12.7 MB of "
+            u"that is Python itself, so the watching costs about 0.7 MB. No "
+            u"window toolkit is loaded while it watches; the window is a "
+            u"separate program that starts when you open it.")
+
+
+def season_text(season):
+    u"""-> *"S2"*, or u"" when there is none.
+
+    🚨 D10 -- THE WIRE CARRIES AN INT. tsubasa reads `S2` as `2`, and every
+    fixture in this window's suite wrote the STRING "S2" -- so every picture
+    showed "S2" while a real run printed a bare *"2 · 3 added"* beside the show
+    and *"· 4"* after a filename, which reads as a count. Found 2026-09-22 by
+    the first shot seeded with rows as `hato problems` really emits them.
+    """
+    if season is None or season == u"" or isinstance(season, bool):
+        return u""
+    if isinstance(season, int):
+        return u"S%d" % season
+    return str(season)
+
+
 def episode_text(episode):
     u"""-> *"01"*, *"04"*, *"1121"*.
 
@@ -491,12 +719,29 @@ def episode_text(episode):
     already wider than two is left alone: One Piece is at 1121 and padding is
     not truncation.
     """
-    if episode is None:
+    if episode is None or isinstance(episode, bool):
         return u""
+    # ⚠ A HALF EPISODE IS NOT THE WHOLE ONE. `int()` printed 24.5 as "24", so a
+    # recap and the episode it sits beside read as two copies of one
+    # (ADVERSARY 2026-09-22 A28).
+    if isinstance(episode, float) and not episode.is_integer():
+        return u"%g" % episode
     try:
         return u"%02d" % int(episode)
     except (TypeError, ValueError):
         return str(episode)
+
+
+def episode_name(row):
+    u"""*"Tsuihou 12"* -- the show and the episode, for a line of names. -> text
+
+    ⚠ Either can be missing: a video tsubasa does not list is named by its file
+    and has no number, and it printed *"Show - OVA None"* (ADVERSARY 2026-09-22
+    A18).
+    """
+    parts = [row.get(u"title") or row.get(u"name") or u"",
+             episode_text(row.get(u"episode"))]
+    return u" ".join(p for p in parts if p)
 
 
 def footer_status(state):
@@ -1441,7 +1686,7 @@ class PickHead(Clickable):
         #: belongs to -- the same *number-marooned-from-its-subject* fault the
         #: capped measure exists to prevent, rebuilt inside one cell.
         line.addWidget(title, 0)
-        season = row.get(u"season")
+        season = season_text(row.get(u"season"))
         if season:
             line.addWidget(label(u"· %s" % season, u"whoi", who))
         line.addStretch(1)
@@ -1455,16 +1700,41 @@ class PickHead(Clickable):
         box.addWidget(who)
         box.addWidget(self.best, 1)
 
-    def set_state(self, picked, tried, best_rate):
-        u"""[*] Idle says what was tried; paired NAMES THE FILE IT USED."""
+    def set_state(self, picked, tried, best_rate, wait=u"", pending=None,
+                  word=None, late=False):
+        u"""[*] Idle says what was tried; paired NAMES THE FILE IT USED.
+
+        ⭐ RUNBOOK 8e, and each clause is a place this row used to say nothing:
+          `wait`     *"retrying in 14h"* -- the automatic path, said out loud (4b)
+          `pending`  a pick is with `hato sync` and has not answered; ⛔ not yet
+                     *paired* (D7: it used to say so at the click)
+          `word`     *paired* when the timing held, *used* when the person's
+                     choice was written over a timing refusal (D6)
+          `late`     ⭐ 8f -- one past the newest episode on offer: *probably
+                     not out yet*, said instead of a best match that is some
+                     OTHER episode's
+        """
         done = picked is not None
-        mark(self, u"done", done)
-        mark(self.best, u"done", done)
+        # ⭐ A FORCED pick is AMBER, not green: the mock's own meaning for amber is
+        # *"written, worth a look"*, and a file written over a timing refusal is
+        # exactly that. Green says the timing held, and here it did not.
+        state = (u"forced" if word == gui_run.FORCED else True) if done else False
+        mark(self, u"done", state)
+        mark(self.best, u"done", state)
+        waiting = bool(late) and not done and not pending
+        mark(self, u"late", waiting)
+        mark(self.best, u"late", waiting)
         if done:
-            self.best.setText(u"paired · %s" % picked)
+            self.best.setText(u"%s · %s" % (word or gui_run.PAIRED, picked))
+        elif pending:
+            # ⚠ No trailing ellipsis: after a middle-elided file name it read as
+            # the name being cut off. The verb says it is in flight.
+            self.best.setText(u"%s · %s" % (u"using" if gui_run.PICK_OVERRIDES_TIMING
+                                            else u"checking", pending))
         else:
-            self.best.setText(u"%d tried · best %s"
-                              % (tried, rate_text(best_rate)))
+            text = (u"probably not out yet · %d tried" % tried if waiting
+                    else u"%d tried · best %s" % (tried, rate_text(best_rate)))
+            self.best.setText(u"%s · %s" % (text, wait) if wait else text)
 
 
 class CandidateCard(Clickable):
@@ -1504,6 +1774,22 @@ class CandidateCard(Clickable):
 
     def set_chosen(self, chosen):
         mark(self, u"chosen", bool(chosen))
+
+    def set_usable(self, has_file, row_settled=False):
+        u"""Whether a click can do anything. -> bool
+
+        ⛔ A card that cannot be used is INERT and says why -- never a click
+        that fails afterwards: `has_file` False is a file hato no longer has
+        (ADVERSARY 2026-09-22 A13); `row_settled` is a row whose pick landed or
+        is still with `hato sync` (A10, A32).
+        """
+        usable = bool(has_file) and not row_settled
+        self.setEnabled(usable)
+        mark(self, u"gone", not has_file)
+        if not has_file:
+            self.setToolTip(wrap(u"hato no longer has this file — it was cleared "
+                                 u"from its downloads, so it cannot be used."))
+        return usable
 
 
 # ---------------------------------------------------------------------------
@@ -1576,6 +1862,75 @@ class KeyDialog(QDialog):
         return self._field.text().strip()
 
 
+class ClearDialog(QDialog):
+    u"""⭐ RUNBOOK 8g -- the confirm before hato forgets what it remembers.
+
+    ⛔ HAND-BUILT, like `KeyDialog`, for the same reason: a native message box
+    is themed by the toolkit, not by hato, and it arrived white in the middle of
+    the app once already. ⛔ IT NAMES WHAT GOES AND WHAT STAYS, in that order,
+    and the blacklist -- the person's own instruction -- goes only if they turn
+    it on here. Off by default.
+    """
+
+    def __init__(self, parent=None, memory=None, blacklisted=0):
+        super().__init__(parent)
+        self.setWindowTitle(u"Clear hato's memory")
+        self.setModal(True)
+        self.setStyleSheet(theme.qss())
+        self.setMinimumWidth(480)
+
+        box = QVBoxLayout(self)
+        box.setContentsMargins(GAP, 16, GAP, 14)
+        box.setSpacing(12)
+        box.addWidget(label(u"Clear hato's memory?", u"emptylead", self))
+
+        counted = gui_run.memory_summary(memory)
+        # ⚠ THE DECISION IN THE BODY'S OWN INK. `paragraph()` is the faint
+        # `hint` style, made for asides -- and the first shot of this dialog
+        # set what goes and what stays, the only two lines that matter here,
+        # in the faintest type on screen. The consequence is the aside.
+        for text in (u"Goes: %s." % (counted or u"everything hato has tried"),
+                     u"Stays: every subtitle beside your videos, the originals "
+                     u"hato kept, your settings and your jimaku key."):
+            line = paragraph(text, self)
+            line.setObjectName(u"")
+            box.addWidget(line)
+        box.addWidget(paragraph(
+            u"The next run looks at every episode without a subtitle again, and "
+            u"finds each show again for a few requests.", self))
+
+        self._blacklist = None
+        if blacklisted:
+            row = QWidget(self)
+            line = QHBoxLayout(row)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(10)
+            self._blacklist = Switch(row)
+            line.addWidget(self._blacklist)
+            line.addWidget(label(
+                u"Forget the blacklist too — %d video%s you told hato never to fetch"
+                % (blacklisted, u"" if blacklisted == 1 else u"s"), None, row), 1)
+            box.addWidget(row)
+
+        row = QWidget(self)
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(9)
+        line.addStretch(1)
+        cancel = button(u"Cancel", row)
+        cancel.clicked.connect(self.reject)
+        line.addWidget(cancel)
+        go = button(u"Clear it", row, accent=True)
+        go.clicked.connect(self.accept)
+        line.addWidget(go)
+        box.addWidget(row)
+        cancel.setFocus()                    # ⛔ Enter must not be the destructive one
+
+    def forget_blacklist(self):
+        u"""-> True only when the person turned the blacklist switch on."""
+        return bool(self._blacklist is not None and self._blacklist.isChecked())
+
+
 class HatoWindow(Styled):
     u"""hato's window.
 
@@ -1595,6 +1950,21 @@ class HatoWindow(Styled):
         self._timer = None
         self._accordions = {}
         self._details = {}
+        # ⭐ RUNBOOK 8e -- children the window READS (a pick's verdict, what hato
+        # remembers, the blacklist). ⚠ `_runner_for` is a seam: the suite
+        # replaces it, exactly as it replaces `spawn`.
+        self._reading = []
+        self._read_timer = None
+        self._problems_in_flight = False
+        #: ⭐ A2 -- a refresh asked for while one was in flight, owed afterwards
+        self._problems_again = False
+        #: the run in flight is a `--only` look-again: merge, never replace
+        self._targeted = False
+        #: the run in flight met another one holding the lock
+        self._busy = False
+        #: ⭐ A3 -- a full run has not said anything yet, so what is on screen
+        #: stays until it does (a run that meets the lock says only "busy")
+        self._fresh = False
 
         self.setWindowTitle(u"hato")
         self.resize(WIN_W, WIN_H)
@@ -1654,14 +2024,12 @@ class HatoWindow(Styled):
         box.addWidget(names)
         box.addStretch(1)
 
-        box.addWidget(label(u"runs automatically at", u"autolabel", bar))
+        self.autolabel = label(u"runs automatically at", u"autolabel", bar)
+        box.addWidget(self.autolabel)
         self.autotime = label(u"", u"autotime", bar)
         box.addWidget(self.autotime)
         self.auto_switch = Switch(bar)
-        self.auto_switch.setToolTip(wrap(
-            u"Registers or removes the Windows scheduled task. hato is woken "
-            u"at that time and exits when it is done, so nothing of it sits "
-            u"running in between."))
+        # ⚠ Its tooltip is set in `render`: it carries what the task is doing.
         self.auto_switch.clicked.connect(self._toggle_auto)
         box.addWidget(self.auto_switch)
         self.run_now = button(u"Run now", bar, accent=True)
@@ -1753,11 +2121,17 @@ class HatoWindow(Styled):
         box.addWidget(live)
 
         self.tally_labels = []
-        #: [*] THREE TALLIES, ALL FROM `State.tallies()`. The middle one is the
-        #: SAME number the tab badge shows, and it is read from the same call
-        #: -- which is the defect the mock recorded against itself.
-        for _ in range(3):
-            box.addWidget(label(u"·", u"sep", foot))
+        self._tally_seps = []
+        #: [*] THE TALLIES, ALL FROM `State.tallies()`. The second is the SAME
+        #: number the tab badge shows, read from the same call -- which is the
+        #: defect the mock recorded against itself. ⭐ added · need you ·
+        #: skipped always; waiting and had a problem when there are any -- with
+        #: only three, the footer summed to less than the rows on screen
+        #: (ADVERSARY 2026-09-22 A15).
+        for _ in range(5):
+            sep = label(u"·", u"sep", foot)
+            self._tally_seps.append(sep)
+            box.addWidget(sep)
             tally = label(u"", u"tally", foot)
             self.tally_labels.append(tally)
             box.addWidget(tally)
@@ -1790,14 +2164,31 @@ class HatoWindow(Styled):
         state = self.state
         tallies = state.tallies()            # [*] ONE call. Two readers.
 
+        # 🚨 THE VIDEOS OF THE RUN ON THIS LINE, COUNTED FROM ITS ROWS. This read a
+        # `video_total` field nothing in production ever set -- only the suite's
+        # fixture did (68) -- so every real window said *"0 videos"* beside *"last
+        # run 00:24"* over a run that saw 63 (LOOKED, the 1.0.2 returning-client
+        # shot over a copy of Sonic's store). ⭐ Live during a run, as rows arrive.
+        videos = len(state.rows)
         self.titlesub.setText(
             u"%d folder%s · %d video%s%s"
             % (len(state.folders), u"" if len(state.folders) == 1 else u"s",
-               state.video_total, u"" if state.video_total == 1 else u"s",
+               videos, u"" if videos == 1 else u"s",
                (u" · last run %s" % state.last_run) if state.last_run
                else u""))
         self.autotime.setText(state.schedule)
         self.auto_switch.setChecked(state.auto)
+        # ⭐ D2 -- THE SWITCH SAYS WHAT WINDOWS WILL DO, and where Windows cannot
+        # do it there is no switch (the Settings card says what to do instead).
+        for widget in (self.autolabel, self.autotime, self.auto_switch):
+            widget.setVisible(state.auto_supported)
+        said = state.schedule_said or state.auto_note
+        self.auto_switch.setToolTip(wrap(
+            (u"Registers or removes a Windows scheduled task. hato is started at "
+             u"that time and exits when it is done, so nothing of it sits running "
+             u"in between. If the computer is off or asleep then, it runs as soon "
+             u"as it is next on.")
+            + (u"\n\n" + said if said else u"")))
 
         for key, tab in self.tab_buttons.items():
             mark(tab, u"selected", key == state.tab)
@@ -1832,8 +2223,20 @@ class HatoWindow(Styled):
         self.tally_labels[0].setText(u"%d added" % tallies[gui_run.ADDED])
         self.tally_labels[1].setText(
             u"1 needs you" if need == 1 else u"%d need you" % need)
-        self.tally_labels[2].setText(
-            u"%d already had them" % tallies[gui_run.SKIPPED])
+        # ⚠ EVERY skip word, not just `SKIPPED`. Splitting the one word into
+        # five turned this from "all the skips" into "only the ones that had a
+        # file" without changing a character here -- a silent undercount is a
+        # worse failure than a KeyError, and `counts()` pre-seeds every key so
+        # there would never have been one.
+        # ⛔ And it no longer says they "had them": a retrying row has nothing.
+        skipped = sum(tallies[word] for word in set(gui_run.SKIP_WORDS.values()))
+        self.tally_labels[2].setText(u"%d skipped" % skipped)
+        for index, word, text in ((3, gui_run.NOT_YET, u"%d waiting"),
+                                  (4, gui_run.FAILED, u"%d had a problem")):
+            count = tallies[word]
+            self.tally_labels[index].setText(text % count)
+            self.tally_labels[index].setVisible(count > 0)
+            self._tally_seps[index].setVisible(count > 0)
         calls = state.summary.get(u"api_calls", 0) or 0
         spent = seconds_text(state.summary.get(u"seconds"))
         self.right_label.setText(
@@ -1868,6 +2271,41 @@ class HatoWindow(Styled):
             column.addStretch(1)
             return
 
+        # 🚨 THE RUN'S OWN NOTES, WHICH THIS WINDOW HAS NEVER SHOWN. Sonic,
+        # 2026-09-22, on a file inside a blacklisted folder: *"it noticed it
+        # but didn't seem to do anything with it ... But nothing in the UI ever
+        # popped up about it."*
+        #
+        # ⛔ The pipeline writes *"N video(s) were not looked at because they
+        # are inside a skipped folder"* into `report.notes` precisely so a skip
+        # rule that is too broad cannot be invisible -- and `gui/` had no
+        # reference to `notes` anywhere, so the one reader who needed it was
+        # the one who never got it. It reached the CLI and stopped there.
+        #
+        # ⭐ FIRST, not last: a note explains an ABSENCE, and an explanation
+        # underneath a long list of what WAS found is read by nobody.
+        for note in (state.summary.get(u"notes") or ()):
+            if note:
+                # ⛔ ENGINE PROSE -- a note can carry an exception's own words.
+                column.addWidget(self._quiet(u"note", u"— %s" % safe(note), wraps=True))
+
+        # ⭐ 4b's third clause -- SAY THAT IT HAPPENED. Tsuihou 12 was refused on
+        # 19 Sep, retried on its own two days later, and written; nothing
+        # anywhere said so, and it was reported as *"it doesn't get subbed."*
+        retried = [row for row in state.rows if gui_run.found_on_retry(row)]
+        if retried:
+            names = u", ".join(episode_name(row) for row in retried[:4])
+            more = len(retried) - 4
+            # ⚠ NEUTRAL, because it is not always true that they "did not line
+            # up": what was tried first may have been a download that FAILED
+            # (ADVERSARY 2026-09-22 A22).
+            column.addWidget(self._quiet(
+                u"found on a retry",
+                u"— %s%s. hato tried other files first; a later one lined up "
+                u"with your copy." % (names, u" and %d more" % more
+                                      if more > 0 else u""),
+                wraps=True))                  # ⚠ four names can outgrow the window
+
         for title, season, rows, skipped in state.shows():
             column.addWidget(self._show_head(title, season, len(rows), rows))
             for row in rows:
@@ -1882,17 +2320,22 @@ class HatoWindow(Styled):
                 self._details[key] = panel
                 column.addWidget(panel)
             if skipped:
+                # ⚠ "already had subtitles" was true of only one of the five
+                # skips. This counts all of them, so it says the thing that IS
+                # true of all of them.
                 column.addWidget(self._quiet(
-                    u"%d episode%s already had subtitles"
+                    u"%d other episode%s skipped"
                     % (skipped, u"" if skipped == 1 else u"s"),
                     u"— nothing was requested for them"))
 
-        for title, count in state.fully_skipped():
+        for title, word, episodes in state.fully_skipped():
+            tail = episode_tail(episodes)
             column.addWidget(self._quiet(
-                title, u"— already subtitled",
-                tip=u"Every episode already carries a Japanese track, so it "
-                    u"is already in sync and nothing was requested. %d video%s."
-                    % (count, u"" if count == 1 else u"s")))
+                title if not tail else u"%s · %s" % (title, tail),
+                u"— %s" % word,
+                tip=QUIET_TIPS.get(word, u"Nothing was requested for %d video%s."
+                                   % (len(episodes),
+                                      u"" if len(episodes) == 1 else u"s"))))
 
         #: [!] ZERO ROWS IS A REAL STATE, AND THREE DIFFERENT ONES -- a settled
         #: library, an empty folder, or nothing pairable. It must not look
@@ -1914,8 +2357,8 @@ class HatoWindow(Styled):
         box.setSpacing(9)
         box.addWidget(label(title, u"showtitle", head))
         meta = []
-        if season:
-            meta.append(str(season))
+        if season_text(season):
+            meta.append(season_text(season))
         meta.append(u"%d added" % added)
         box.addWidget(label(u" · ".join(meta), u"showmeta", head))
         entry = rows[0].get(u"jimaku_entry") if rows else None
@@ -1928,17 +2371,30 @@ class HatoWindow(Styled):
         box.addStretch(1)
         return head
 
-    def _quiet(self, lead, tail, tip=None):
-        u"""One quiet line, not nineteen pills. *"visible, but not the focus."*"""
+    def _quiet(self, lead, tail, tip=None, wraps=False):
+        u"""One quiet line, not nineteen pills. *"visible, but not the focus."*
+
+        ⚠ `wraps` for a tail that can outgrow the window. LOOKED, 2026-09-23 --
+        a run's note, *"24 video(s) were not looked at because they are inside a
+        skipped folder (C:\\...)"*, ran off the right edge with no ellipsis and
+        the folder list -- the part the note exists to say -- was silently cut
+        mid-path. Qt does not wrap a label unless told to.
+        """
         strip = Styled(self.panes[TAB_SUBS].widget(), u"quiet")
         box = QHBoxLayout(strip)
         box.setContentsMargins(PAD, 7, PAD, 12)
         box.setSpacing(8)
-        box.addWidget(label(lead, u"hadb", strip))
-        box.addWidget(label(tail, u"had", strip))
+        box.addWidget(label(lead, u"hadb", strip), 0, Qt.AlignmentFlag.AlignTop)
+        said = label(tail, u"had", strip)
+        if wraps:
+            said.setWordWrap(True)
+            box.addWidget(said, 1)
+        else:
+            box.addWidget(said)
         if tip:
             box.addWidget(info_dot(tip, strip))
-        box.addStretch(1)
+        if not wraps:
+            box.addStretch(1)
         return strip
 
     def _no_folders(self):
@@ -2063,8 +2519,23 @@ class HatoWindow(Styled):
         self._accordions = {}
         state = self.state
         host = self.panes[TAB_PICK].widget()
+        now = state.clock()
 
-        rows = state.of(gui_run.NEEDS_YOU)
+        # ⭐ A1 -- WHAT hato REMEMBERS COULD NOT BE READ, AND THAT IS SAID. The
+        # window used to take a failed `hato problems` for "nothing needs you".
+        # ⛔ It keeps what it had, above this line, and says why it is not newer.
+        trouble = state.problems_error or state.config_error
+        if trouble:
+            column.addWidget(self._quiet(
+                u"not up to date",
+                u"— hato could not read what it remembers: %s" % safe(trouble),
+                wraps=True))                  # ⚠ a config error is two sentences and a path
+
+        # ⭐ RUNBOOK 8e -- ONE list: the run's problem rows AND the remembered
+        # ones, so a problem episode never disappears because a run looked
+        # somewhere else (4a). `run.needs_you` decides which copy of a row wins.
+        problems = state.problems()
+        rows = [r for r in problems if gui_run.problem_kind(r) == gui_run.PICK]
         for row in rows:
             key = state.key(row)
             attempts = candidates(row)
@@ -2072,12 +2543,25 @@ class HatoWindow(Styled):
             best_name = None
             for attempt in attempts:
                 value = attempt.get(u"match_rate")
-                if value is not None and (best is None or value > best):
+                # ⚠ ONLY A FILE hato STILL HAS can be recommended: one whose cached
+                # copy is gone cannot be used, and was outlined anyway (A13).
+                if value is not None and candidate_path(attempt) \
+                        and (best is None or value > best):
                     best = value
                     best_name = attempt.get(u"name")
 
+            said = state.pick_said.get(key)
+            picked = state.picked.get(key)
+            pending = state.pick_pending.get(key)
+            late = gui_run.probably_not_out(row)
+            wait = u"" if picked else gui_run.retry_text(row, now, state.watching,
+                                                         state.daily())
             head = PickHead(row, host)
-            head.set_state(state.picked.get(key), len(attempts), best)
+            # ⭐ THE WAIT, SAID ON THE ROW THAT STAYS (4b): *"retrying in 14h"*.
+            # ⭐ And the colour is the pick that LANDED, never a later one that
+            # did not (A10).
+            head.set_state(picked, len(attempts), best, wait=wait, pending=pending,
+                           word=state.picked_word.get(key) if picked else None, late=late)
             head.clicked.connect(lambda k=key: self._toggle_pick(k))
             column.addWidget(head)
 
@@ -2091,15 +2575,42 @@ class HatoWindow(Styled):
             #: so the outline reads as a recommendation rather than as a
             #: choice already made. After a pick it moves to the file the
             #: person chose, which is what the shot of that state shows.
-            chosen_name = state.picked.get(key) or best_name
+            # ⚠ NO RECOMMENDATION ON A LATE ROW: every file there is another
+            # episode's, and outlining the best of them under "probably not out
+            # yet" recommended the thing the sentence says to wait instead of.
+            chosen_name = (picked or pending or (None if late else best_name))
+            if late and not picked:
+                # ⭐ 8f -- SAY WHY IT WAITS, in the body's own ink, above files
+                # that are other episodes' -- and keep them one click away.
+                why = paragraph(
+                    u"Episode %s is probably not out yet — the newest on jimaku is "
+                    u"%s%s. The files below were tried and did not line up; you can "
+                    u"still use one."
+                    % (episode_text(row.get(u"episode")),
+                       episode_text(row.get(u"newest_offered")),
+                       u" (%s)" % wait if wait else u""), body)
+                why.setObjectName(u"")
+                why.setFixedWidth(COL_CAND)
+                inner.addWidget(why)
             for attempt in attempts:
                 card = CandidateCard(attempt, body)
                 card.setFixedWidth(COL_CAND)
                 card.set_chosen(chosen_name is not None
                                 and attempt.get(u"name") == chosen_name)
+                # ⛔ INERT WHILE IT CANNOT BE USED, and said on the card:
+                #   gone     hato no longer has the file -- the click could only
+                #            fail, and it promised a remedy that is not there (A13)
+                #   landed   a file is written; tsubasa will not write another over
+                #            it, so a second pick could only fail -- and turned the
+                #            row green over its failure word (A10)
+                #   pending  one pick is with `hato sync`; a second one's answer
+                #            was wiped by the first's (A32)
+                card.set_usable(bool(candidate_path(attempt)), bool(picked or pending))
                 card.clicked.connect(
                     lambda k=key, a=attempt: self.commit_pair(k, a))
                 inner.addWidget(card)
+            if said and not picked:
+                inner.addWidget(self._pick_said(said, body))
             inner.addWidget(self._pick_actions(row, key, body))
             accordion = Accordion(body, host)
             accordion.set_open(state.open_pick == key, animate=False)
@@ -2107,11 +2618,36 @@ class HatoWindow(Styled):
             column.addWidget(accordion)
             column.addWidget(hrule(host))
 
-        not_yet = state.of(gui_run.NOT_YET)
+        # ⭐ HANDOFF 4c -- the picks the person chose to wait on: said, dated, and
+        # one click from being picks again. ⛔ Not folded into "not on jimaku
+        # yet": most had files, and those did not line up -- a different fact.
+        chosen = [r for r in problems if gui_run.problem_kind(r) == gui_run.WAITING
+                  and r.get(u"waiting_by_choice")]
+        if chosen:
+            strip = Styled(host, u"quiet")
+            box = QHBoxLayout(strip)
+            box.setContentsMargins(PAD, 14, PAD, 8)
+            box.setSpacing(8)
+            lead = label(u"%d waiting for the next search" % len(chosen), u"hadb", strip)
+            mark(lead, u"kind", u"notfound")
+            box.addWidget(lead)
+            soonest = min(gui_run.retry_due(r) for r in chosen)
+            box.addWidget(label(u"— %s · %s" % (
+                u", ".join(episode_name(r) for r in chosen[:4]),
+                gui_run.retry_text({u"retry_after": soonest.isoformat()}, now,
+                                   state.watching, state.daily())), u"had", strip))
+            back = button(u"Show them", strip)
+            back.setToolTip(wrap(u"Puts these back as picks now, with every file "
+                                 u"hato tried."))
+            back.clicked.connect(lambda _c=False, rs=list(chosen): self.show_waited(rs))
+            box.addWidget(back)
+            box.addStretch(1)
+            column.addWidget(strip)
+
+        not_yet = [r for r in problems if gui_run.problem_kind(r) == gui_run.WAITING
+                   and not r.get(u"waiting_by_choice")]
         if not_yet:
-            names = u", ".join(
-                u"%s %s" % (row.get(u"title") or u"", row.get(u"episode"))
-                for row in not_yet[:4])
+            names = u", ".join(episode_name(row) for row in not_yet[:4])
             strip = Styled(host, u"quiet")
             box = QHBoxLayout(strip)
             box.setContentsMargins(PAD, 14, PAD, 8)
@@ -2124,64 +2660,190 @@ class HatoWindow(Styled):
             #: already been polished never re-evaluates. `mark` repolishes.
             mark(lead, u"kind", u"notfound")
             box.addWidget(lead)
+            # ⭐ THE REAL WAIT, NOT "TOMORROW" (4b). The soonest of them, said the
+            # way `retry_text` says it: a promise only when the tray will keep it.
+            soonest = min((gui_run.retry_due(r) for r in not_yet
+                           if gui_run.retry_due(r) is not None), default=None)
+            when = gui_run.retry_text({u"retry_after": soonest.isoformat()},
+                                      now, state.watching,
+                                      state.daily()) if soonest else u""
             box.addWidget(label(
-                u"— %s. hato will ask again tomorrow." % names,
+                u"— %s%s" % (names, u" · %s" % when if when else u""),
                 u"had", strip))
+            # ⭐ AND THE MANUAL CHOICE, ONE CLICK AWAY -- `05-interface.md`'s
+            # *"unless prompted is a Retry on one row"*, which was never built.
+            again = button(u"Look again now", strip)
+            again.setToolTip(wrap(
+                u"Asks jimaku about these episodes now instead of waiting. One "
+                u"request per show, and nothing is downloaded unless a new file "
+                u"is there."))
+            again.clicked.connect(
+                lambda _c=False, rs=list(not_yet): self.look_again(rs))
+            self._not_while_running(again)
+            box.addWidget(again)
+            # ⚠ BOTH WAITS. A show jimaku has no entry for at all waits 30 days,
+            # and sat under a tooltip saying 24 hours (ADVERSARY 2026-09-22 A17).
             box.addWidget(info_dot(
                 u"A just-aired episode usually has no subtitle for hours or "
-                u"days. hato waits a day before asking again rather than "
-                u"burning requests, and there is nothing to pair in the "
-                u"meantime.", strip))
+                u"days. hato waits %s before asking again about an episode jimaku "
+                u"has no file for yet — and %s when jimaku has no entry for the "
+                u"show at all — rather than burning requests. There is nothing "
+                u"to pair in the meantime.%s"
+                % (self._window_text(), self._window_text(self.state.hard_days),
+                   u"" if state.watching else
+                   # ⭐ D2 -- the daily run asks again on its own too.
+                   u"\n\nhato is not in the tray, so the daily run at %s asks "
+                   u"again — or Look again now." % state.schedule if state.auto else
+                   u"\n\nhato is not in the tray, so nothing asks again on its "
+                   u"own — the next run does, or Look again now."), strip))
             box.addStretch(1)
             column.addWidget(strip)
 
-        broken = state.of(gui_run.FAILED)
+        broken = [r for r in problems if gui_run.problem_kind(r) == gui_run.TROUBLE]
         if broken:
             strip = Styled(host, u"quiet")
-            box = QHBoxLayout(strip)
+            box = QVBoxLayout(strip)
             box.setContentsMargins(PAD, 8, PAD, 8)
-            box.setSpacing(8)
+            box.setSpacing(4)
             lead = label(u"%d had a problem" % len(broken), u"hadb", strip)
             mark(lead, u"kind", u"notrack")
             box.addWidget(lead)
+            # ⭐ EACH ONE'S OWN REASON. Since A6 this group holds refusals with
+            # nothing to pick -- two videos on one file, a name with no episode
+            # number -- and the reason is the only thing that says what to do.
+            # One reason under a count of several said it for one of them.
             #: [!] ENGINE PROSE. Through `safe()` before it reaches a widget.
-            #: [!] AND IT NEEDS THE STRETCH FACTOR: added without one, beside a
-            #: trailing `addStretch`, the eliding label was allotted ZERO width
-            #: and the whole explanation rendered as nothing at all -- the line
-            #: read *"1 had a problem"* and stopped. Present, correct, invisible.
-            box.addWidget(Elide(
-                u"— %s" % safe(broken[0].get(u"reason"), u"see the log"),
-                strip, u"had"), 1)
+            #: [!] AND IT NEEDS THE STRETCH FACTOR: without one, beside a
+            #: trailing stretch, an eliding label is allotted ZERO width and
+            #: renders as nothing at all. Present, correct, invisible.
+            for row in broken[:4]:
+                box.addWidget(Elide(
+                    u"— %s: %s" % (episode_name(row) or row.get(u"name") or u"",
+                                   safe(row.get(u"reason"), u"see the log")),
+                    strip, u"had"), 1)
+            if len(broken) > 4:
+                box.addWidget(label(u"— and %d more" % (len(broken) - 4), u"had", strip))
             column.addWidget(strip)
 
-        if not rows and not not_yet and not broken:
+        if not rows and not chosen and not not_yet and not broken:
             column.addWidget(self._empty(
                 u"Nothing needs you.",
                 u"Episodes hato could not settle on its own land here."))
         column.addStretch(1)
+
+    def _window_text(self, days=None):
+        u"""A retry window, in words -- the soft one unless told. -> *"24 hours"* / *"3 days"*"""
+        days = (self.state.retry_days if days is None else days) or 1
+        return u"24 hours" if days == 1 else u"%d days" % days
+
+    def _not_while_running(self, control):
+        u"""⛔ A look-again while a run is going did nothing, and said nothing
+        (ADVERSARY 2026-09-22 A30). It is disabled, and says why."""
+        if self.state.running:
+            control.setEnabled(False)
+            control.setToolTip(wrap(u"A run is going — this is here again when it "
+                                    u"finishes."))
+
+    def _pick_said(self, said, parent):
+        u"""What the last pick on this row came to, when it did not land.
+
+        🚨 D7. A pick used to go green at the click and nothing was ever read
+        back -- over a child that had died on a usage error. The row now says
+        what `hato sync` answered, in hato's own words (`safe`d: the engine's
+        reason is verbatim prose and may carry its alarming word).
+        """
+        word, why = said
+        strip = Styled(parent, u"quiet")
+        box = QHBoxLayout(strip)
+        box.setContentsMargins(0, 2, 0, 0)
+        box.setSpacing(6)
+        lead = label(u"that one %s" % word, u"hadb", strip)
+        mark(lead, u"kind", u"notrack")
+        box.addWidget(lead)
+        box.addWidget(Elide(u"— %s" % safe(why, u"the timing did not hold"),
+                            strip, u"had"), 1)
+        return strip
 
     def _pick_actions(self, row, key, parent):
         strip = Styled(parent, u"acts")
         box = QHBoxLayout(strip)
         box.setContentsMargins(0, 4, 0, 0)
         box.setSpacing(9)
+        state = self.state
+        # ⛔ A ROW WHOSE PICK LANDED, OR IS STILL WITH `hato sync`, IS NOT ASKING.
+        # It offered *Wait for it* and *Try 3 more* beside "used", and a click
+        # filed a written row as waiting (ADVERSARY 2026-09-22 A9).
+        if key in state.picked or key in state.pick_pending:
+            box.addWidget(label(u"Written — your pick." if key in state.picked
+                                else u"Writing your pick…", u"hint", strip))
+            box.addStretch(1)
+            return strip
         box.addWidget(label(u"Click one to use it.", u"hint", strip))
         #: [*] BLACKLIST STAYS A BUTTON. It is a DIFFERENT decision and must
         #: not be reachable by the same reflex as choosing a file.
         blacklist = button(u"Blacklist this video", strip)
         blacklist.clicked.connect(lambda _c=False, k=key: self.blacklist(k))
         box.addWidget(blacklist)
+        # ⭐ HANDOFF 4c -- *"a button that suggests only for those ones, and is
+        # highlighted ... it will search again in 24 hours"*. The automatic path,
+        # made explicit: hato searches again on its own at the retry, and this
+        # puts the row away until then. HIGHLIGHTED only when the episode is one
+        # past the newest on offer; offered, plainly, on every other row.
+        # ⛔ Only with a retry STILL AHEAD to wait for -- one already due puts
+        # nothing away, and was offered highlighted anyway (A8). A control that
+        # would do nothing vanishes (dev-build).
+        due = gui_run.retry_due(row)
+        if due is not None and due > state.clock():
+            late = gui_run.probably_not_out(row)
+            wait = button(u"Wait for it", strip, accent=late)
+            when = gui_run.retry_text(row, state.clock(), state.watching,
+                                      state.daily())
+            # ⚠ WITHOUT THE TRAY NOTHING SEARCHES ON ITS OWN, and this promised
+            # that something would (A21). ⭐ D2 -- unless the daily run is on.
+            wait.setToolTip(wrap(
+                (u"hato searches for this episode again on its own (%s). " % when
+                 if state.watching or state.auto else
+                 u"hato looks again the next time it runs (%s) — it is not in the "
+                 u"tray, so nothing runs it on its own before then. " % when)
+                + u"This puts the row away until then — if that search finds "
+                  u"nothing, it comes back here."))
+            wait.clicked.connect(lambda _c=False, r=row: self.wait_for(r))
+            box.addWidget(wait)
+        # ⭐ ONE OF TWO, AND BOTH NOW DO SOMETHING (D3). "Try 3 more" ran the
+        # video's folder with no flag, and for the day after a refusal -- the
+        # only time anybody presses it -- the gate said "waiting" and tried
+        # nothing. Both are `--retry-now --only <video>` now: the wait is
+        # skipped, and a file already refused is still never fetched again.
+        # ⚠ "Try 3 more" ONLY WHEN MORE ARE KNOWN TO BE THERE. What hato remembers
+        # cannot say how many the entry offers (None), and the button promised
+        # three new files where there may be none (A24). Same argv, honest word.
         offered = row.get(u"candidates_offered")
         tried = len(candidates(row))
-        if offered is None or offered > tried:
+        if offered is not None and offered > tried:
             more = button(u"Try 3 more candidates", strip)
             more.clicked.connect(lambda _c=False, k=key: self.try_more(k))
-            box.addWidget(more)
+        else:
+            more = button(u"Look again now", strip)
+            more.setToolTip(wrap(
+                u"Every file jimaku offered for this episode has been tried. "
+                u"This asks again now for anything new, instead of waiting."
+                if offered is not None else
+                u"Asks jimaku again now for anything new, instead of waiting. A "
+                u"file already tried is never downloaded again."))
+            more.clicked.connect(
+                lambda _c=False, r=row: self.look_again([r]))
+        self._not_while_running(more)
+        box.addWidget(more)
         box.addWidget(info_dot(
-            u"These are the files hato already downloaded for this episode, "
-            u"never the whole jimaku catalogue. Your pick is still checked "
-            u"against the video's own timing, so a wrong one is not written "
-            u"— and you can reopen this row and pick again.", strip))
+            u"These are the files hato downloaded for this episode — never the "
+            u"whole jimaku catalogue. None of them lined up with your copy on "
+            u"timing, which is why hato did not choose one for you.\n\n"
+            + (u"Clicking one uses it anyway: it is your call, and the row "
+               u"will say it was yours."
+               if gui_run.PICK_OVERRIDES_TIMING else
+               u"Clicking one checks it again against your copy's timing.")
+            + u"\n\nhato also looks again on its own after %s." % self._window_text(),
+            strip))
         box.addStretch(1)
         return strip
 
@@ -2214,6 +2876,7 @@ class HatoWindow(Styled):
         stack.addWidget(self._card_key(holder))
         stack.addWidget(self._card_skips(holder))
         stack.addWidget(self._card_blacklist(holder))
+        stack.addWidget(self._card_memory(holder))
         # ⭐ LAST, DELIBERATELY. Sonic: *"Not everyone's going to want this so I
         # don't want it to be the headliner. I want it to be down below in
         # settings."* An integration most people will not use sits under the
@@ -2264,29 +2927,73 @@ class HatoWindow(Styled):
 
     def _card_when(self, parent):
         card, body = self._card(u"When it runs", parent)
-        top = QWidget(card)
-        line = QHBoxLayout(top)
+        state = self.state
+        if state.auto_supported:
+            top = QWidget(card)
+            line = QHBoxLayout(top)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(10)
+            switch = Switch(top)
+            switch.setChecked(state.auto)
+            switch.clicked.connect(self._toggle_auto)
+            line.addWidget(switch)
+            line.addWidget(label(u"every day at", None, top))
+            self.time_field = QLineEdit(state.schedule, top)
+            self.time_field.setObjectName(u"time")
+            self.time_field.setFixedWidth(78)
+            self.time_field.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.time_field.editingFinished.connect(self._set_schedule)
+            line.addWidget(self.time_field)
+            # ⭐ SAY WHEN IT RESOLVES -- derived from the task and the clock. ⛔ This
+            # read a `next_run` field nothing ever set; only the suite's fixture
+            # did, and the D2 shot showed *"next run in 4 hours"* beside a switch
+            # that was OFF.
+            when = gui_run.next_run_text(state.daily(), state.clock())
+            if when:
+                line.addWidget(label(when, u"hint", top))
+            line.addStretch(1)
+            body.addWidget(top)
+        # 🚨 D2 -- THIS SENTENCE WAS A CLAIM ABOUT A TASK NOBODY REGISTERED:
+        # *"Windows wakes hato at that time"*, over a switch that did nothing. It
+        # now says what Task Scheduler holds -- and when the computer is off at
+        # the time, when the run happens instead (`StartWhenAvailable`).
+        body.addWidget(paragraph(gui_run.daily_run_text(
+            state.auto, state.schedule, state.watch, state.auto_supported), card))
+        said = state.schedule_said or state.auto_note
+        if said:
+            # ⚠ Only when there is something to say, and it says the fix. Styled
+            # as the Start-with-Windows row's own note, its sibling (LOOKED: a hue
+            # of its own was tried and `NO_TRACK` is a grey -- the faint-labels
+            # question is Sonic's, and this joins it rather than answering it).
+            body.addWidget(paragraph(said, card))
+        # ⭐ 4b -- SONIC ASKED FOR THE INTERVAL TO BE SHOWN HERE. The retry was
+        # working and nothing anywhere said it existed, let alone how long it
+        # waits. ⚠ The number is hato's own (`hato problems` reports it), never a
+        # literal typed into the window.
+        retry = QWidget(card)
+        line = QHBoxLayout(retry)
         line.setContentsMargins(0, 0, 0, 0)
-        line.setSpacing(10)
-        switch = Switch(top)
-        switch.setChecked(self.state.auto)
-        switch.clicked.connect(self._toggle_auto)
-        line.addWidget(switch)
-        line.addWidget(label(u"every day at", None, top))
-        self.time_field = QLineEdit(self.state.schedule, top)
-        self.time_field.setObjectName(u"time")
-        self.time_field.setFixedWidth(78)
-        self.time_field.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.time_field.editingFinished.connect(self._set_schedule)
-        line.addWidget(self.time_field)
-        if self.state.next_run:
-            line.addWidget(label(self.state.next_run, u"hint", top))
+        line.setSpacing(5)
+        # ⚠ The Watch row's grammar -- a short bright fact, then a dim
+        # qualifier. As one long bright sentence it read as a heading (LOOKED).
+        line.addWidget(label(u"Looks again after %s" % self._window_text(),
+                             None, retry))
+        line.addWidget(label(u"· at an episode it could not settle", u"hint", retry))
+        line.addWidget(info_dot(
+            u"A subtitle that did not line up with your copy, or an episode "
+            u"jimaku has no file for yet, is not asked about again straight "
+            u"away — the answer rarely changes within the hour, and every "
+            u"question spends a request. After %s it is tried again, and any "
+            u"file it has not tried before is fetched.\n\n"
+            u"While hato is in the tray this happens on its own at the time "
+            u"shown on the row. Without the tray it happens on the next run%s. "
+            u"Either way, Look again now on the row does it immediately."
+            % (self._window_text(),
+               # ⭐ D2 -- the daily run is a run that happens on its own too.
+               u" — the daily one at %s, while that is on" % state.schedule
+               if state.auto else u""), retry))
         line.addStretch(1)
-        body.addWidget(top)
-        body.addWidget(paragraph(
-            u"Windows wakes hato at that time and it exits when it is done "
-            u"— nothing sits running in the background. Each run finds "
-            u"whatever is new.", card))
+        body.addWidget(retry)
 
         body.addWidget(hrule(card))
         watch = QWidget(card)
@@ -2323,14 +3030,31 @@ class HatoWindow(Styled):
         pair.setSpacing(4)
         #: [!] MEASURED, NOT ESTIMATED. This line said *"~12 MB"* when nothing
         #: had measured it. A number in a UI is a claim.
-        pair.addWidget(label(u"Sits in the tray · 13 MB", u"hint", second))
-        pair.addWidget(info_dot(
-            u"Measured, not estimated. 13.4 MB resident — and 12.7 MB of "
-            u"that is Python itself, so the watching costs about 0.7 MB. No "
-            u"window toolkit is loaded while it watches; the window is a "
-            u"separate program that starts when you open it.", second))
+        #: 🚨 AND A CLAIM ABOUT THE BUILD IT IS SHOWN IN. 13.4 MB is the tray run
+        #: from SOURCE; the exe's tray carries its own CPython and measured 30.6 MB
+        #: (smoke, 2026-09-22) -- 1.0.1 told every exe user "13 MB".
+        mb, detail = tray_cost()
+        pair.addWidget(label(u"Sits in the tray · %s" % mb, u"hint", second))
+        pair.addWidget(info_dot(detail, second))
         pair.addStretch(1)
         column.addWidget(second)
+        if self.state.old_tray:
+            # ⭐ V1 -- AN OLDER TRAY WATCHES BUT KEEPS NO RETRY DATE, and turning
+            # watching on does not replace one that is running. Said where the
+            # tray is controlled, with the one action that fixes it.
+            third = QWidget(text)
+            pair = QHBoxLayout(third)
+            pair.setContentsMargins(0, 2, 0, 0)
+            pair.setSpacing(8)
+            old = label(u"The hato in your tray is an older version — it watches, "
+                        u"but does not look again on its own at a retry date.",
+                        u"hint", third)
+            old.setWordWrap(True)
+            pair.addWidget(old, 1)
+            restart = button(u"Restart the tray", third)
+            restart.clicked.connect(self.restart_watcher)
+            pair.addWidget(restart)
+            column.addWidget(third)
         line.addWidget(text, 1)
         body.addWidget(watch)
 
@@ -2481,9 +3205,16 @@ class HatoWindow(Styled):
         # that RESOLVES is not a key that WORKS, and that is precisely the
         # difference somebody who has just pasted one is worried about.
         if self.state.key_status:
-            body.addWidget(label(self.state.key_status,
-                                 u"dotok" if self.state.key_ok else u"keybad",
-                                 card))
+            # ⛔ jimaku's own words, and they can carry the one word this window
+            # never says -- *"jimaku refused the key"* reached the card verbatim
+            # (ADVERSARY 2026-09-22 A11). Said in hato's words instead.
+            status = label(safe(self.state.key_status,
+                                u"jimaku did not accept that key"),
+                           u"dotok" if self.state.key_ok else u"keybad", card)
+            # ⚠ jimaku's words are its to choose -- an HTTP error can outgrow the
+            # card, and an unwrapped label cuts it silently (LOOKED, 2026-09-23)
+            status.setWordWrap(True)
+            body.addWidget(status)
         body.addWidget(paragraph(
             u"Kept in hato's own folder — never in the project and never "
             u"in a config file.", card))
@@ -2525,6 +3256,34 @@ class HatoWindow(Styled):
         remove.clicked.connect(lambda _c=False, p=path: on_remove(p))
         box.addWidget(remove)
         return line
+
+    def _card_memory(self, parent):
+        u"""⭐ RUNBOOK 8g -- what hato remembers, and a way to make it forget.
+
+        ⛔ NAMES WHAT GOES AND WHAT STAYS BEFORE ANYTHING IS ASKED. The numbers
+        are hato's own dry count (`hato state --clear --json`), never a guess
+        made here; the confirm names them again.
+        """
+        card, body = self._card(u"hato's memory", parent)
+        line = QWidget(card)
+        box = QHBoxLayout(line)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(10)
+        counted = gui_run.memory_summary(self.state.memory)
+        box.addWidget(label(counted or u"What hato tried, and when it looks again.",
+                            None if counted else u"hint", line), 1)
+        forget = button(u"Clear hato's memory…", line)
+        forget.clicked.connect(self.choose_clear)
+        box.addWidget(forget)
+        body.addWidget(line)
+        if self.state.memory_said:
+            body.addWidget(label(self.state.memory_said, u"hint", card))
+        body.addWidget(paragraph(
+            u"Clearing it starts every episode without a subtitle over, as if "
+            u"hato were new — each show costs a few requests to find again. "
+            u"Stays: every subtitle, the originals hato kept, your settings, "
+            u"your key, and the blacklist unless you say otherwise.", card))
+        return card
 
     def _card_surasura(self, parent):
         u"""The surasura integration. ⭐ Last card, and quiet.
@@ -2637,16 +3396,23 @@ class HatoWindow(Styled):
             wrapbox = QHBoxLayout(text)
             wrapbox.setContentsMargins(0, 0, 0, 0)
             wrapbox.setSpacing(4)
+            # ⚠ ONE IS NOT "THOSE 1": the ruled mock shows twelve, and at one the
+            # same design read *"1 of these are ... Remove those 1"* (found by
+            # looking at the Layer 8 shots, 2026-09-23).
+            one = len(gone) == 1
             wrapbox.addWidget(label(
+                u"1 of these is no longer on this machine" if one else
                 u"%d of these are no longer on this machine" % len(gone),
                 u"stalelead", text))
             tail = label(
+                u"— rotated out of your library. It is keeping a row nobody needs."
+                if one else
                 u"— rotated out of your library. They are keeping rows "
                 u"nobody needs.", u"staletext", text)
             tail.setWordWrap(True)
             wrapbox.addWidget(tail, 1)
             line.addWidget(text, 1)
-            sweep = button(u"Remove those %d" % len(gone), notice)
+            sweep = button(u"Remove it" if one else u"Remove those %d" % len(gone), notice)
             sweep.clicked.connect(self.remove_stale_blacklist)
             line.addWidget(sweep)
             body.addWidget(notice)
@@ -2711,6 +3477,11 @@ class HatoWindow(Styled):
         remove.setCursor(Qt.CursorShape.PointingHandCursor)
         remove.setToolTip(wrap(u"Fetch for this video again."))
         remove.clicked.connect(lambda _c=False, e=entry: self.unblacklist(e))
+        if entry.get(u"removing"):
+            # ⭐ A31 -- going, not gone, until hato's own list says so.
+            remove.setEnabled(False)
+            remove.setToolTip(wrap(u"Removing — hato is taking it off its list."))
+            note.setText(u"removing…")
         box.addWidget(remove)
         return row
 
@@ -2724,6 +3495,17 @@ class HatoWindow(Styled):
     #: ⚠ Set before any timer exists, so `_drain` can note our own write even
     #: when nobody asked the window to follow other runs (the suite's case).
     _others_seen = 0.0
+    #: The wall-clock minute last re-rendered for, so dates move on screen (A16).
+    _minute_seen = None
+
+    def _anything_dated(self):
+        u"""Is anything on screen tied to a date that can pass? -> bool"""
+        state = self.state
+        # ⭐ D2 -- *"next run in 15h"* is dated too, for as long as the daily run
+        # is registered; left alone it would still say 15h in the morning.
+        if state.waits or state.auto:
+            return True
+        return any(r.get(u"retry_after") for r in list(state.rows) + list(state.remembered or ()))
 
     def follow_other_runs(self, every_ms=None):
         u"""Notice runs this window did not start. -> the timer
@@ -2750,7 +3532,23 @@ class HatoWindow(Styled):
             # useful rather than confusing.
             was = int(self.state.queued_in)
             self.state.queued_in, self.state.queued_names = gui_run.pending_run()
-            if int(self.state.queued_in) != was:
+            # ⭐ RUNBOOK 8e -- IS SOMETHING THERE TO KEEP THE WAIT? *"retrying in
+            # 14h"* is a promise only while a tray that KEEPS it is running (8h,
+            # V1); read from the world on every look, never from the Settings tick.
+            watching, old = self.tray_is_watching(), self.tray_is_old()
+            changed = (int(self.state.queued_in) != was
+                       or watching != self.state.watching
+                       or old != self.state.old_tray)
+            self.state.watching, self.state.old_tray = watching, old
+            # ⭐ A DATE PASSES WITH NOTHING ELSE CHANGING (ADVERSARY 2026-09-22
+            # A16). An open window held a waited row hidden past its date, and
+            # *"retrying in 30m"* read the same five hours later. Once a minute,
+            # while anything on screen is dated.
+            minute = int(time.time() // 60)
+            if minute != self._minute_seen:
+                self._minute_seen = minute
+                changed = changed or self._anything_dated()
+            if changed:
                 self.render()
             if self.state.running:
                 return                        # ⛔ our own run owns the rows
@@ -2758,11 +3556,17 @@ class HatoWindow(Styled):
             if stamp == self._others_seen:
                 return
             self._others_seen = stamp
+            # ⭐ A run happened somewhere: whatever it settled or added, the
+            # memory is asked again, whether or not its snapshot is usable.
+            self.refresh_problems()
+            self.refresh_memory()
             rows, summary, saved_at = gui_run.load_last_run()
             if not rows and not summary:
                 return
             self.state.rows = rows
             self.state.summary = summary
+            self.state.rows_at = self.state.moment()
+            self.state.trust_rows = False      # ⭐ A27 -- a newer run's rows now
             if len(saved_at) >= 16:
                 self.state.last_run = saved_at[11:16]
             self.render()
@@ -3044,43 +3848,100 @@ class HatoWindow(Styled):
         self.render()
         return ok
 
+    def _row_for(self, key):
+        u"""-> the Needs-you row with this key, from the ONE list, or None.
+
+        ⚠ From `problems()`, not `rows`: since RUNBOOK 8e a row can come from
+        what hato remembers and be in no run's rows at all.
+        """
+        for row in self.state.problems():
+            if self.state.key(row) == key:
+                return row
+        for row in self.state.rows:
+            if self.state.key(row) == key:
+                return row
+        return None
+
     def pair_argv(self, key, attempt):
         u"""What committing this pair would run. -> [unicode] or None
 
         [X] `run.argv_for_pair` builds it -- this method only finds the two
         paths. A second argv builder is a second program.
         """
-        row = None
-        for candidate in self.state.rows:
-            if self.state.key(candidate) == key:
-                row = candidate
-                break
+        row = self._row_for(key)
         if row is None:
             return None
         subtitle = candidate_path(attempt)
         video = row.get(u"video")
         if not subtitle or not video:
             return None
-        return gui_run.argv_for_pair(video, subtitle)
+        return gui_run.argv_for_pair(video, subtitle,
+                                     force=gui_run.PICK_OVERRIDES_TIMING)
 
     def commit_pair(self, key, attempt):
-        u"""[!] THE CLICK IS THE ACTION. No confirm button.
+        u"""[!] THE CLICK IS THE ACTION. No confirm button -- and ⛔ no claim.
 
-        The row collapses to green naming the file it used, the next
-        unresolved row opens as this one closes, and `hato sync` is handed the
-        explicit pair. [X] The timing verdict still rules and still refuses a
-        wrong pair -- a person choosing replaces hato's RANKING, not the
-        engine's check.
+        🚨 D7. This painted the row green, *"paired · <name>"*, the moment it was
+        clicked, and never read the child -- which had died on a usage error
+        (`hato sync` had no `--json`) for every pick ever made. ⭐ Now the click
+        starts the pair and the row says *"pairing"*; `finish_pick` says what
+        `hato sync` answered, and only a file that LANDED is *paired*.
         """
+        # ⛔ ONE PICK AT A TIME, AND NONE OVER ONE THAT LANDED. A second click
+        # while the first was with `hato sync` had its answer wiped by the
+        # first's (A32); a pick after one landed can only fail -- tsubasa will
+        # not write over the file -- and turned the row green over its failure
+        # word (A10). The cards are inert then; this holds for any other caller.
+        if key in self.state.pick_pending or key in self.state.picked:
+            return None
         argv = self.pair_argv(key, attempt)
         if argv is None:
+            # ⛔ NOT A SILENT NO-OP: a card whose file is gone says so on its row.
+            # ⚠ And says only what is TRUE: a refused file is never downloaded
+            # again, so "Look again now fetches it" was a remedy that is not
+            # there (ADVERSARY 2026-09-22 A13).
+            if self._row_for(key) is not None and attempt.get(u"name"):
+                self.state.pick_said[key] = (
+                    gui_run.PICK_FAILED,
+                    u"hato no longer has that file — it was cleared from its "
+                    u"downloads, so it cannot be used")
+                self.render()
             return None
-        self.state.picked[key] = attempt.get(u"name") or u""
-        self.state.open_pick = self.state.next_unresolved(key)
+        name = attempt.get(u"name") or u""
+        self.state.pick_pending[key] = name
+        self.state.pick_said.pop(key, None)
         self.render()
         self._animate_accordions()
-        self.spawn(argv)
+        self._read(argv, lambda finished, events, k=key, n=name:
+                   self._pick_read(k, n, finished, events))
         return argv
+
+    def _pick_read(self, key, name, finished, events):
+        answer = {}
+        for event in events:
+            if isinstance(event, dict) and event.get(u"type") == u"pair":
+                answer = event
+        code = finished.code if finished is not None else gui_run.EXIT_CANNOT_RUN
+        self.finish_pick(key, name, gui_run.pick_verdict(code, answer))
+
+    def finish_pick(self, key, name, verdict):
+        u"""Say what a pick came to. -> None
+
+        ⭐ Paired (the timing held) or *used* (the person's choice, written over a
+        timing refusal) closes the row green and opens the next one -- Sonic:
+        *"after selecting one, the next one opens as it closes."* ⛔ Anything else
+        leaves the row OPEN, asking, with hato's reason under the cards.
+        """
+        word, why, _written = verdict
+        self.state.pick_pending.pop(key, None)
+        self.state.pick_said[key] = (word, why)
+        if word in (gui_run.PAIRED, gui_run.FORCED):
+            self.state.picked[key] = name
+            self.state.picked_word[key] = word   # ⭐ the colour is what was WRITTEN
+            self.state.open_pick = self.state.next_unresolved(key)
+            self.refresh_problems()          # the memory will drop it: a file landed
+        self.render()
+        self._animate_accordions()
 
     def blacklist(self, key):
         u"""[*] A DIFFERENT DECISION, and deliberately a different gesture.
@@ -3092,10 +3953,33 @@ class HatoWindow(Styled):
         handed the child the literal string `add` as the video to blacklist.
         Caught by reading the command's own `register()`, not by a check: the
         suite only asserted that the word *blacklist* appeared.
+
+        ⭐ RUNBOOK 8e: READ to the end, then the blacklist and the problems are
+        asked again -- so the card gains the row and Needs you loses it without
+        waiting for a run.
         """
-        argv = gui_run.cli_argv() + [u"blacklist", key, u"--json"]
-        self.spawn(argv)
+        row = self._row_for(key)
+        video = (row or {}).get(u"video") or key
+        argv = gui_run.cli_argv() + [u"blacklist", video, u"--json"]
+        self._read(argv, lambda finished, events, k=key:
+                   self._blacklisted(k, finished, events))
         return argv
+
+    def _blacklisted(self, key, finished, events):
+        u"""What `hato blacklist` said. ⭐ On success the row goes -- from the
+        run's rows too: a clash or a two-episode name is a row hato's memory
+        never holds, and it went on asking after the person had decided
+        (ADVERSARY 2026-09-22 A19)."""
+        answer = next((e for e in events if isinstance(e, dict)
+                       and (e.get(u"ok") is not None or u"blacklist" in e)), {})
+        if finished is not None and finished.code == gui_run.EXIT_CLEAN \
+                and answer.get(u"ok", True):
+            self.state.rows = [r for r in self.state.rows if self.state.key(r) != key]
+            if self.state.open_pick == key:
+                self.state.open_pick = self.state.next_unresolved(key)
+            self.render()
+        self.refresh_blacklist()
+        self.refresh_problems()
 
     @staticmethod
     def _blacklist_id(entry):
@@ -3121,11 +4005,13 @@ class HatoWindow(Styled):
         target = self._blacklist_id(entry)
         if not target:
             return None
-        self.state.blacklist = [row for row in self.state.blacklist
-                                if row is not entry]
+        # ⛔ NOT CLAIMED AT THE CLICK -- the D7 shape, left in the card D5 made
+        # real: the row went and the answer was never read (ADVERSARY 2026-09-22
+        # A31). It says it is going; hato's own list, re-read, is the answer.
+        entry[u"removing"] = True
         argv = gui_run.cli_argv() + [u"blacklist", u"--remove", target,
                                      u"--json"]
-        self.spawn(argv)
+        self._read(argv, lambda _f, _e: self.refresh_blacklist())
         self.render()
         return argv
 
@@ -3148,33 +4034,292 @@ class HatoWindow(Styled):
                 continue
             argv = gui_run.cli_argv() + [u"blacklist", u"--remove", target,
                                          u"--json"]
-            self.spawn(argv)
+            # ⛔ Read, then the list asked again -- never dropped at the click (A31).
+            entry[u"removing"] = True
+            self._read(argv, lambda _f, _e: self.refresh_blacklist())
             sent.append(argv)
-        self.state.blacklist = [row for row in self.state.blacklist
-                                if not row.get(u"gone")]
         self.render()
         return sent
 
-    def try_more(self, key):
-        u"""*"Try 3 more candidates"* -- one more run of this video alone."""
-        row = None
-        for candidate in self.state.rows:
-            if self.state.key(candidate) == key:
-                row = candidate
-                break
-        if row is None:
+    def wait_for(self, row):
+        u"""⭐ HANDOFF 4c -- *"it will search again in 24 hours"*: the person agrees
+        to wait. -> the retry date waited for, or None.
+
+        Kept as the date it was chosen FOR (`run.apply_waits`), so the next run
+        that records a new one -- or the date passing -- brings the row back.
+        ⚠ Dates already past are dropped as this one is written, so the file
+        only ever holds live promises.
+        """
+        key = gui_run.problem_key(row)
+        when = row.get(u"retry_after")
+        if not key or not when:
             return None
-        offered = len(candidates(row)) + 3
-        argv = gui_run.argv_for([os.path.dirname(key) or key],
-                                candidates=offered, progress=True)
-        self.spawn(argv)
-        return argv
+        now = self.state.clock()
+        self.state.waits = dict(
+            (k, v) for k, v in self.state.waits.items()
+            if (gui_run.retry_due({u"retry_after": v}) or now) > now)
+        self.state.waits[key] = when
+        gui_run.save_waits(self.state.waits)
+        if self.state.open_pick == self.state.key(row):
+            self.state.open_pick = self.state.next_unresolved(self.state.key(row))
+        self.render()
+        self._animate_accordions()
+        return when
+
+    def show_waited(self, rows):
+        u"""*Show them* -- the chosen waits are picks again, now."""
+        for row in rows or ():
+            self.state.waits.pop(gui_run.problem_key(row), None)
+        gui_run.save_waits(self.state.waits)
+        self.render()
+
+    def try_more(self, key):
+        u"""*"Try 3 more candidates"* -- three files not yet tried, now.
+
+        🚨 D3. This ran the video's folder with no flag and `--candidates`
+        raised by three. Every refusal has just recorded a soft negative, so for
+        the day after one -- the only time anybody presses this -- the gate said
+        "waiting to retry" and it tried NOTHING. ⭐ `--retry-now --only`: the
+        wait is skipped, a file already refused is still never fetched again, so
+        three means three NEW ones.
+        """
+        row = self._row_for(key)
+        if row is None or not row.get(u"video"):
+            return None
+        return self._start_targeted([row], candidates=3)
+
+    def look_again(self, rows):
+        u"""⭐ *Look again now* -- ask jimaku about these episodes instead of
+        waiting (4b's manual half: *"not soon unless prompted"* was specified as
+        a Retry on one row and never built).
+
+        ⚠ ONLY VIDEOS STILL THERE. `hato` refuses a whole `--only` batch over one
+        name that is not a file -- so one episode moved away made *Look again
+        now* on every waiting one say "could not run" and nothing else
+        (ADVERSARY 2026-09-22 A20).
+        """
+        rows = [r for r in (rows or ()) if r.get(u"video")]
+        if not rows:
+            return None
+        return self._start_targeted(rows)
+
+    def _folder_for(self, video):
+        u"""The WATCHED folder a video lives under, else its own. -> path
+
+        ⚠ Not simply `dirname`: a release's numbering is fitted against the whole
+        folder's range, and a season folder inside a watched one is still one
+        show among its siblings.
+        """
+        from hato import paths as _paths
+        for folder in self.state.folders:
+            if _paths.under_any(video, [folder]):
+                return folder
+        return os.path.dirname(video) or video
+
+    def _start_targeted(self, rows, candidates=None):
+        u"""A `--only` run over these rows' videos. -> the argv, or None.
+
+        ⚠ ONLY VIDEOS STILL THERE. `hato` refuses a whole `--only` batch over one
+        name that is not a file -- so one episode moved away made *Look again
+        now* on every waiting one say "could not run" and nothing else
+        (ADVERSARY 2026-09-22 A20).
+        """
+        videos = [row[u"video"] for row in rows if os.path.isfile(row[u"video"])]
+        if not videos:
+            self.state.live = (u"not looked at — %s no longer where hato saw %s"
+                               % (u"that video is" if len(rows) == 1 else u"those videos are",
+                                  u"it" if len(rows) == 1 else u"them"))
+            self.render()
+            return None
+        argv = gui_run.argv_for_retry(videos, [self._folder_for(v) for v in videos],
+                                      candidates=candidates)
+        return self.start_run(argv=argv, targeted=True)
+
+    # -- children the window READS (RUNBOOK 8e) ------------------------------
+
+    #: How often a child being read is polled. A `poll()`, so it costs nothing.
+    READ_MS = 150
+
+    def _read(self, argv, done):
+        u"""Start `argv` through the ONE spawn seam and call `done(run, events)`
+        once it has exited and both pipes are drained. Never blocks.
+
+        ⚠ The suite's `spawn` returns no process: nothing is read, and a check
+        drives `done`'s effect directly (`finish_pick`, `apply_problems`).
+        """
+        process = self.spawn(argv)
+        if process is None or getattr(process, u"stdout", None) is None:
+            return None
+        runner = gui_run.Runner.adopt(process, argv)
+        self._reading.append((runner, done, []))
+        if self._read_timer is None:
+            self._read_timer = QTimer(self)
+            self._read_timer.setInterval(self.READ_MS)
+            self._read_timer.timeout.connect(self._poll_reads)
+        if not self._read_timer.isActive():
+            self._read_timer.start()
+        return runner
+
+    def _poll_reads(self):
+        still = []
+        for runner, done, events in self._reading:
+            events.extend(runner.drain())
+            finished = runner.finished()
+            if finished is None:
+                still.append((runner, done, events))
+                continue
+            events.extend(runner.drain())
+            try:
+                done(finished, events)
+            except Exception as exc:          # noqa: BLE001 -- never take the window down
+                sys.stderr.write(u"hato: a child's answer could not be used: %s\n" % exc)
+        self._reading = still
+        if not still and self._read_timer is not None:
+            self._read_timer.stop()
+
+    def refresh_problems(self):
+        u"""⭐ RUNBOOK 8c/8e -- ask hato what still needs a person.
+
+        `hato problems --json`: the state DB, filtered by the disk. This is the
+        store that outlives one run, and why a problem episode no longer
+        disappears when a run looks somewhere else (4a).
+
+        ⛔ One at a time -- and a request made while one is in flight is QUEUED,
+        never dropped. Dropped, a run's own refresh was lost to one started a
+        moment earlier, whose answer (the DB before the run) then landed newer
+        than the run's rows and settled its new refusals (ADVERSARY 2026-09-22 A2).
+        """
+        if self._problems_in_flight:
+            self._problems_again = True
+            return None
+        self._problems_in_flight = True
+        #: ⭐ The answer describes the DB as it was when ASKED, so that is its
+        #: moment -- not when it arrived, which made a stale answer newer (A2).
+        asked = self.state.moment()
+        runner = self._read(gui_run.argv_for_problems(),
+                            lambda finished, events: self._problems_read(
+                                finished, events, asked))
+        if runner is None:
+            self._problems_in_flight = False
+        return runner
+
+    def _problems_read(self, finished, events, asked=None):
+        u"""⛔ ONLY A CLEAN ANSWER REPLACES WHAT IS ON SCREEN: exit 0 and a summary
+        that says `ok`. A broken config exits 1, and an unreadable store used to
+        answer an empty list -- both were taken for *"nothing needs you"*, and
+        Needs you was emptied over an answer hato itself said was wrong
+        (ADVERSARY 2026-09-22 A1). ⭐ The window keeps what it had and says why."""
+        self._problems_in_flight = False
+        summary = {}
+        for event in events:
+            if isinstance(event, dict) and event.get(u"type") == u"problems":
+                summary = event
+        if finished is not None and finished.code == gui_run.EXIT_CLEAN \
+                and summary.get(u"ok") is True:
+            self.state.problems_error = u""
+            self.apply_problems(finished.rows, summary, asked=asked)
+        else:
+            self.state.problems_error = (
+                (summary.get(u"error") if summary else u"")
+                or (finished.said if finished is not None else u"")
+                or u"it did not answer")
+            self.render()
+        if self._problems_again:
+            self._problems_again = False
+            self.refresh_problems()
+
+    def apply_problems(self, rows, summary=None, asked=None):
+        u"""Take what `hato problems` said. -> None
+
+        `asked` -- the moment the question went out (`State.moment`, see
+        `refresh_problems`); now, when a caller already holds the answer.
+        """
+        self.state.remembered = list(rows or ())
+        self.state.remembered_at = asked if asked is not None else self.state.moment()
+        windows = (summary or {}).get(u"retry_days") or {}
+        for name, attr in ((u"soft", u"retry_days"), (u"hard", u"hard_days")):
+            days = windows.get(name)
+            if isinstance(days, int) and not isinstance(days, bool) and days > 0:
+                setattr(self.state, attr, days)
+        self.render()
+
+    def refresh_blacklist(self):
+        u"""D5 -- load the blacklist hato actually holds. It never was."""
+        return self._read(gui_run.argv_for_blacklist(), self._blacklist_read)
+
+    # -- ⭐ RUNBOOK 8g: clearing hato's memory ----------------------------------
+
+    def refresh_memory(self):
+        u"""Ask hato what a clear WOULD take -- the card's numbers. ⛔ A dry
+        count takes no lock, so asking can never stall a run."""
+        return self._read(gui_run.argv_for_clear(), self._memory_read)
+
+    def _memory_read(self, finished, events):
+        for event in events:
+            if isinstance(event, dict) and event.get(u"type") == u"clear" \
+                    and event.get(u"ok") and event.get(u"dry_run"):
+                self.state.memory = event
+                self.render()
+                return
+
+    def choose_clear(self):
+        u"""*Clear hato's memory…* -- confirm first, then clear. ⛔ Cancel runs nothing."""
+        dialog = ClearDialog(self, self.state.memory, len(self.state.blacklist))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        self.state.memory_said = u"Clearing…"
+        self.render()
+        return self._read(gui_run.argv_for_clear(yes=True,
+                                                 blacklist=dialog.forget_blacklist()),
+                          self._memory_cleared)
+
+    def _memory_cleared(self, finished, events):
+        u"""Say what the clear came to -- ⛔ never "cleared" over a refusal."""
+        answer = next((e for e in events if isinstance(e, dict)
+                       and e.get(u"type") == u"clear"), None)
+        if answer is not None and answer.get(u"ok") and not answer.get(u"dry_run"):
+            self.state.memory_said = (u"Cleared — every episode without a subtitle "
+                                      u"is looked at again on the next run.")
+            # ⭐ A27 -- the memory is empty BECAUSE IT WAS CLEARED. Until the next
+            # run, its silence settles nothing: the episodes on screen still
+            # have no subtitle, and Needs you emptied over them.
+            self.state.trust_rows = True
+        elif answer is not None and answer.get(u"busy"):
+            self.state.memory_said = (u"A run is going, so nothing was cleared — try "
+                                      u"again when it finishes.")
+        else:
+            self.state.memory_said = u"hato could not clear its memory: %s" % (
+                safe((answer or {}).get(u"error")) or u"it did not answer")
+        self.render()
+        self.refresh_memory()
+        self.refresh_problems()
+        self.refresh_blacklist()
+
+    def _blacklist_read(self, finished, events):
+        for event in events:
+            if isinstance(event, dict) and u"blacklist" in event:
+                self.state.blacklist = gui_run.blacklist_entries(event)
+                self.render()
+                return
 
     def _toggle_auto(self):
-        self.state.auto = not self.state.auto
-        self.spawn(gui_run.argv_for_config(
-            u"--set", u"schedule=%s" % (self.state.schedule
-                                        if self.state.auto else u"off")))
+        u"""⭐ D2 -- register or remove the daily run, then READ IT BACK.
+
+        🚨 IT REGISTERED NOTHING, AND COULD NOT BE TURNED OFF. On it flipped a
+        flag; off it sent `hato config --set schedule=off`, which the config
+        refuses by name, and the window never read the refusal.
+        ⛔ ASKS WINDOWS what the state is rather than trusting the switch, as
+        `_toggle_startup` does -- the switch was drawn when the window opened.
+        """
+        from hato import schedule as _schedule
+        said = u""
+        try:
+            task = _schedule.read()
+            _schedule.set_enabled(not _schedule.is_enabled(task), self.state.schedule)
+        except _schedule.ScheduleError as exc:
+            said = u"%s" % exc
+        read_schedule(self.state)
+        self.state.schedule_said = safe(said) if said else u""
         self.render()
 
     def _toggle_watch(self):
@@ -3205,6 +4350,47 @@ class HatoWindow(Styled):
         else:
             self.stop_watcher()
         self.render()
+
+    @staticmethod
+    def tray_is_watching():
+        u"""-> True when the tray watcher is really running.
+
+        ⭐ A MEASURED SWITCH (`build-ui.md`): the pid AND its start stamp, via
+        `watch.watching_pid` -- never the Settings tick, which says what was
+        asked for and not what is running. It decides whether *"retrying in
+        14h"* is a promise (RUNBOOK 8h) or only the date the retry becomes due.
+        """
+        try:
+            from hato import watch as _watch
+            caps = _watch.watching_capabilities()
+            # 🚨 A TRAY THAT KEEPS NO PROMISE IS NOT ONE. Sonic's 1.0.1 tray writes
+            # the same pid file and has no retry clock, so after an upgrade the
+            # window promised retries nothing would keep (ADVERSARY 2026-09-22 V1).
+            return caps is not None and u"retries" in caps
+        except Exception:                     # noqa: BLE001 -- a guess must not crash
+            return False
+
+    @staticmethod
+    def tray_is_old():
+        u"""-> True when a tray IS running and is one that keeps no retry promise.
+
+        ⭐ V1 -- turning watching on does not replace a running tray, so the
+        window says so and offers to restart it (`restart_watcher`).
+        """
+        try:
+            from hato import watch as _watch
+            caps = _watch.watching_capabilities()
+            return caps is not None and u"retries" not in caps
+        except Exception:                     # noqa: BLE001
+            return False
+
+    def restart_watcher(self):
+        u"""⭐ V1 -- replace an older tray with this build's. -> the argv, or None."""
+        self.stop_watcher()
+        argv = self.start_watcher()
+        self.state.old_tray = False
+        self.render()
+        return argv
 
     def start_watcher(self):
         u"""Put hato in the tray. -> the argv sent, or None if one is already
@@ -3261,12 +4447,37 @@ class HatoWindow(Styled):
         self.render()
 
     def _set_schedule(self):
+        u"""A new time: kept in the config, and -- ⭐ D2 -- given to the task.
+
+        ⛔ A time the config would refuse is refused HERE, in words, and the
+        field put back. It used to go to `hato config --set`, be refused there,
+        and nothing said so. 🚨 And a registered task runs at the time it was
+        registered at: without re-registering, the header would say 04:30 while
+        Windows went on starting hato at 03:00.
+        """
+        from hato import config as _config
+        from hato import schedule as _schedule
         value = self.time_field.text().strip()
-        if value and value != self.state.schedule:
-            self.state.schedule = value
-            self.spawn(gui_run.argv_for_config(u"--set",
-                                               u"schedule=%s" % value))
+        if not value or value == self.state.schedule:
+            return
+        if not _config.is_clock(value):
+            self.state.schedule_said = (u"%s is not a time — use 24-hour, like "
+                                        u"03:00." % value)
+            self.time_field.setText(self.state.schedule)
             self.render()
+            return
+        self.state.schedule = value
+        self.state.schedule_said = u""
+        self.spawn(gui_run.argv_for_config(u"--set", u"schedule=%s" % value))
+        if self.state.auto:
+            said = u""
+            try:
+                _schedule.enable(value)
+            except _schedule.ScheduleError as exc:
+                said = u"%s" % exc
+            read_schedule(self.state)
+            self.state.schedule_said = safe(said) if said else u""
+        self.render()
 
     def _remove_folder(self, path):
         self.state.folders = [f for f in self.state.folders if f != path]
@@ -3281,13 +4492,17 @@ class HatoWindow(Styled):
 
     # -- the run -----------------------------------------------------------
 
-    def start_run(self):
+    def start_run(self, argv=None, targeted=False):
         u"""Spawn `hato --json --progress` and paint what comes back.
 
         [X] `run.Runner` owns the process, the two reader threads and the
         parse; this method owns a timer that drains it.
+
+        ⭐ `targeted` (RUNBOOK 8e): a `--only` look-again. Its rows REPLACE their
+        own videos' rows and leave every other row where it is -- a look-again
+        on one episode must not empty the Subtitles tab.
         """
-        if self.state.running or not self.state.folders:
+        if self.state.running or (not self.state.folders and not targeted):
             return None
 
         # 🚨 NO KEY IS A REFUSAL, NOT A RUN. Sonic, 2026-09-19, on the
@@ -3309,11 +4524,19 @@ class HatoWindow(Styled):
             self.render()
             return None
 
-        argv = gui_run.argv_for(self.state.folders, progress=True)
+        argv = argv if argv is not None else gui_run.argv_for(self.state.folders,
+                                                              progress=True)
         self.state.running = True
-        self.state.rows = []
-        self.state.summary = {}
-        self.state.picked = {}
+        self._targeted = bool(targeted)
+        self._busy = False
+        # 🚨 NOTHING IS CLEARED AT THE CLICK (ADVERSARY 2026-09-22 A3). A run that
+        # meets another's lock says only "busy" -- and the Subtitles tab, the
+        # footer and the picks had already been emptied under it, with *"last
+        # run"* set for a run that looked at nothing. The old rows go when the
+        # new run first SAYS something (`_begin_fresh`).
+        # ⛔ And a look-again leaves `rows_at` alone: it is new about its own
+        # videos only (`live_keys`), never about the whole snapshot (A4).
+        self._fresh = not targeted
         self.state.live = u"starting…"
         self.render()
         self._runner = gui_run.Runner(argv=argv)
@@ -3330,15 +4553,70 @@ class HatoWindow(Styled):
         self._timer.start()
         return argv
 
+    def _begin_fresh(self):
+        u"""⭐ A3 -- a full run has started SAYING things: now the old run's rows go."""
+        self._fresh = False
+        self.state.rows = []
+        self.state.summary = {}
+        self.state.picked = {}
+        self.state.pick_said = {}
+        self.state.picked_word = {}
+        self.state.trust_rows = False          # its rows are the newest word now
+
+    def _finished_line(self, finished):
+        u"""What the footer says about a run that has ended. -> text
+
+        🚨 EXIT 1 IS A RUN THAT STOPPED -- a 401, a server gone, a crash -- and it
+        was painted *done*, with the reason nowhere (ADVERSARY 2026-09-22 A12).
+        ⚠ Exit 2 says what `hato` said (A20); a look-again says what it cost,
+        which the footer's run total never includes (A23). ⛔ Every word hato
+        did not compose goes through `safe()`.
+        """
+        if self._busy:
+            return u"hato was already running — try again when it finishes"
+        if finished.could_not_run:
+            said = safe(finished.said)
+            return u"could not run — %s" % said if said else u"could not run"
+        if finished.stopped:
+            why = (finished.summary or {}).get(u"stopped")
+            why = why if isinstance(why, str) and why else finished.said
+            return u"stopped — %s" % safe(why) if why else u"stopped early"
+        if self._targeted:
+            calls = (finished.summary or {}).get(u"api_calls")
+            spent = seconds_text((finished.summary or {}).get(u"seconds"))
+            if isinstance(calls, int) and not isinstance(calls, bool):
+                return u"done · looked again: %d API call%s%s" % (
+                    calls, u"" if calls == 1 else u"s", (u" · " + spent) if spent else u"")
+        return u"done"
+
     def _drain(self):
         if self._runner is None:
             return
         for event in self._runner.drain():
             kind = event.get(u"type")
+            if kind in (u"video", u"run") and self._fresh:
+                self._begin_fresh()
             if kind == u"video":
-                self.state.rows.append(event)
+                key = self.state.key(event)
+                if self._targeted:
+                    # ⭐ A LOOK-AGAIN REPLACES ITS OWN ROW and nothing else.
+                    self.state.rows = [r for r in self.state.rows
+                                       if self.state.key(r) != key] + [event]
+                    self.state.picked.pop(key, None)
+                    self.state.picked_word.pop(key, None)
+                else:
+                    self.state.rows.append(event)
+                    self.state.rows_at = self.state.moment()
+                # ⭐ A4 -- newer than the memory for THIS video, not for all of them
+                self.state.live_keys.add(key)
+                self.state.live_at = self.state.moment()
             elif kind == u"run":
-                self.state.summary = event
+                if not self._targeted:
+                    self.state.summary = event
+            elif kind == u"busy":
+                # ⭐ RUNBOOK 8e. Another run held the lock: this one looked at
+                # nothing. It used to finish as "done" over an empty list.
+                self._busy = True
             elif kind == u"progress":
                 #: [!] ENGINE-WRITTEN, so it goes through `safe()` like every
                 #: other field hato did not compose itself.
@@ -3348,12 +4626,19 @@ class HatoWindow(Styled):
         finished = self._runner.finished()
         if finished is not None:
             self.state.running = False
-            self.state.summary = finished.summary or self.state.summary
-            #: [X] EXIT 1 IS NOT AN ERROR -- it means something needs a pick,
-            #: which is the whole value proposition. Only exit 2 could not run.
-            self.state.live = (u"could not run" if finished.could_not_run
-                               else u"done")
-            self.state.last_run = time.strftime(u"%H:%M")
+            ran = not self._busy and not finished.could_not_run
+            if not self._targeted and ran and not self._fresh:
+                self.state.summary = finished.summary or self.state.summary
+            self.state.live = self._finished_line(finished)
+            if not self._targeted and ran and not self._fresh:
+                # ⚠ Only a run that RAN is the last run (A3).
+                self.state.last_run = time.strftime(u"%H:%M")
+            self._targeted = False
+            self._fresh = False
+            # ⭐ AND ASK AGAIN WHAT STILL NEEDS A PERSON -- the run may have
+            # settled some and added others, in folders this window never ran.
+            self.refresh_problems()
+            self.refresh_memory()            # 8g: the card's numbers moved too
             # ⛔ NOT SAVED HERE ANY MORE. `hato` itself writes what every run
             # found (`hato/lastrun.py`), so this window's own run is recorded
             # by the same writer as the tray's and the scheduler's. A save here
@@ -3540,6 +4825,29 @@ def listen_for_second_launch(window):
     return server
 
 
+def read_schedule(state):
+    u"""⭐ D2 -- THE DAILY RUN'S SWITCH, READ FROM TASK SCHEDULER. -> state
+
+    A MEASURED SWITCH (`workflows/build-ui.md`): its position comes from the
+    world on every open, never from a stored flag. `bool(cfg.schedule)` read ON
+    for days over no task at all. ⭐ And the TIME shown is the task's own when
+    one exists -- the header must say when Windows will actually start hato.
+    ⚠ A read that fails reads OFF, with what went wrong said beside the switch.
+    """
+    from hato import schedule as _schedule
+    state.auto_supported = _schedule.supported()
+    try:
+        task = _schedule.read()
+    except _schedule.ScheduleError as exc:
+        state.auto, state.auto_note = False, safe(u"%s" % exc)
+        return state
+    state.auto = _schedule.is_enabled(task)
+    state.auto_note = safe(_schedule.note(task))
+    if task is not None and task.at:
+        state.schedule = task.at
+    return state
+
+
 def settings_from_disk(state=None):
     u"""Fill a `State`'s settings from what is actually on disk. -> State
 
@@ -3570,7 +4878,6 @@ def settings_from_disk(state=None):
         state.recurse = cfg.recurse
         state.watch = cfg.watch
         state.schedule = cfg.schedule
-        state.auto = bool(cfg.schedule)
         state.surasura_dir = cfg.surasura_dir
     except (_config.ConfigError, paths.PathError) as exc:
         # ⛔ NOT SWALLOWED. A config hato refuses is why the settings look
@@ -3578,6 +4885,10 @@ def settings_from_disk(state=None):
         # the person their settings vanished.
         state.config_error = str(exc)
         sys.stderr.write(u"hato: %s\n" % exc)
+    # ⭐ D2 -- whether the daily run is ON is Task Scheduler's to say, and the
+    # time it runs at is the task's own when one exists. AFTER the config, so the
+    # config's time is only the one to register at.
+    read_schedule(state)
     try:
         state.key_hint = credentials.resolve_key().hint
     except Exception:                         # noqa: BLE001
@@ -3632,6 +4943,15 @@ def main(argv=None):
     # ⭐ So a run started from the tray, the scheduler or a terminal shows up
     # here without anybody pressing anything.
     window.follow_other_runs()
+    # ⭐ RUNBOOK 8e -- what hato REMEMBERS needs a person, whichever run last
+    # looked (4a), the blacklist it actually holds (D5), and whether the tray is
+    # there to keep a promised retry (8h). Read, never assumed.
+    window.state.watching = window.tray_is_watching()
+    window.state.old_tray = window.tray_is_old()       # V1 -- an older tray keeps nothing
+    window.state.waits = gui_run.load_waits()          # 4c -- the waits chosen before
+    window.refresh_problems()
+    window.refresh_blacklist()
+    window.refresh_memory()                  # 8g -- what a clear would take
     window.render()
     window.show()
     return app.exec()

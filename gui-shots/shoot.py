@@ -88,8 +88,23 @@ def shoot(application, window, name):
     return ok
 
 
+def pin_machine_state():
+    u"""⛔ THE DEVELOPER'S MACHINE IS NOT THE PRODUCT'S STATE. LOOKED, 2026-09-23:
+    the Start-with-Windows row reads the REAL registry, and this machine's own entry
+    put *"the startup entry points somewhere else"* into a README picture. Pinned to
+    a fresh install's answer -- and the tray's cost to the build the README tells
+    people to download (the exe's 31 MB; 1.0.1's pictures said the source's 13 MB).
+    """
+    from hato import startup as _startup
+    _startup.is_enabled = lambda: False
+    _startup.is_stale = lambda: False
+    real_cost = gui_app.tray_cost
+    gui_app.tray_cost = lambda frozen=None: real_cost(True)
+
+
 def main():
     application = QApplication.instance() or QApplication([])
+    pin_machine_state()
     failures = []
 
     def take(window, name, width=None, height=None):
@@ -112,7 +127,10 @@ def main():
             failures.append(name)
 
     # 1 -- Subtitles, the landing state
-    window = fx.make()
+    # ⭐ D2 (RUNBOOK 8y): a library someone has SET UP runs every day -- the
+    # switch is read from Task Scheduler now, and defaults to off, so it is set
+    # here on purpose. The first-run shots below leave it off, as a new install is.
+    window = fx.make(auto=True)
     take(window, "01-subtitles")
 
     # 2 -- Subtitles with two rows opened

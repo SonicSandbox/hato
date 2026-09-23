@@ -76,6 +76,14 @@ else:
         os.environ["HATO_KEYFILE"] = str(TEST_ROOT / "no-such-key.txt")
 
 
+# ⛔ D2: and no check touches Task Scheduler -- the developer's own daily run is
+# neither read (it would change a verdict) nor written. Set whoever started us;
+# the one block that proves the real scheduler opts in under its own task name.
+# ⚠ HERE ONLY, not in run_tests.py as well: two guards that back each other up
+# leave each unwitnessed (test_schedule checks this one is in force).
+os.environ["HATO_NO_SCHEDULER"] = "1"
+
+
 # -- 3. zero network --------------------------------------------------------
 
 class NetworkForbidden(RuntimeError):

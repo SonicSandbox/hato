@@ -198,6 +198,46 @@ handles that; hato inherits it and must not defeat it** by pinning the accel ext
 
 **Version stamping:** a content hash, never a timestamp, never hand-bumped.
 
+> 🚨 **AND THE HASH IS OVER CONTENT, NOT OVER BYTES — amended 2026-09-19 after it
+> failed two tagged releases.** `stamp.digest()` normalises `\r\n` to `\n` before
+> hashing, skipping any file containing a NUL byte (git's own text/binary test).
+> Hashing raw bytes made the stamp valid on exactly one machine: `sync_from_vault.py`
+> copies vault bytes verbatim, so the publish clone's **working tree** is LF, while
+> git rewrites line endings on every checkout. Measured: 72/72 here, **50 differ** in a
+> fresh Windows checkout, **9 differ** on Linux CI — all line endings, zero content.
+> ⚠ The trade, stated: the stamp no longer notices a file whose only change is its
+> endings. `.gitattributes` is what guarantees those, on every checkout, which a hash
+> never could. Full detail in `LEDGER.md` §delivery.
+
+---
+
+## ✅ RELEASED — `v1.0.1`, 2026-09-19
+
+| | |
+| --- | --- |
+| **v1.0.0** | 2026-09-19. Six real defects found by using it; see the 1.0.1 notes |
+| ⭐ **v1.0.1** | `hato-1.0.1-windows-x64.zip` — **tag `3114321`, every gate green**: `tests` 13/13, `release` 2/2 (stamp gate included), suite 27/1616, smoke 20/20 against the copy unpacked outside the repo, and the **published asset downloaded and hash-verified** against the local artifact |
+| ⭐ **v1.0.2** | `hato-1.0.2-windows-x64.zip`, 2026-09-23 — Layer 8, its adversarial pass, and D2 (the daily run registers a real task). Stamp `sha256:ae5764b5…`; local zip `sha256 9f52c032…12763`, 70,651,545 bytes; suite 29 suites, smoke **29/29** against the copy unpacked outside the repo; mutation gate 766/766 + M8y 82/82. Tag, CI jobs and the published hash: ⏳ |
+
+🚨 **THE RELEASE SEQUENCE IS IN `LEDGER.md` §delivery, as *"THE RELEASE SEQUENCE THAT
+ACTUALLY HOLDS"*.** It is one list and it lives in one place; do not restate it here.
+Two things from it that are easy to skip and expensive to skip:
+
+- ⛔ **`package_standalone.py` does not freeze.** It packages whatever is already in
+  `dist/standalone/hato`, so a skipped PyInstaller step ships the *previous* build with
+  the *current* version number on it.
+- ⛔ **The release API creates the tag at the DEFAULT BRANCH HEAD.** Nothing may be
+  pushed between the green run and the tag, or the tag names a commit nothing tested.
+
+⚠ **`v1.0.1` was cut twice.** The first cut was tagged at a commit whose stamp was
+still the raw-byte kind, so `release.yml` was red on it. Sonic ruled the re-cut
+2026-09-19 — delete the release and tag, rebuild, re-tag — on the grounds that the
+asset had no third-party downloads and `1.0.1` should keep meaning *the six user-visible
+fixes* rather than spending a version number on invisible tooling. ⛔ **The guard that
+allows this refuses above one download**, and the one it tolerates is the hash
+verification's own fetch. Above that, cut a new version instead: re-cutting a release
+somebody already holds changes what that number means.
+
 ---
 
 ## ⭐ The Windows launcher
@@ -254,6 +294,22 @@ Register-ScheduledTask -TaskName "hato" -Action $action -Settings $settings -Tri
 
 ⛔ **Never trust `Last Result` — read hato's own log.** One scheduled run appends exactly one
 `=== hato <timestamp> ===` block; measured, so a doubled run is visible by counting.
+
+⭐ **hato registers it itself — the window's *"every day at"* switch (RUNBOOK 8y, D2,
+2026-09-23).** `hato/schedule.py`, and ⛔ **Task Scheduler is the only state**: no config key
+says the daily run is on; the switch reads the task on every open (`config.schedule` is only
+the time to register at).
+
+| | |
+| --- | --- |
+| **Registered** | `schtasks /create /tn hato /xml <file> /f` from hato's own XML: battery settings **written out** (`DisallowStartIfOnBatteries` / `StopIfGoingOnBatteries` false, `StartWhenAvailable` true), `WakeToRun` false, no `UserId` (it lands under the person's own SID, unelevated — measured), a start boundary **never already past** |
+| **What it runs** | `hato-watch.exe --scheduled` (from a clone `pythonw hato-watch.pyw --scheduled`) — the watcher's windowless program, which runs `hato-cli --quiet --wait` hidden and hands back its exit code. 🚨 **Never a console program**: measured two-arm 2026-09-23, a console program started by Task Scheduler got a **visible console window**; this chain got none |
+| **Read back** | `schtasks /query /xml` after every write. 🚨 Its XML **declares UTF-16 and is written in the console's OEM code page** — `日本` comes back `??` — so a command is compared on its ASCII skeleton |
+| **Proven for real** | a real trigger fired the real chain against an isolated store: working directory `C:\Windows\system32`, no stdout, exit 0, one log block, 0 API calls |
+
+⚠ A task named `hato` made by hand from the README reads **ON** and says what differs — a
+different program, no battery start, no catch-up — and switching it off and on replaces it
+with hato's own.
 
 ✅ **What the real scheduled run proved (2026-09-17):** the launcher resolves
 `%LOCALAPPDATA%\hato` with no working directory to help it, detects the console, passes

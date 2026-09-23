@@ -82,9 +82,10 @@ SCHEMA = {
     # it by name, and nothing surfaced the refusal -- so the schedule time has
     # never once saved. ⭐ Three settings were silently inert; two of them
     # nobody had reported.
-    # ⚠ THIS MAKES THE VALUE PERSIST AND NOTHING MORE. Registering a real
-    # Windows scheduled task is still unbuilt (RUNBOOK 7f), so this records
-    # WHEN a run is wanted, not that one is registered.
+    # ⚠ THIS IS THE TIME AND NOTHING MORE (D2, 2026-09-23). Whether the daily
+    # run is ON is Task Scheduler's to say -- `hato/schedule.py` registers the
+    # task and the switch reads it back. ⛔ Never a key saying "on": it would be
+    # a second answer, and the switch read ON for days over no task at all.
     "schedule": (str, "03:00"),
     # ⭐ THE surasura INTEGRATION (RUNBOOK 7h). A copy of every subtitle hato
     # successfully aligns is dropped into `<this>/Hato/`, for
@@ -100,6 +101,15 @@ SCHEMA = {
 #: and refused later by whatever registers the task -- somewhere the person is
 #: not looking.
 _CLOCK = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def is_clock(value):
+    u"""-> True when `value` is a time `schedule` accepts. ⭐ The ONE test: the
+    config's own check, the window's time field and `schedule.enable` all ask
+    this, so none of them can accept what another refuses."""
+    return isinstance(value, str) and bool(_CLOCK.match(value))
+
+
 LOG_SCHEMA = {
     "path": (str, ""),
     "keep": (int, 10),
@@ -324,7 +334,7 @@ def parse(text, path=None):
     cfg.skip_embedded = values["skip_embedded"]
     cfg.watch = values["watch"]
     schedule = values["schedule"]
-    if not _CLOCK.match(schedule or ""):
+    if not is_clock(schedule):
         raise ConfigError(
             "%s: schedule = %r must be a 24-hour time such as '03:00'. A value "
             "whatever registers the run cannot read would be accepted here and "

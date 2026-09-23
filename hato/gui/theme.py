@@ -350,10 +350,17 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: t
 #pickhead { background: transparent; border-left: 2px solid %(REFUSED_FILL)s; }
 #pickhead:hover { background: %(HOVER)s; }
 #pickhead[done="true"] { border-left: 2px solid %(OK)s; }
+#pickhead[done="forced"] { border-left: 2px solid %(LOOK)s; }
+/* ⭐ RUNBOOK 8f -- PROBABLY NOT OUT YET. The row is not asking, it is waiting,
+ * so the edge takes the grey that already means "not on jimaku yet" instead of
+ * the garnet that means "needs a person". The pick stays one click away. */
+#pickhead[late="true"] { border-left: 2px solid %(NOT_FOUND)s; }
 #who  { font-size: 13px; color: %(INK)s; }
 #whoi { font-size: 11px; color: %(INK_FAINT)s; }
 #best { font-size: 11px; color: %(INK_FAINT)s; }
 #best[done="true"] { color: %(OK)s; }
+#best[done="forced"] { color: %(LOOK)s; }
+#best[late="true"] { color: %(INK_DIM)s; }
 #pickrule { background: %(LINE)s; }
 
 #cand {
@@ -363,6 +370,12 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: t
 }
 #cand:hover { background: %(HOVER)s; border: 1px solid %(ACCENT_QUIET)s; }
 #cand[chosen="true"] { background: %(CARD_ON)s; border: 1px solid %(ACCENT)s; }
+/* ⛔ A card that cannot be used does not answer the pointer (ADVERSARY 2026-09-22
+ * A10/A13/A32) -- and one whose file is gone reads as absent, not as a choice. */
+#cand:disabled { background: %(CARD)s; border: 1px solid %(LINE)s; }
+#cand[chosen="true"]:disabled { background: %(CARD_ON)s; border: 1px solid %(ACCENT)s; }
+#cand[gone="true"] { background: transparent; border: 1px dashed %(LINE)s; }
+#cand[gone="true"] #nm2 { color: %(INK_FAINT)s; }
 #nm2     { font-size: 12px; color: %(INK)s; }
 #candsub { font-size: 11px; color: %(INK_FAINT)s; }
 #rate    { font-size: 12px; color: %(INK_DIM)s; }

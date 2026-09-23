@@ -155,7 +155,7 @@ class Settings(object):
     __slots__ = ("folders", "skip_folders", "lang", "out", "subs_dir",
                  "candidates", "archives",
                  "allow_ai", "recurse", "force", "dry_run", "skip_embedded",
-                 "surasura_dir")
+                 "surasura_dir", "retry_now", "only")
 
     def __init__(self, folders, lang=u"ja", out=None, subs_dir=None, candidates=3,
                  # ⚠ `archives=False`, matching `config.py`'s schema. It was True
@@ -171,7 +171,7 @@ class Settings(object):
                  # ON against the ruling and only the CLI road obeyed it.
                  # ⛔ Never mutated: the line below copies it into a tuple.
                  dry_run=False, skip_embedded=True, skip_folders=[],
-                 surasura_dir=""):
+                 surasura_dir="", retry_now=False, only=()):
         self.folders = tuple(os.path.abspath(os.fspath(f)) for f in folders)
         # ⭐ RUNBOOK 7e. Subtrees carved OUT of `folders` -- Sonic: *"someone
         # might say 'desktop' and then not want a certain folder checked on
@@ -202,6 +202,13 @@ class Settings(object):
         # would be a surprise rather than a feature.
         self.surasura_dir = (os.path.abspath(os.fspath(surasura_dir))
                              if surasura_dir else u"")
+        # ⭐ RUNBOOK 8e -- *Look again now* on one row (D3). `retry_now` ignores
+        # the WAITING PERIOD and nothing else: a blacklist still stands and a file
+        # already refused for the video is still never downloaded again -- which
+        # is exactly where it differs from `force`. `only` keeps the run to the
+        # named videos inside the folders it was given.
+        self.retry_now = bool(retry_now)
+        self.only = tuple(os.path.abspath(os.fspath(v)) for v in (only or ()))
 
     @classmethod
     def from_config(cls, cfg, **given):
@@ -232,7 +239,9 @@ class Settings(object):
                    force=bool(given.get("force")),
                    dry_run=bool(given.get("dry_run")),
                    skip_embedded=pick("skip_embedded", cfg.skip_embedded),
-                   surasura_dir=pick("surasura_dir", cfg.surasura_dir))
+                   surasura_dir=pick("surasura_dir", cfg.surasura_dir),
+                   retry_now=bool(given.get("retry_now")),
+                   only=given.get("only") or ())
 
     def __repr__(self):
         return "<Settings %d folder(s), lang=%s%s%s>" % (
@@ -246,16 +255,25 @@ class Settings(object):
 
 class Attempted(object):
     u"""One candidate, tried. `tsubasa` is tsubasa's `Result` or None (the
-    download never got that far)."""
+    download never got that far).
 
-    __slots__ = ("name", "outcome", "reason", "tsubasa", "bytes")
+    ⭐ `path` and `digest` (RUNBOOK 8b): where the downloaded file sits in the
+    working cache, and its content hash. The digest is what the state DB keeps
+    so the SAME file can be offered to a person after this run is forgotten;
+    the path is what a pick hands to `hato sync`. Both None when nothing was
+    downloaded.
+    """
 
-    def __init__(self, name, outcome, reason, result=None, size=0):
+    __slots__ = ("name", "outcome", "reason", "tsubasa", "bytes", "path", "digest")
+
+    def __init__(self, name, outcome, reason, result=None, size=0, path=None, digest=None):
         self.name = name
         self.outcome = outcome
         self.reason = reason
         self.tsubasa = result
         self.bytes = size
+        self.path = path
+        self.digest = digest
 
     @property
     def match_rate(self):
@@ -263,6 +281,31 @@ class Attempted(object):
 
     def __repr__(self):
         return "<Attempted %r %s>" % (self.name[:48], self.outcome)
+
+
+class Remembered(object):
+    u"""⭐ RUNBOOK 8d. A candidate tried in an EARLIER run, read back from the state
+    DB -- so a person can still be offered it after that run is forgotten.
+
+    ⛔ Deliberately not an `Attempted`: `attempts` means *tried in this run*, and
+    the counts, the report and the byte total all read it that way. `path` is the
+    downloaded file as it sits now (`keep.remembered_file`), or None when it is
+    gone; `when` is when it was tried.
+    """
+
+    __slots__ = ("name", "outcome", "reason", "bytes", "match_rate", "path", "when")
+
+    def __init__(self, name, outcome, reason, size, match_rate, path, when):
+        self.name = name
+        self.outcome = outcome
+        self.reason = reason
+        self.bytes = size
+        self.match_rate = match_rate
+        self.path = path
+        self.when = when
+
+    def __repr__(self):
+        return "<Remembered %r %s>" % (self.name[:48], self.outcome)
 
 
 class VideoResult(object):
@@ -278,7 +321,8 @@ class VideoResult(object):
     __slots__ = ("video", "name", "title", "season", "episode", "outcome", "skip",
                  "reason", "jimaku_entry", "jimaku_filename", "attempts",
                  "candidates_offered", "tsubasa", "output_path", "kept_path",
-                 "api_calls", "bytes_downloaded", "retry_after")
+                 "api_calls", "bytes_downloaded", "retry_after", "tried_before",
+                 "newest_offered")
 
     def __init__(self, video, outcome, reason=u"", **fields):
         self.video = str(getattr(video, "path", video))
@@ -299,6 +343,12 @@ class VideoResult(object):
         self.api_calls = 0
         self.bytes_downloaded = 0
         self.retry_after = None
+        #: ⭐ RUNBOOK 8d -- `Remembered` candidates from earlier runs, never this
+        #: one's. What keeps a pick on offer after the run that made it is gone.
+        self.tried_before = ()
+        #: ⭐ RUNBOOK 8f -- the newest episode the entry's releases offer, in this
+        #: video's numbering (`episodes.newest_offered`), or None.
+        self.newest_offered = None
         for key, value in fields.items():
             setattr(self, key, value)
         if outcome != CONFIDENT and not (self.reason or u"").strip():
@@ -457,6 +507,8 @@ class _Run(object):
         self._relisted = set()      # entry ids whose stale listing was refreshed
         self._hashes = {}           # path -> video hash, so 128 KiB is read ONCE
         self._clashes = {}          # video key -> why two videos target one file
+        #: video hash -> what it tried in EARLIER runs, read once (`_candidates`)
+        self._earlier = {}
 
     # -- the whole run ------------------------------------------------------
 
@@ -690,7 +742,15 @@ class _Run(object):
 
     def _show(self, show):
         needing = []
+        # ⭐ RUNBOOK 8e -- `only`: the run was asked about particular videos (the
+        # window's *Look again now*). ⚠ Applied HERE, after discovery and not in
+        # it: the show keeps every sibling in `show.videos`, because `_align` fits
+        # a release's numbering against the whole folder's range -- filtered at
+        # discovery, one video alone has no range at all ("the known soft spot").
+        wanted = set(_key(v) for v in self.s.only) if self.s.only else None
         for video, root in show.videos:
+            if wanted is not None and _key(video.path) not in wanted:
+                continue
             decided = self._gate(video, root)
             if decided is None:
                 needing.append((video, root))
@@ -897,6 +957,12 @@ class _Run(object):
             video_hash = self._hash(path)
         except OSError as exc:
             return VideoResult(video, ERROR, u"the video could not be read: %s" % exc)
+        if not self.s.dry_run:
+            # ⭐ RUNBOOK 8e -- a video moved while it waited keeps a path the disk
+            # no longer has, and `hato problems` (filtered by the disk) dropped
+            # it: 4a's failure in a new shape. One UPDATE, and only when the
+            # recorded path is wrong. ⛔ Never on a dry run, which writes nothing.
+            self.db.note_path(video_hash, path)
 
         # ⛔ THE BLACKLIST IS THE PERSON'S INSTRUCTION, and `--force` does not
         # override it. `03-permissions.md` §*The read rule* puts it SECOND, right
@@ -962,10 +1028,33 @@ class _Run(object):
         # cost the negative cache exists to stop. ⭐ `skip_reason` asks the
         # blacklist FIRST and does not look at `force` until after it, so the
         # ordering above stays true even if this were the only call.
-        skip = self.db.skip_reason(video_hash, self.lang, force=self.s.force)
+        # ⭐ `retry_now` (RUNBOOK 8e, D3) looks past the WAIT and nothing else --
+        # `skip_reason` still asks the blacklist first, and `_candidates` still drops
+        # every file already refused, because only `force` reaches that filter.
+        # 🚨 The window's "Try 3 more candidates" ran without either, so for the 24
+        # hours after a refusal -- the only time anybody presses it -- the gate
+        # answered "waiting to retry" and it tried nothing at all.
+        skip = self.db.skip_reason(video_hash, self.lang,
+                                   force=self.s.force or self.s.retry_now)
         if skip is not None and skip.kind == "negative":
+            # 🚨 RUNBOOK 8d -- THE SECOND CAUSE OF 4a. This line decided correctly
+            # and said nothing useful: a reason and a date, and none of the files
+            # that were refused yesterday. So a run inside the retry window turned
+            # a row a person could pick from into a quiet *"waiting to retry"*, and
+            # the pick was gone -- *"never got to"* pick Tsuihou. ⭐ The skip still
+            # skips; it now carries what it is waiting on. ⛔ Zero requests.
+            # 🚨 AND THE SAME FACTS AS WHAT HATO REMEMBERS. This copy of the row
+            # reaches the window DURING every run, and it said `candidates_offered:
+            # 0` with no `newest_offered`: a late episode turned from *"probably
+            # not out yet"* into a pick with another episode's file OUTLINED, and
+            # *Look again* claimed every file had been tried (ADVERSARY 2026-09-22
+            # A5). The newest episode on offer is the negative's own; how many the
+            # entry holds is UNKNOWN -- this run never listed it.
             return VideoResult(video, SKIPPED, skip.reason, skip=NEGATIVE,
-                               retry_after=skip.retry_after)
+                               retry_after=skip.retry_after,
+                               tried_before=self._remembered(video_hash),
+                               newest_offered=skip.newest_offered,
+                               candidates_offered=None)
         if skip is not None:
             # ⚠ Reached only if the check above were ever removed: `skip_reason`
             # asks the blacklist FIRST and does not look at `force` until after
@@ -994,7 +1083,9 @@ class _Run(object):
         if port.wrote(result):
             self._record(video, video_hash, row.jimaku_entry, row.jimaku_filename,
                          row.jimaku_size, row.jimaku_last_modified, CONFIDENT, u"",
-                         output_path=result.output_path, kept_path=row.kept_path)
+                         output_path=result.output_path, kept_path=row.kept_path,
+                         subtitle_hash=row.subtitle_hash,
+                         match_rate=getattr(result, "match_rate", None))
             # ⚠ THE SAME LINE `_candidates` HAS, AND IT WAS MISSING HERE. A file
             # landed in that folder, so the cached listing taken before it is now
             # a lie for every later video decided against the same folder -- and
@@ -1009,8 +1100,14 @@ class _Run(object):
         outcome, reason = attempt.outcome, attempt.reason
         reason = u"%s, but %s" % (what, reason)
         if row.jimaku_entry is not None and row.jimaku_filename:
+            # ⚠ `kept_path` on a row that is not a success (RUNBOOK 8b): the file this
+            # candidate IS lives in subs_dir, not in the working cache, and it is the
+            # one thing a person could pick later. `synced()` reads CONFIDENT rows
+            # only, so this can never be mistaken for a place to re-sync from.
             self._record(video, video_hash, row.jimaku_entry, row.jimaku_filename,
-                         row.jimaku_size, row.jimaku_last_modified, outcome, reason)
+                         row.jimaku_size, row.jimaku_last_modified, outcome, reason,
+                         kept_path=row.kept_path, subtitle_hash=row.subtitle_hash,
+                         match_rate=attempt.match_rate)
         return VideoResult(video, outcome, reason, tsubasa=result, attempts=(attempt,),
                            jimaku_entry=row.jimaku_entry,
                            jimaku_filename=row.jimaku_filename)
@@ -1265,19 +1362,30 @@ class _Run(object):
                 trial = self._align(show, other, [v for v, _r in show.videos])
                 if not any(p in trial.per_video for p in stuck):
                     continue
-                fresh, won = [], False
-                for video, root, old in results:
-                    if str(video.path) in stuck and str(video.path) in trial.per_video:
-                        new = self._candidates(show, trial, video, root, seen_groups)
-                        fresh.append((video, root, new))
-                        won = won or new.outcome == CONFIDENT
-                    else:
-                        fresh.append((video, root, old))
-                if not won:
-                    continue
+                # 🚨 THE ALTERNATE IS THE ENTRY WHILE ITS FILES ARE TRIED. `_candidates`
+                # reads the entry off `show.resolved`: left on the first one, the
+                # alternate's files were RECORDED under the first entry's id -- so
+                # the refusal check, which keys on the entry, never found them, and
+                # a later *Look again* downloaded files already refused; and a kept
+                # original was filed under the wrong show's name (ADVERSARY
+                # 2026-09-22 F13). ⭐ Put back when the alternate does not win.
                 was = show.resolved
                 show.resolved = Resolved(cand.id, cand.name, False, cand.score,
                                          True, cand.source, None)
+                fresh, won = [], False
+                try:
+                    for video, root, old in results:
+                        if str(video.path) in stuck and str(video.path) in trial.per_video:
+                            new = self._candidates(show, trial, video, root, seen_groups)
+                            fresh.append((video, root, new))
+                            won = won or new.outcome == CONFIDENT
+                        else:
+                            fresh.append((video, root, old))
+                finally:
+                    if not won:
+                        show.resolved = was
+                if not won:
+                    continue
                 self.resolutions.put(cache_key(show.title, show.season, show.year),
                                      show.resolved)
                 show.files_listed = len(other)
@@ -1295,6 +1403,18 @@ class _Run(object):
         path = str(video.path)
         entry = show.resolved.entry_id
         video_hash = self._hash(path)
+        # ⭐ RUNBOOK 8d. Read BEFORE this run records anything, so it is exactly the
+        # files tried in EARLIER runs -- every ending below carries it, and a
+        # success that follows refusals can say it was found on a retry.
+        # ⚠ ONCE PER RUN: `_retry_on_another_entry` asks again for the same video
+        # after this run has recorded its first entry's refusals, and a first-ever
+        # success then said *"found on a retry"* (ADVERSARY 2026-09-22 F14).
+        if video_hash not in self._earlier:
+            self._earlier[video_hash] = self._remembered(video_hash)
+        earlier = self._earlier[video_hash]
+        # ⭐ RUNBOOK 8f -- the newest episode on offer, from the alignment in hand:
+        # no request, nothing downloaded. Both endings that WAIT record it.
+        newest = episodes.newest_offered(alignment, video)
 
         if path in alignment.refused:
             # ⚠ Refused on the VIDEO's own name -- in practice *no episode number
@@ -1322,9 +1442,10 @@ class _Run(object):
                 reason = u"%s Nothing new will be listed for it before %s." % (
                     _sentence(reason), retry.strftime(u"%Y-%m-%d"))
             return VideoResult(video, REFUSED, reason, jimaku_entry=entry,
-                               retry_after=retry)
+                               retry_after=retry, tried_before=earlier)
         if path in alignment.not_found:
-            return self._not_found(video, alignment.not_found[path], entry=entry, hard=False)
+            return self._not_found(video, alignment.not_found[path], entry=entry, hard=False,
+                                   tried_before=earlier, newest_offered=newest)
 
         offered = alignment.per_video.get(path) or []
         ranking = rank.rank(offered, allow_ai=self.s.allow_ai,
@@ -1339,7 +1460,8 @@ class _Run(object):
                                                    for _c, why in ranking.excluded)))))
             else:
                 reason = u"jimaku entry %d has no file for this episode" % entry
-            return self._not_found(video, reason, entry=entry, hard=False)
+            return self._not_found(video, reason, entry=entry, hard=False,
+                                   tried_before=earlier, newest_offered=newest)
 
         # ⛔ NEVER RE-DOWNLOAD A REFUSAL. The identity is (entry, filename, size,
         # last_modified) from the LIST, so this costs no request at all -- and a
@@ -1351,8 +1473,12 @@ class _Run(object):
         cap = self.s.candidates + (LOW_CONFIDENCE_EXTRA if show.resolved.low_confidence else 0)
 
         if not fresh:
+            # 🚨 D4 (RUNBOOK 8d): this ending passes NO attempts -- nothing was
+            # downloaded this run -- so the pick row it made had nothing to pick.
+            # Every one of those candidates is in `earlier`, file and all.
             return self._all_refused(video, entry, len(ranked), (), video_hash,
-                                     already=True, offered=len(ranked))
+                                     already=True, offered=len(ranked),
+                                     tried_before=earlier, newest_offered=newest)
         if self.s.dry_run:
             return VideoResult(
                 video, PLANNED,
@@ -1370,7 +1496,8 @@ class _Run(object):
             if attempt.outcome != CONFIDENT:
                 self._record(video, video_hash, entry, cand.file.get("name"),
                              cand.file.get("size"), cand.file.get("last_modified"),
-                             attempt.outcome, attempt.reason)
+                             attempt.outcome, attempt.reason,
+                             subtitle_hash=attempt.digest, match_rate=attempt.match_rate)
                 if port.nothing_was_written(attempt.tsubasa):
                     # 🚨 ⛔ A FAILED WRITE IS AN ERROR AND IS NEVER A REFUSAL.
                     # Measured with a file sitting where the mirrored directory
@@ -1390,7 +1517,8 @@ class _Run(object):
                                        jimaku_filename=cand.file.get("name"),
                                        attempts=tuple(attempts),
                                        candidates_offered=len(ranked),
-                                       bytes_downloaded=downloaded)
+                                       bytes_downloaded=downloaded,
+                                       tried_before=earlier)
                 continue
             # ⚠ WRITE FIRST, KEEP SECOND: `subs_dir` holds exactly the originals
             # that were USED. A refused candidate stays in the disposable cache.
@@ -1400,15 +1528,19 @@ class _Run(object):
             self._record(video, video_hash, entry, cand.file.get("name"),
                          cand.file.get("size"), cand.file.get("last_modified"),
                          CONFIDENT, u"", output_path=attempt.tsubasa.output_path,
-                         kept_path=str(kept) if kept else None)
+                         kept_path=str(kept) if kept else None,
+                         subtitle_hash=attempt.digest, match_rate=attempt.match_rate)
             seen_groups.add(cand.group)
             self.look.forget(os.path.dirname(attempt.tsubasa.output_path))
+            # ⭐ `tried_before` on a SUCCESS is how *"it was found on a retry"* gets
+            # said at all (RUNBOOK 8e): the files refused in earlier runs, still
+            # attached to the run that finally settled it.
             return VideoResult(video, CONFIDENT, u"", tsubasa=attempt.tsubasa,
                                jimaku_entry=entry, jimaku_filename=cand.file["name"],
                                output_path=attempt.tsubasa.output_path,
                                kept_path=str(kept) if kept else None,
                                attempts=tuple(attempts), candidates_offered=len(ranked),
-                               bytes_downloaded=downloaded)
+                               bytes_downloaded=downloaded, tried_before=earlier)
         # 🚨 `len(attempts)`, NOT `len(fresh)` -- how many were TRIED, not how many
         # were available. Recorded at 5a's build and fixed here: with `--candidates 1`
         # against 13 offered, the refusal read *"13 candidates fetched and retimed"*
@@ -1416,7 +1548,8 @@ class _Run(object):
         # the person to raise the cap was withheld from the row that most needed it.
         return self._all_refused(video, entry, len(attempts), tuple(attempts),
                                  video_hash, already=False, offered=len(ranked),
-                                 downloaded=downloaded)
+                                 downloaded=downloaded, tried_before=earlier,
+                                 newest_offered=newest)
 
     def _try(self, video, root, entry, cand):
         u"""Fetch ONE candidate and hand it to tsubasa. -> (Attempted, blob path)
@@ -1442,7 +1575,8 @@ class _Run(object):
         outcome, reason = port.outcome_and_reason(result)
         if outcome != CONFIDENT:
             reason = u"%s: %s" % (name, reason)
-        return Attempted(name, outcome, reason, result=result, size=len(data)), blob
+        return Attempted(name, outcome, reason, result=result, size=len(data),
+                         path=str(blob), digest=_cache.content_hash(data)), blob
 
     def _download(self, entry, cand):
         u"""The unmetered download, with §4's one stale-list retry."""
@@ -1488,7 +1622,7 @@ class _Run(object):
     # -- the two endings that are not a success -----------------------------
 
     def _all_refused(self, video, entry, tried, attempts, video_hash,
-                     already, offered, downloaded=0):
+                     already, offered, downloaded=0, tried_before=(), newest_offered=None):
         u"""⚠ Every candidate refused -> a SOFT negative, then REFUSED.
 
         Without that row a video whose every candidate has been refused re-lists
@@ -1513,7 +1647,7 @@ class _Run(object):
         if not self.s.dry_run:
             retry = self.db.record_not_found(
                 video_hash=video_hash, video_path=str(video.path), lang=self.lang,
-                kind="soft", jimaku_entry=entry,
+                kind="soft", jimaku_entry=entry, newest_offered=newest_offered,
                 reason=(u"%d of %d candidate(s) tried, all refused by timing"
                         % (tried, offered)))
             reason = u"%s Nothing new will be listed for it before %s." % (
@@ -1523,9 +1657,10 @@ class _Run(object):
                            candidates_offered=offered, retry_after=retry,
                            bytes_downloaded=downloaded,
                            tsubasa=best.tsubasa if best is not None else None,
-                           jimaku_filename=best.name if best is not None else None)
+                           jimaku_filename=best.name if best is not None else None,
+                           tried_before=tried_before, newest_offered=newest_offered)
 
-    def _not_found(self, video, reason, entry, hard):
+    def _not_found(self, video, reason, entry, hard, tried_before=(), newest_offered=None):
         u"""⛔ NOT an error. *"jimaku has no episode 7"* is a normal, expected,
         recurring state that resolves itself when someone uploads one -- and it
         is never conflated with a fault (`03-permissions.md`).
@@ -1540,13 +1675,16 @@ class _Run(object):
                 video_hash=self._hash(str(video.path)),
                 video_path=str(video.path), lang=self.lang,
                 kind="hard" if hard else "soft",
-                jimaku_entry=None if hard else entry, reason=reason)
+                jimaku_entry=None if hard else entry, reason=reason,
+                newest_offered=None if hard else newest_offered)
             # ⚠ `_sentence` first: these reasons already end in a full stop, and
             # ` -- will retry` appended straight on read *"...episode 24. -- will
             # retry after"*. Same class as the refusal's run-on, found the same way.
             reason = u"%s Will retry after %s." % (_sentence(reason),
                                                    retry.strftime(u"%Y-%m-%d"))
-        return VideoResult(video, NOT_FOUND, reason, jimaku_entry=entry, retry_after=retry)
+        return VideoResult(video, NOT_FOUND, reason, jimaku_entry=entry, retry_after=retry,
+                           tried_before=tried_before,
+                           newest_offered=None if hard else newest_offered)
 
     # -- the store ----------------------------------------------------------
 
@@ -1563,14 +1701,34 @@ class _Run(object):
             self._hashes[key] = _cache.video_hash(path)
         return self._hashes[key]
 
+    def _remembered(self, video_hash):
+        u"""-> (Remembered, ...) every candidate tried for this video since it
+        last succeeded, each with its file as it is on disk NOW (RUNBOOK 8d).
+
+        ⛔ Reads only: the state DB and a stat per candidate. No request, and
+        nothing is downloaded -- a file that is gone is offered with no path, and
+        the window says so rather than committing something else.
+        """
+        return tuple(
+            Remembered(row.jimaku_filename, row.outcome, row.reason,
+                       row.jimaku_size or 0, row.match_rate,
+                       keep.remembered_file(row, self.lang, self.cache),
+                       row.attempted_at)
+            for row in self.db.candidates(video_hash, self.lang))
+
     def _record(self, video, video_hash, entry, filename, size, last_modified,
-                outcome, reason, output_path=None, kept_path=None):
+                outcome, reason, output_path=None, kept_path=None,
+                subtitle_hash=None, match_rate=None):
+        # ⭐ `subtitle_hash` and `match_rate` (RUNBOOK 8b). The hash was specified in
+        # 02-data-model.md and passed as None here since 1b, so a refusal could be
+        # REMEMBERED but never OFFERED again: nothing said which downloaded file it
+        # was, or how close it came.
         self.db.record_attempt(
             video_hash=video_hash, video_path=str(video.path), lang=self.lang,
             jimaku_entry=entry, jimaku_filename=filename, jimaku_size=size,
-            jimaku_last_modified=last_modified, subtitle_hash=None,
+            jimaku_last_modified=last_modified, subtitle_hash=subtitle_hash,
             outcome=outcome, reason=reason, output_path=output_path,
-            kept_path=kept_path)
+            kept_path=kept_path, match_rate=match_rate)
 
 
 def _key(path):
@@ -1626,4 +1784,4 @@ def _measured(attempts):
 __all__ = ["CONFIDENT", "REFUSED", "ERROR", "NOT_FOUND", "SKIPPED", "PLANNED",
            "PRESENT", "BLACKLISTED", "EMBEDDED", "NO_TRACK", "NEGATIVE",
            "LOW_CONFIDENCE_EXTRA", "ConfigProblem", "Settings", "Attempted",
-           "VideoResult", "ShowReport", "RunReport", "run"]
+           "Remembered", "VideoResult", "ShowReport", "RunReport", "run"]

@@ -155,6 +155,46 @@ def is_interesting_arrival(name, root=None, isdir=None):
         return False
 
 
+def should_wake(name, root=None, skip_folders=(), isdir=None):
+    u"""Is this arrival worth starting the countdown for? -> bool
+
+    🚨 TWO QUESTIONS, AND THE SECOND ONE WAS MISSING. Sonic, 2026-09-22:
+    *"it found files in a folder that is inside a blacklisted folder ... it
+    noticed it but didn't seem to do anything with it. Noticed it in the
+    section at the bottom that indicates what its doing. But nothing in the UI
+    ever popped up about it."*
+
+    ⛔ THE ROOT-LEVEL FILTER IN `main()` ONLY DROPS A WHOLE WATCHED ROOT. A root
+    that is not skipped can contain a subfolder that IS, and an arrival there
+    reset the countdown, wrote `pending`, and made the window advertise a run
+    that was coming. The pipeline then discarded the file correctly -- so the
+    countdown ran, a run happened, and nothing was ever subbed.
+
+    ⚠ WORSE THAN AN INVISIBLE MISS, WHICH IS THE THIRD ONE THIS WATCHER HAS
+    EARNED: the footer *promised* something. `LEDGER-HOT.md` already says
+    anything the watcher declines to act on must be visible somewhere; this
+    was the inverse -- something it advertised and then declined.
+
+    ⭐ MODULE-LEVEL ON PURPOSE. The check it replaces lived inside a closure in
+    `main()`, where nothing can drive it without starting a real watcher. Both
+    seams are injectable (`isdir`, `skip_folders`) so this is checkable with no
+    filesystem and no config at all.
+
+    ⚠ `name is None` means *the watcher itself asked for a sweep*, not that
+    something arrived, and it must still wake.
+    """
+    if name is None:
+        return True
+    if not is_interesting_arrival(name, root, isdir=isdir):
+        return False
+    # ⛔ `paths.under_any`, the SAME function the pipeline uses -- not a copy.
+    # It imports nothing but the stdlib, which is what keeps this process free
+    # of the toolkit and of the pipeline.
+    from hato import paths as _paths
+    full = os.path.join(root, name) if root else name
+    return not _paths.under_any(full, skip_folders or ())
+
+
 class SettleTimer(object):
     u"""Collapse a burst of changes into one run, once things go quiet.
 
@@ -204,6 +244,158 @@ class SettleTimer(object):
         if self.fire is not None:
             self.fire(names)
         return names
+
+
+#: How often a watcher whose folder went away is reopened (`main`'s `revive`).
+REVIVE_SECONDS = 30
+
+#: ⭐ One run for a burst of promises. A run records its negatives seconds
+#: apart -- Sonic's own 19 Sep run left three between 07:03:03 and 07:03:05 --
+#: and a run fired between two of them finds the second still waiting, so that
+#: video would sit until the NEXT promise came due. Five minutes late on a
+#: 24-hour wait costs nothing.
+RETRY_COALESCE_SECONDS = 300.0
+
+
+def wall_clock():
+    u"""Seconds since the epoch. ⚠ A function, so a check can replace it."""
+    return time.time()
+
+
+#: The lock's state as last said, so an unusable lock is complained about once.
+_LOCK_SAID = [None]
+
+
+def run_in_flight():
+    u"""Would a run started now have to wait for the lock? -> bool.
+
+    ⚠ A function HERE so a check can replace it; the judgement is
+    `runlock.lock_state`'s -- the same one `acquire` makes, never a second.
+
+    🚨 NOT ONLY "a run holds it". A lock that CANNOT BE USED -- a folder sitting
+    where it goes, a file another program holds open -- was "free" to the tray
+    and fatal to every run it then started, each failing into a stderr nobody
+    reads (ADVERSARY 2026-09-22 L3). The tray waits on it like a held lock, and
+    says so once, in the log.
+    """
+    from hato import runlock as _runlock
+    state = _runlock.lock_state()
+    if state == _runlock.UNUSABLE and _LOCK_SAID[0] != state:
+        from hato import paths as _paths
+        complain(u"hato: the run lock at %s cannot be used -- something is sitting where it "
+                 u"goes, or another program holds it open. No run starts until it can be; "
+                 u"remove it, or set HATO_CACHE to a folder hato can write.\n"
+                 % _paths.lock_path())
+    _LOCK_SAID[0] = state
+    return state != _runlock.FREE
+
+
+def _stamp(path):
+    u"""-> (mtime_ns, size) of a file, or None -- what "it changed" is judged by."""
+    try:
+        status = os.stat(str(path))
+    except OSError:
+        return None
+    return (status.st_mtime_ns, status.st_size)
+
+
+class _DueFile(object):
+    u"""`retries.load()`, re-read only when the file changes -- a stat a tick.
+
+    ⚠ `hato.retries` is imported HERE, lazily, like every other hato module this
+    process uses: it is stdlib-only, and the import rule is checked by walking
+    this file (`tests/test_watch.py`).
+    """
+
+    def __init__(self, complain=None):
+        self._seen, self._dues = None, []
+        #: ⭐ R8 -- a file that holds something other than dates SAYS so, once.
+        self._complain = complain
+        self._said = None
+
+    def __call__(self):
+        from hato import retries as _retries
+        seen = _stamp(_retries.path())
+        if seen != self._seen:
+            self._seen = seen
+            self._dues, problem = _retries.read() if seen is not None else ([], None)
+            if problem and problem != self._said and self._complain is not None:
+                self._complain(u"hato: %s -- the tray keeps no retry from it until the next "
+                               u"run writes it again.\n" % problem)
+            self._said = problem
+        return self._dues
+
+
+class RetryClock(object):
+    u"""Run hato when a retry it promised comes due (RUNBOOK 8h).
+
+    🚨 THE 24-HOUR RETRY WORKED AND NOTHING RAN IT. The gate looks again only
+    in a run that happens after the date, and when this was built nothing
+    started one: the 03:00 switch registered no task (D2, since built -- the
+    daily run now keeps a retry at its next start). So the one resident process
+    wakes for the dates every run writes down (`hato/retries.py`) -- and the
+    window may then say *"retrying in 14h"* as a promise, because something
+    will keep it, sooner than the daily run would.
+
+        clock = RetryClock(load=lambda: dues, clock=fake.time, fire=runs.append)
+        fake.advance(...); clock.poll()        # -> fires once per date
+
+    ⭐ Everything ALREADY due when watching starts belongs to the catch-up run
+    `main()` starts at the same moment: firing for it too would be two runs
+    racing one lock, and the loser reports that nothing was scanned.
+    ⛔ ONE RUN PER DATE, never two -- a date whose video has since gone stays in
+    the file until a run replaces it, and must not start a run every second.
+    ⭐ A promise that comes due while another run holds the lock WAITS for the
+    lock (`busy`) and is not marked kept: spawned into it, the late run would
+    exit having scanned nothing, and the run in flight passed that video
+    before its date -- the same silent loss as ADVERSARY S01.
+    """
+
+    def __init__(self, load=None, clock=None, fire=None,
+                 coalesce=RETRY_COALESCE_SECONDS, busy=None):
+        self.load = load if load is not None else _DueFile()
+        self.clock = clock if clock is not None else wall_clock
+        self.fire = fire
+        self.coalesce = float(coalesce)
+        #: ⭐ S01's lesson, for this path too: a date that comes due while a run
+        #: holds the lock waits for the lock -- and is NOT marked covered.
+        self.busy = busy
+        self._covered = self.clock()
+
+    def cover(self, moment=None):
+        u"""A full run is starting: every date already due is ITS. -> None
+
+        ⭐ ONE RUN PER TICK (ADVERSARY 2026-09-22 R10). The settle timer and a due
+        date firing in the same second started two runs, and the second met the
+        first's lock. The run the timer starts looks at every video whose date
+        has passed, so those dates are kept by it.
+        """
+        moment = self.clock() if moment is None else moment
+        self._covered = max(self._covered, moment)
+
+    def poll(self):
+        u"""Call once a tick. -> the dates it fired for, or [] if none is due."""
+        now = self.clock()
+        # ⚠ THE WALL CLOCK CAN GO BACKWARDS -- a correction, a dead CMOS battery.
+        # Ahead of `now`, every promise made after the jump sat at or below the
+        # old mark and was never kept (ADVERSARY 2026-09-22 R5).
+        self._covered = min(self._covered, now)
+        ahead = [due for due in self.load() if due > self._covered]
+        ready = [due for due in ahead if due <= now]
+        if not ready:
+            return []
+        # ⚠ Another date about to join it is worth a short wait -- and only a
+        # short one: a chain of dates each under the window apart held the first
+        # for hours (ADVERSARY 2026-09-22 R6). Never later than `coalesce`.
+        if any(now < due <= now + self.coalesce for due in ahead) \
+                and now - min(ready) < self.coalesce:
+            return []
+        if self.busy is not None and self.busy():
+            return []                         # ⛔ a run holds the lock: wait for it
+        self._covered = max(ready)
+        if self.fire is not None:
+            self.fire(ready)
+        return ready
 
 
 def run_argv():
@@ -329,15 +521,29 @@ def spawn_run(folders, spawner=None):
     if not folders:
         return None
     from hato import paths as _paths
-    argv = run_argv() + [u"--quiet"] + [os.path.abspath(f) for f in folders]
+    # ⭐ `--wait` (ADVERSARY 2026-09-22 L1): the tray asks whether a run holds
+    # the lock BEFORE spawning, and a frozen child needs a second or two to
+    # reach it -- a run starting in that gap made this one exit with nothing
+    # scanned, and the arrival it was spawned for was never looked at. Told to
+    # wait, it queues behind that run instead. It also carries the catch-up
+    # run at start, which is spawned without asking at all (R11).
+    argv = run_argv() + [u"--quiet", u"--wait"] + [os.path.abspath(f) for f in folders]
     # ⛔ `paths.child_env`, never a local copy. The copy that used to be here
     # omitted PYTHONPATH, so a tray started from a shortcut spawned a run that
     # died on `ModuleNotFoundError` before it printed anything.
     env = _paths.child_env()
     if spawner is not None:                 # the suite's seam
         return spawner(argv, env)
-    return subprocess.Popen(argv, env=env, stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL, **no_console_kwargs())
+    try:
+        return subprocess.Popen(argv, env=env, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, **no_console_kwargs())
+    except OSError as exc:
+        # ⛔ A MISSING hato-cli.exe -- quarantined by antivirus, mid-update --
+        # raised straight out of the tray's message loop and took the tray down
+        # (ADVERSARY 2026-09-22 C6). Said where it can be found; the tray stays.
+        complain(u"hato: a run could not be started (%s: %s) -- %s\n"
+                 % (type(exc).__name__, exc, u" ".join(argv[:1])))
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +707,12 @@ class DirectoryWatcher(object):
             dll.CloseHandle(handle)
             self._handle = None
 
+    def alive(self):
+        u"""Is this still watching? -> bool. ⚠ A thread that ended -- the folder
+        gone, the share dropped -- is not, whatever the tooltip says (C4)."""
+        return (self._thread is not None and self._thread.is_alive()
+                and self.error is None and not self._stop.is_set())
+
     def stop(self):
         u"""⚠ `CancelIoEx` AS WELL AS THE FLAG. The thread is parked inside a
         blocking call and will not look at an Event until something changes --
@@ -600,6 +812,49 @@ def complain(message):
         pass
 
 
+#: ⭐ D2 -- what Windows' daily task hands this program (`hato/schedule.py`
+#: registers it). ⛔ The same string on both sides; a check round-trips it.
+SCHEDULED_FLAG = u"--scheduled"
+
+
+def scheduled_run(spawner=None):
+    u"""The daily run, started by Task Scheduler. -> hato's own exit code.
+
+    🚨 WHY THIS PROGRAM AND NOT `hato-cli.exe`: a scheduled task runs a console
+    program in a console WINDOW, over whatever the person is doing -- and with
+    *run when available* the run a sleeping computer missed at 03:00 happens the
+    moment somebody is using it. This process has no console (`hato-watch.exe`,
+    or `pythonw` from a clone), and it starts the run exactly as the tray does:
+    `no_console_kwargs`, `--quiet`, `--wait`.
+
+    ⛔ NOT A TRAY: no pid file, and no one-watcher refusal -- a tray already
+    running must not cost anybody their daily run. No folders are named, so hato
+    reads its own settings (the ONE reader) and skips what it is told to.
+    ⭐ The exit code is hato's, so Task Scheduler's *Last Result* is too -- and
+    anything but 0 is also written to the log with what hato said, because
+    nobody reads that column (`10-deployment.md`: read the log).
+    """
+    from hato import paths as _paths
+    argv = run_argv() + [u"--quiet", u"--wait"]
+    env = _paths.child_env()
+    if spawner is not None:                   # the suite's seam
+        return spawner(argv, env)
+    try:
+        child = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                 **no_console_kwargs())
+    except OSError as exc:
+        complain(u"hato: the daily run could not start (%s: %s) -- %s\n"
+                 % (type(exc).__name__, exc, argv[0]))
+        return 1
+    _out, err = child.communicate()
+    if child.returncode:
+        said = (err or b"").decode(u"utf-8", u"replace").strip().splitlines()
+        complain(u"hato: the daily run exited %d%s\n"
+                 % (child.returncode, (u" -- %s" % said[-1]) if said else u""))
+    return child.returncode
+
+
 def main(argv=None):
     u"""`python -m hato.watch` -- sit in the tray and run hato when a video
     lands. -> an exit code.
@@ -608,7 +863,13 @@ def main(argv=None):
     function means somebody asked for it. What is enforced here is that it
     costs what it was measured to cost.
     """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if SCHEDULED_FLAG in argv:
+        # ⭐ D2 -- Windows' daily task. BEFORE the one-watcher check below: a
+        # tray that is already running is no reason to skip the daily run.
+        return scheduled_run()
     from hato import config as _config        # ⚠ the ONE reader, never a second
+    from hato import paths as _paths
     from hato import tray as _tray
 
     # 🚨 ONE WATCHER, AND ONLY ONE. Sonic, 2026-09-18: *"it's an issue if we
@@ -630,6 +891,11 @@ def main(argv=None):
             u"HATO_ALLOW_MANY=1 if you are deliberately testing.\n" % existing)
         return 0                              # ⛔ NOT a failure: the job is done
     try:
+        # ⚠ THE STAMP BEFORE THE READ (ADVERSARY 2026-09-22 C3). Taken after the
+        # watchers were up, a change saved in between -- the window's `hato config
+        # --set` landing while the tray started -- matched it and was never read.
+        config_file = _paths.config_path()[0]
+        config_seen = [_stamp(config_file)]
         cfg = _config.load()
     except Exception as exc:                  # noqa: BLE001
         complain(u"hato: the watcher could not read its settings -- "
@@ -639,7 +905,6 @@ def main(argv=None):
     # ⛔ Importing `hato.pipeline` here to reach it would undo the entire reason
     # this is a separate process, so the shared answer lives in `paths`, which
     # imports nothing but the stdlib.
-    from hato import paths as _paths
     folders = [f for f in cfg.folders
                if not _paths.under_any(f, cfg.skip_folders)]
     if not folders:
@@ -648,11 +913,46 @@ def main(argv=None):
             u"config.toml's `folders`.\n")
         return 2
 
+    #: ⭐ S02 -- the settings as last read. Replaced when the file changes, so
+    #: every closure below reads the CURRENT skip list, never the one at start.
+    current = {u"cfg": cfg}
+    #: What the log has already been told, so a condition that lasts is said ONCE.
+    said = {}
+
+    def once(key, message):
+        if said.get(key) != message:
+            said[key] = message
+            complain(message)
+
+    def launch():
+        u"""A full run over the watched folders, now. -> the Popen, or None.
+
+        ⭐ ONE RUN PER TICK (ADVERSARY 2026-09-22 R10): a full run looks at every
+        video whose retry date has passed, so every date already due is its --
+        told to the retry clock, which would otherwise start a second run in the
+        same second for the same videos.
+        """
+        started = spawn_run(folders)
+        retry.cover()
+        return started
+
     def go(names):
+        # 🚨 S01 (ADVERSARY-2026-09-18) -- A RUN IN FLIGHT WOULD MEET THE LOCK,
+        # scan nothing and exit 0 into a pipe nobody reads: a video that
+        # arrived during a run was dropped for ever. Re-arm and wait for the
+        # lock instead, with the countdown still showing.
+        if run_in_flight():
+            for name in names or ():
+                timer.touch(name)
+            if not names:
+                timer.touch()
+            write_pending(time.time() + SETTLE_SECONDS,
+                          [n for n in timer.waiting if n])
+            return None
         # ⭐ The wait is over, so stop advertising it BEFORE the run starts --
         # otherwise the window shows a countdown and a running run at once.
         clear_pending()
-        return spawn_run(folders)
+        return launch()
 
     timer = SettleTimer(SETTLE_SECONDS, fire=go)
 
@@ -663,7 +963,7 @@ def main(argv=None):
         a bare relative name, and a folder dragged in cannot be told from a
         file worth ignoring -- see `is_interesting_arrival`.
         """
-        if name is not None and not is_interesting_arrival(name, root):
+        if not should_wake(name, root, current[u"cfg"].skip_folders):
             return
         timer.touch(name)
         # 🚨 WALL CLOCK ON THE WIRE, MONOTONIC IN THE TIMER. `SettleTimer` runs
@@ -673,21 +973,122 @@ def main(argv=None):
         # measured from that machine's boot.
         write_pending(time.time() + SETTLE_SECONDS,
                       [n for n in timer.waiting if n])
+    def watch_folder(folder):
+        u"""One watcher, started, for `folder`. -> the watcher.
+
+        ⭐ BOUND PER FOLDER. `arrived` needs this watcher's root to tell a
+        dragged-in FOLDER from a file worth ignoring. ⭐ A FUNCTION, so each
+        call binds its own `folder` -- the late-binding trap a bare closure in
+        a loop set (every watcher handed the LAST folder) cannot happen here,
+        and S02's restart below builds watchers through the same door.
+        """
+        return DirectoryWatcher(
+            folder, on_change=lambda name, root=folder: arrived(name, root),
+            recurse=current[u"cfg"].recurse).start()
+
     watchers = []
     for folder in folders:
-        watcher = DirectoryWatcher(
-            folder,
-            # ⭐ BOUND PER FOLDER. `arrived` needs this watcher's root to tell a
-            # dragged-in FOLDER from a file worth ignoring. ⛔ The default
-            # argument is what binds THIS folder -- a bare closure over `folder`
-            # would hand every watcher the last one in the loop.
-            on_change=lambda name, root=folder: arrived(name, root),
-            recurse=cfg.recurse)
         try:
-            watchers.append(watcher.start())
+            watchers.append(watch_folder(folder))
         except RuntimeError as exc:
             complain(u"hato: %s\n" % exc)
             return 2
+
+    icon_box = []
+
+    def tooltip():
+        return u"hato -- watching %d folder%s" % (len(folders),
+                                                  u"" if len(folders) == 1 else u"s")
+
+    def reread():
+        u"""🚨 S02 (ADVERSARY-2026-09-18) -- a folder added in Settings while
+        watching was never watched: the settings were read once, at start, and
+        the window went on saying *"watching"*. -> True when the watchers moved.
+
+        ⭐ A `stat` a tick; a changed file is read through the ONE reader and the
+        watchers follow it. ⚠ A file that will not parse -- mid-write, or broken
+        -- changes nothing: the tray keeps watching what it was.
+
+        🚨 NOR DOES ONE THAT NAMES NO FOLDER (ADVERSARY 2026-09-22 C1). A DELETED
+        or zero-byte config.toml reads as the DEFAULTS -- no folders -- and every
+        watcher stopped while the pid file, the tooltip and the window all went
+        on saying *"watching"*; a due retry then fired a run over nothing. The
+        tray keeps what it had, and says so once.
+        ⚠ And a change of `recurse` alone is a change (C2): it was never applied.
+        """
+        stamp = _stamp(config_file)
+        if stamp == config_seen[0]:
+            return False
+        config_seen[0] = stamp
+        try:
+            fresh = _config.load()
+        except Exception:                     # noqa: BLE001
+            return False
+        wanted = [f for f in fresh.folders
+                  if not _paths.under_any(f, fresh.skip_folders)]
+        if not wanted:
+            once(u"config", u"hato: the settings name no folder to watch (%s) -- still "
+                            u"watching %s until one is added.\n"
+                 % (config_file, u", ".join(folders)))
+            return False
+        said.pop(u"config", None)
+        was = current[u"cfg"].recurse
+        current[u"cfg"] = fresh
+        if wanted == folders and fresh.recurse == was:
+            return False
+        for watcher in watchers:
+            watcher.stop()
+        del watchers[:]
+        for folder in wanted:
+            try:
+                watchers.append(watch_folder(folder))
+            except RuntimeError as exc:
+                complain(u"hato: %s\n" % exc)     # ⚠ one bad folder stops no other
+        added = [f for f in wanted if f not in folders]
+        folders[:] = wanted
+        if added or (fresh.recurse and not was):
+            # ⭐ The catch-up a newly watched folder -- or subfolder -- is owed,
+            # the same reason the start gets one: what is there raises no event.
+            timer.touch()
+        if icon_box:
+            icon_box[0].set_tooltip(tooltip())    # ⭐ C5: it said the old count
+        return True
+
+    #: folder -> when it was last reopened, while its watcher is down (C4)
+    down = {}
+
+    def revive():
+        u"""🚨 A WATCHER CAN DIE AND SAY NOTHING (ADVERSARY 2026-09-22 C4). Its
+        folder deleted, a network share dropped, access denied: the thread ends
+        with `.error` set, nobody read it, and nothing was ever watched there
+        again -- under a tooltip that still said *"watching"*. It is said once,
+        reopened every `REVIVE_SECONDS`, and a folder that comes back gets the
+        catch-up run it is owed.
+        """
+        now = time.monotonic()
+        for watcher in list(watchers):
+            alive = getattr(watcher, u"alive", None)
+            if alive is None:
+                continue                      # ⚠ one that cannot say is left alone
+            if alive():
+                if watcher.folder in down:
+                    del down[watcher.folder]
+                    said.pop((u"down", watcher.folder), None)
+                    complain(u"hato: watching %s again.\n" % watcher.folder)
+                    timer.touch()
+                continue
+            once((u"down", watcher.folder),
+                 u"hato: stopped watching %s (%s) -- trying again every %d seconds.\n"
+                 % (watcher.folder, getattr(watcher, u"error", None) or u"it went away",
+                    REVIVE_SECONDS))
+            if now - down.get(watcher.folder, float(u"-inf")) < REVIVE_SECONDS:
+                continue
+            down[watcher.folder] = now
+            watcher.stop()
+            try:
+                watchers[watchers.index(watcher)] = watch_folder(watcher.folder)
+            except (RuntimeError, ValueError):
+                pass
 
     # ⚠ AFTER the folders are known and the watchers are up -- a pid file
     # written before that would advertise a watcher that then exits, and the
@@ -712,19 +1113,41 @@ def main(argv=None):
     # ⚠ It costs what a scheduled run costs, and no more: an episode that
     # already has a Japanese subtitle is skipped before any request, and a show
     # already identified is free.
+    #
+    # ⭐ RUNBOOK 8h -- and every retry a run PROMISED is kept from here on. Made
+    # the instant before the catch-up run, which covers everything already due.
+    # ⛔ NOT through `go`: that clears the SETTLE countdown, and an arrival still
+    # settling keeps its own run.
+    retry = RetryClock(load=_DueFile(complain=complain), fire=lambda _dues: launch(),
+                       busy=run_in_flight)
+    # ⭐ Spawned with `--wait` like every run here (`spawn_run`), so a run already
+    # holding the lock as the tray starts delays this one instead of voiding it
+    # -- the dates just marked covered are then really kept (ADVERSARY R11).
     spawn_run(folders)
 
+    def tick():
+        reread()
+        revive()
+        timer.poll()
+        retry.poll()
+
+    def failed(exc):
+        u"""⛔ A tick that raises is said, and the tray goes on (ADVERSARY 2026-09-22
+        R7: one unreadable file killed it on every start)."""
+        once(u"tick", u"hato: the tray's tick failed (%s: %s) -- it keeps watching.\n"
+             % (type(exc).__name__, exc))
+
     icon = _tray.Tray(
-        u"hato -- watching %d folder%s" % (len(folders),
-                                           u"" if len(folders) == 1 else u"s"),
+        tooltip(),
         icon_path=_ico_path(),
         items=[(u"Open hato", open_window),
-               (u"Run now", lambda: spawn_run(folders)),
+               (u"Run now", launch),
                None,
                (u"Stop watching", None)],
         on_activate=open_window)
+    icon_box.append(icon)
     try:
-        icon.run(on_tick=timer.poll)
+        icon.run(on_tick=tick, on_error=failed)
     finally:
         for watcher in watchers:
             watcher.stop()
@@ -782,10 +1205,10 @@ def watching_pid():
     # 🚨 AND "NOT RUNNING" WAS NARROWER THAN IT LOOKED. `_process_start` folds
     # FOUR outcomes into one `None`: "gone", "exited", "denied", and a process
     # that IS running whose creation time could not be read. ⛔ The other half
-    # of this project's liveness logic, `runlock._process_alive`, takes the
-    # OPPOSITE view of the last two -- so the same pid read dead here and alive
-    # there. Two functions disagreeing about whether a process exists is how
-    # single-instance stops refusing and two watchers end up in the tray.
+    # of this project's liveness logic, the run lock's (`runlock._judge`), takes
+    # the OPPOSITE view of the last two -- so the same pid read dead here and
+    # alive there. Two functions disagreeing about whether a process exists is
+    # how single-instance stops refusing and two watchers end up in the tray.
     #
     # ⚠ Found by the adversarial pass, 2026-09-18 (F-B09): the earlier stamp
     # fix closed the INSTANCE of this bug, not the CLASS. A process we are not
@@ -799,6 +1222,29 @@ def watching_pid():
     return pid
 
 
+#: ⭐ What THIS tray does that an older one did not, written into its pid file.
+#: A 1.0.1 tray writes the same file and keeps NO retry promise, so a window
+#: that read "a tray is running" as "retrying in 14h" promised what nothing
+#: would do -- after every upgrade, and a running tray is not replaced by
+#: turning watching on (ADVERSARY 2026-09-22 V1).
+CAPABILITIES = (u"retries",)
+
+
+def watching_capabilities():
+    u"""-> frozenset of what the RUNNING watcher can do, or None when none runs.
+
+    ⚠ An older tray's file has no third field: an EMPTY set, which is the
+    answer -- it keeps no promise.
+    """
+    if watching_pid() is None:
+        return None
+    try:
+        raw = pid_file_path().read_text(encoding="utf-8").split()
+    except (OSError, ValueError):
+        return None
+    return frozenset(raw[2].split(u",")) if len(raw) > 2 else frozenset()
+
+
 def write_pid_file():
     u"""Record this process as the watcher. -> the path, or None."""
     from hato import runlock
@@ -807,7 +1253,7 @@ def write_pid_file():
         path.parent.mkdir(parents=True, exist_ok=True)
         stamp = runlock._process_start(os.getpid())
         temp = path.with_name(path.name + ".new-%d" % os.getpid())
-        temp.write_text(u"%d %s" % (os.getpid(), stamp or u"-"),
+        temp.write_text(u"%d %s %s" % (os.getpid(), stamp or u"-", u",".join(CAPABILITIES)),
                         encoding="utf-8")
         os.replace(str(temp), str(path))     # ⛔ never truncate-in-place
         return path
@@ -900,10 +1346,11 @@ def _ico_path():
         return None
 
 
-__all__ = ["BUFFER_BYTES", "SETTLE_SECONDS", "VIDEO_SUFFIXES",
-           "DirectoryWatcher", "SettleTimer", "clear_pid_file",
+__all__ = ["BUFFER_BYTES", "RETRY_COALESCE_SECONDS", "SETTLE_SECONDS",
+           "VIDEO_SUFFIXES", "DirectoryWatcher", "RetryClock", "SettleTimer",
+           "clear_pid_file", "wall_clock",
            "clear_pending", "gui_spawn_kwargs",
-           "is_interesting", "is_interesting_arrival",
+           "is_interesting", "is_interesting_arrival", "should_wake",
            "main", "no_console_kwargs", "open_window",
            "pending_path", "read_pending", "write_pending",
            "parse_notifications", "pid_file_path", "run_argv", "spawn_run",

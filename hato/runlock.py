@@ -53,6 +53,24 @@ from hato import paths
 GRACE_SECONDS = 10.0
 _ROUNDS = 5
 
+#: How long a release waits out a delete Windows refuses because another handle
+#: has the lock open -- a waiting run reads it on every poll (`release`).
+_UNLINK_TRIES = 40
+_UNLINK_PAUSE = 0.05
+
+#: A lock naming a process this user may not inspect is obeyed this long and no
+#: longer. ⚠ A hato run is the person's own process and can always be inspected,
+#: so "denied" means the pid now belongs to somebody else -- a SYSTEM service --
+#: or to an elevated hato; neither is a run a day old (ADVERSARY 2026-09-22 L2).
+DENIED_MAX_AGE = 24 * 3600.0
+
+#: How far before the machine's last start a lock must have been written for no
+#: run of this boot to own it. ⚠ Slack for the tick count's own imprecision.
+BOOT_SLACK = 60.0
+
+#: `lock_state` answers.
+FREE, HELD, UNUSABLE = "free", "held", "unusable"
+
 
 class LockUnusable(Exception):
     """The lock could not be created or read, and NOT because a run holds it.
@@ -147,21 +165,29 @@ else:
             return "running", None
 
 
+def _boot_time():
+    """-> when this machine last started, in epoch seconds, or None when unknown.
+
+    ⭐ A process started before the last boot cannot be running now, whatever
+    its pid is today -- the one liveness fact that needs no permission to read
+    (ADVERSARY 2026-09-22 L2: a dead run's pid, reused by a SYSTEM process this
+    user may not inspect, held the lock FOR EVER).
+    """
+    try:
+        if os.name == "nt":
+            _k32.GetTickCount64.argtypes = ()
+            _k32.GetTickCount64.restype = ctypes.c_ulonglong
+            return time.time() - _k32.GetTickCount64() / 1000.0
+        with open("/proc/uptime", encoding="utf-8") as fh:
+            return time.time() - float(fh.read().split()[0])
+    except Exception:                       # noqa: BLE001 -- unknown is an answer
+        return None
+
+
 def _process_start(pid):
     """-> an opaque creation stamp for a running `pid`, or None."""
     state, created = _query(pid)
     return created if state == "running" else None
-
-
-def _process_alive(pid, recorded_start):
-    """Is the run that wrote a lock (pid + creation stamp) still running?"""
-    state, created = _query(pid)
-    if state in ("gone", "exited"):
-        return False
-    if state == "running" and recorded_start is not None and created is not None \
-            and created != recorded_start:
-        return False                        # the pid now belongs to a different program
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +196,55 @@ def _process_alive(pid, recorded_start):
 
 def _valid_pid(value):
     return type(value) is int and 0 < value <= 0xFFFFFFFF
+
+
+def _judge(raw, written, now=None):
+    """What a lock file's bytes and mtime say. -> (HELD, LockHeld args) or (FREE, why)
+
+    ⭐ THE ONE JUDGEMENT. `acquire` takes over what this calls free, and the
+    tray's `lock_state` waits on what it calls held -- two opinions about one
+    file is how the tray skipped a run a person was waiting on.
+    """
+    now = time.time() if now is None else now
+    try:
+        info = json.loads(raw.decode("utf-8"))
+        pid, started = info.get("pid"), info.get("started")
+        recorded = info.get("proc_start")
+        if not _valid_pid(pid):
+            info = None
+    except (ValueError, AttributeError, RecursionError):
+        # ⚠ RecursionError is not a ValueError: deeply nested JSON escaped this
+        # and took the tray down from inside its tick (ADVERSARY 2026-09-22 L4).
+        info = None
+    stamp = datetime.fromtimestamp(written).strftime("%Y-%m-%d %H:%M:%S")
+    boot = _boot_time()
+    if boot is not None and written < boot - BOOT_SLACK:
+        return FREE, ("took over a run lock written %s, before this machine last started -- "
+                      "no run of this session can own it" % stamp)
+    age = now - written
+    if info is None:
+        # ⚠ A NEGATIVE AGE IS NOT "BEING WRITTEN". A lock stamped in the future
+        # (a clock set back, a file copied in) read as a run starting, for days
+        # (ADVERSARY 2026-09-22 L5).
+        if 0 <= age < GRACE_SECONDS:
+            return HELD, dict(detail="another hato run is starting right now "
+                                     "(its lock is still being written)")
+        return FREE, ("took over an unreadable run lock last written %s, left by a run that "
+                      "did not finish" % stamp)
+    state, created = _query(pid)
+    if state in ("gone", "exited"):
+        return FREE, ("took over the run lock left by pid %s (started %s), which is no longer "
+                      "running" % (pid, started or "at an unknown time"))
+    if state == "running" and type(recorded) is int and created is not None \
+            and created != recorded:
+        return FREE, ("took over the run lock left by pid %s (started %s), which is no longer "
+                      "running -- that pid now belongs to another program"
+                      % (pid, started or "at an unknown time"))
+    if state == "denied" and age > DENIED_MAX_AGE:
+        return FREE, ("took over the run lock left by pid %s (started %s): that pid now belongs "
+                      "to a process hato may not inspect, and the lock is over a day old"
+                      % (pid, started or "at an unknown time"))
+    return HELD, dict(pid=pid, started=started)
 
 
 class RunLock(object):
@@ -185,7 +260,27 @@ class RunLock(object):
     def __repr__(self):
         return "<hato RunLock %s%s>" % (self.path, " held" if self.held else "")
 
-    def acquire(self):
+    def acquire(self, wait=0.0, poll=2.0, sleep=time.sleep, clock=time.monotonic):
+        """Take the lock. -> self. Raises LockHeld / LockUnusable.
+
+        `wait` -- seconds to keep trying while another run holds it, then give up
+        with the LockHeld. ⭐ FOR A CALLER THAT CANNOT SEE THE GAP (ADVERSARY
+        2026-09-22 L1): the tray asks whether a run holds the lock and then
+        spawns one, and a frozen child needs one to two seconds to get here -- a
+        run starting in between met it, scanned nothing and exited 0, and the
+        arrival it was spawned for was never looked at. ⛔ A LockUnusable is
+        never waited on: nothing is going to finish and free it.
+        """
+        deadline = clock() + max(float(wait), 0.0)
+        while True:
+            try:
+                return self._acquire_once()
+            except LockHeld:
+                if clock() >= deadline:
+                    raise
+            sleep(poll)
+
+    def _acquire_once(self):
         if self.held:
             raise RuntimeError("this RunLock is already held")
         try:
@@ -243,29 +338,11 @@ class RunLock(object):
             # ⚠ A lock we cannot even READ is not a lock held by a run we can
             # name. Same sentence, same path, no traceback.
             raise LockUnusable(self.path, exc)
-        try:
-            info = json.loads(raw.decode("utf-8"))
-            pid, started = info.get("pid"), info.get("started")
-            recorded_start = info.get("proc_start")
-            if not _valid_pid(pid):
-                info = None
-        except (ValueError, AttributeError):
-            info = None
-
-        if info is None:
-            age = time.time() - written
-            if age < GRACE_SECONDS:
-                raise LockHeld(self.path, detail="another hato run is starting right now "
-                                                 "(its lock is still being written)")
-            why = ("took over an unreadable run lock last written %s, left by a run that "
-                   "did not finish" % datetime.fromtimestamp(written).strftime("%Y-%m-%d %H:%M:%S"))
-        else:
-            if _process_alive(pid, recorded_start if type(recorded_start) is int else None):
-                raise LockHeld(self.path, pid, started)
-            why = ("took over the run lock left by pid %s (started %s), which is no longer running"
-                   % (pid, started or "at an unknown time"))
+        verdict, said = _judge(raw, written)
+        if verdict == HELD:
+            raise LockHeld(self.path, **said)
         if self._move_aside(raw):
-            self.note = why
+            self.note = said
 
     def _move_aside(self, seen):
         """Rename the stale lock away, then check it IS the one judged stale.
@@ -303,7 +380,17 @@ class RunLock(object):
         return True
 
     def release(self):
-        """Remove the lock -- but only if it is still THIS run's."""
+        """Remove the lock -- but only if it is still THIS run's.
+
+        🚨 A REFUSED DELETE IS WAITED OUT, BRIEFLY (measured 2026-09-23, and the full
+        runner HUNG on it). On Windows a file another handle has open cannot be
+        deleted, and a run waiting on this lock opens it to read it on every poll --
+        so a release that met that read failed, SILENTLY, and left the lock in place.
+        A waiter in another process then took over a "dead" run's lock with a note
+        that was not true; one in the SAME process -- `test_endtoend`'s L1 check --
+        waited out the full three hours. Proven two-arm: a reader open during the
+        release left the file; none, and it went.
+        """
         if not self.held:
             return
         self.held = False
@@ -312,11 +399,16 @@ class RunLock(object):
                 info = json.loads(fh.read().decode("utf-8"))
         except (OSError, ValueError):
             return
-        if isinstance(info, dict) and info.get("token") == self._token:
+        if not (isinstance(info, dict) and info.get("token") == self._token):
+            return
+        for _ in range(_UNLINK_TRIES):
             try:
                 os.unlink(str(self.path))
+                return
+            except PermissionError:
+                time.sleep(_UNLINK_PAUSE)     # ⭐ a reader holds it for a moment
             except OSError:
-                pass    # the next run finds a dead pid and takes it over, with a note
+                return    # the next run finds a dead pid and takes it over, with a note
 
     def __enter__(self):
         return self.acquire()
@@ -324,3 +416,35 @@ class RunLock(object):
     def __exit__(self, *exc):
         self.release()
         return False
+
+
+def lock_state(path=None):
+    """What `acquire` would meet right now. -> FREE, HELD or UNUSABLE. ⛔ Takes nothing.
+
+    ⭐ For the tray (ADVERSARY-2026-09-18 S01): a run it spawned into a held lock
+    met it, scanned nothing and exited 0 into a pipe nobody reads -- so a video
+    that arrived during a run was dropped for ever. Asked BEFORE spawning, it
+    waits instead. ⚠ `_judge`, the SAME judgement `acquire` makes -- never a
+    second opinion about the same file.
+
+    🚨 THREE ANSWERS, NOT TWO. A directory where the lock goes, or a lock some
+    other program holds open with no sharing, is not a run -- and it is not
+    free either: `acquire` raises `LockUnusable` on it, into a stderr nobody
+    reads. Folded into "free", the tray spawned run after run that failed in
+    silence (ADVERSARY 2026-09-22 L3).
+    """
+    target = Path(path) if path is not None else paths.lock_path()
+    try:
+        with open(str(target), "rb") as fh:
+            raw = fh.read()
+        written = os.stat(str(target)).st_mtime
+    except FileNotFoundError:
+        return FREE
+    except OSError:
+        return UNUSABLE
+    return _judge(raw, written)[0]
+
+
+def run_in_flight(path=None):
+    """Is a live hato run holding the lock right now? -> bool. See `lock_state`."""
+    return lock_state(path) == HELD

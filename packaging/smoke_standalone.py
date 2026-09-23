@@ -40,7 +40,9 @@ guard out here.
 """
 from __future__ import print_function
 
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,10 +51,11 @@ import time
 
 #: ⚠ THE REPO ROOT, AND ONLY FOR ONE THING. Running this file directly puts
 #: `packaging/` on `sys.path`, not the repository -- so `import hato` fails.
-#: ⛔ Nothing here tests the source: the single import is
+#: ⛔ Nothing here tests the source. Two imports, both DATA:
 #: `watch.gui_spawn_kwargs`, a pure function returning a dict of Popen
 #: keywords, which is needed to start the FROZEN exe the way the tray starts
-#: it. The application under test is always the bundle.
+#: it; and `cli.COMMANDS`, the list of commands to ask the bundle for. The
+#: application under test is always the bundle.
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
@@ -70,6 +73,138 @@ CLI_NAME = "hato-cli" + EXE
 WATCH_NAME = "hato-watch" + EXE
 
 _results = []
+
+
+#: Top-level modules in the bundle that are not third-party packages.
+_OURS = ("hato", "tsubasa")
+
+
+def bundled_packages(bundle):
+    u"""-> {name: [top-level modules]} for every third-party package the FROZEN
+    build carries, read from its own archives -- never from what was declared.
+
+    ⚠ The PYZ inside each executable (PyInstaller's own reader, the build
+    environment's) plus the folders and extension modules in `_internal/`.
+    A module is named by the distribution that installs it, where the build
+    environment knows one, else by itself.
+    """
+    import importlib.metadata as metadata
+    from PyInstaller.archive.readers import CArchiveReader, ZlibArchiveReader
+    tops = set()
+    for exe in (CLI_NAME, GUI_NAME, WATCH_NAME):
+        path = os.path.join(bundle, exe)
+        if not os.path.isfile(path):
+            continue
+        archive = CArchiveReader(path)
+        for name, entry in archive.toc.items():
+            if not (name.lower().endswith(u".pyz") or (entry and entry[-1] == u"z")):
+                continue
+            handle, temp = tempfile.mkstemp(suffix=u".pyz")
+            try:
+                with os.fdopen(handle, "wb") as out:
+                    out.write(archive.extract(name))
+                tops.update(m.split(u".")[0] for m in ZlibArchiveReader(temp).toc)
+            finally:
+                os.remove(temp)
+    internal = os.path.join(bundle, u"_internal")
+    for entry in (os.listdir(internal) if os.path.isdir(internal) else ()):
+        if entry.endswith((u".dist-info", u".egg-info")):
+            continue
+        if os.path.isdir(os.path.join(internal, entry)) or entry.endswith(u".pyd"):
+            tops.add(entry.split(u".")[0])
+    owners = metadata.packages_distributions()
+    stdlib = set(getattr(sys, u"stdlib_module_names", ()))
+    out = {}
+    for top in sorted(tops):
+        if top in stdlib or top in _OURS or top.startswith((u"pyimod", u"pyi_", u"__")):
+            continue
+        names = owners.get(top) or ([] if top.startswith(u"_") else [top])
+        for name in names:
+            out.setdefault(name, []).append(top)
+    return out
+
+
+def _archived(exe, module):
+    u"""-> True when `module` is inside `exe`'s own PYZ. ⚠ The window imports
+    `hato.schedule` inside a function; this asks the bytes whether the freeze
+    followed it there, instead of trusting that it did."""
+    from PyInstaller.archive.readers import CArchiveReader, ZlibArchiveReader
+    try:
+        archive = CArchiveReader(exe)
+        for name, entry in archive.toc.items():
+            if not (name.lower().endswith(u".pyz") or (entry and entry[-1] == u"z")):
+                continue
+            handle, temp = tempfile.mkstemp(suffix=u".pyz")
+            try:
+                with os.fdopen(handle, "wb") as out:
+                    out.write(archive.extract(name))
+                if module in ZlibArchiveReader(temp).toc:
+                    return True
+            finally:
+                os.remove(temp)
+    except Exception:                                     # noqa: BLE001 -- a check reports
+        return False
+    return False
+
+
+def _daily_run(cli, watch, keyed, store, folder):
+    u"""⭐ D2 -- what Windows' daily task runs: `hato-watch.exe --scheduled`.
+
+    ⛔ NOT THROUGH TASK SCHEDULER: a smoke must not register anything on the
+    machine it runs on (the build proved the real trigger once, by hand, under a
+    task of its own). What only the BYTES can say is asked here -- that the frozen
+    watcher takes the flag, finds `hato-cli.exe` beside it, runs a scan over the
+    CONFIGURED folders and hands back its exit code, with the log as the record.
+    """
+    code, out, err = run([cli, "config", "--add-folder", folder], keyed, timeout=120)
+    if not check(u"daily run: a folder is configured", code == 0,
+                 u"exit %d%s" % (code, u"" if code == 0 else u" :: " + (err or out)[-160:])):
+        return
+    log = os.path.join(store, "hato.log")
+    before = _log_blocks(log)
+    code, out, err = run([watch, "--scheduled"], keyed, timeout=300)
+    after = _log_blocks(log)
+    check(u"daily run: the watcher runs one scan", code == 0 and after == before + 1,
+          u"exit %d, %d new log block(s)" % (code, after - before))
+
+
+def _log_blocks(path):
+    u"""-> how many RUN blocks the log holds. ⚠ A run's header is `=== hato
+    <timestamp> ===`; the watcher's own complaints are `=== hato watcher ...`,
+    and counting those would read a daily run that FAILED as one that scanned."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return len(re.findall(u"^=== hato \\d", handle.read(), re.M))
+    except OSError:
+        return 0
+
+
+def _normal(text):
+    return re.sub(u"[-_.]+", u"-", text.lower())
+
+
+def _notices(bundle):
+    u"""Every bundled third-party package is named in THIRD_PARTY_LICENSES.md.
+
+    ⚠ The copy that SHIPS -- beside the exes in the unpacked zip -- else, for a
+    smoke of `dist/`, the source tree's (and the detail says which).
+    """
+    shipped = os.path.join(bundle, u"THIRD_PARTY_LICENSES.md")
+    notice = shipped if os.path.isfile(shipped) else os.path.join(_ROOT, u"THIRD_PARTY_LICENSES.md")
+    try:
+        carried = bundled_packages(bundle)
+        with open(notice, encoding="utf-8") as handle:
+            text = _normal(handle.read())
+    except Exception as exc:                  # noqa: BLE001 -- a check reports
+        check(u"the notice names what the bytes carry", False,
+              u"could not read the payload (%s: %s)" % (type(exc).__name__, exc))
+        return
+    unnamed = sorted(name for name in carried if not re.search(
+        u"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(_normal(name)), text))
+    check(u"the notice names what the bytes carry", not unnamed and len(carried) > 10,
+          u"%d packages, all named (%s)" % (len(carried), u"shipped copy" if notice == shipped
+                                             else u"source copy")
+          if not unnamed else u"NOT NAMED: %s" % u", ".join(unnamed))
 
 
 def check(name, ok, detail=u""):
@@ -228,8 +363,11 @@ def _drive(bundle, cli, gui, watch, env, store):
     # PyInstaller cannot see any of them. Without the spec's derived
     # hiddenimports this is the check that goes red -- on every command at
     # once, while `--version` above stays perfectly green.
-    commands = ["config", "key", "doctor", "cache", "state", "blacklist",
-                "identify", "files", "align", "rank", "extract", "sync"]
+    # ⭐ READ FROM THE DISPATCH TABLE, as `hato.spec` reads it. A hand copy
+    # here went stale at 8c: `problems` -- the command the window calls to
+    # fill Needs you -- was frozen and never checked.
+    from hato.cli import COMMANDS
+    commands = sorted(COMMANDS)
     missing = []
     for name in commands:
         code, out, err = run([cli, name, "--help"], env, timeout=60)
@@ -326,6 +464,46 @@ def _drive(bundle, cli, gui, watch, env, store):
           u"exit %d%s" % (code, u"" if code == 0
                           else u" :: " + (err or out)[-160:]))
 
+    # ⭐ 5c · 🚨 D8 -- A NAME ONLY GUESSIT CAN READ. The released 1.0.1 died
+    # here, and nothing above could see it: tsubasa asks guessit about a
+    # Western-style name its own parsers cannot number, guessit imports
+    # babelfish, and babelfish's data files had not travelled -- so the WHOLE
+    # FOLDER failed to scan (*"none of the 1 folder(s) given could be
+    # scanned"*). Source mode was fine throughout; only the bytes show it.
+    western = os.path.join(store, "western-folder")
+    os.makedirs(western)
+    with open(os.path.join(western, "The.Show.Special.1080p.WEB.x264-GRP.mkv"),
+              "wb") as handle:
+        handle.write(b"\x1aE\xdf\xa3 a stub, never a real video")
+    code, out, err = run([cli, western, "--dry-run"], keyed, timeout=180)
+    blob = (out or u"") + (err or u"")
+    scanned = u"could not be scanned" not in blob and u"FileNotFoundError" not in blob
+    check(u"a name only guessit reads is scanned", scanned and u"Traceback" not in blob,
+          u"exit %d" % code if scanned else blob.strip()[-200:])
+    for parts in (("babelfish", "data", "iso-3166-1.txt"),
+                  ("guessit", "config", "options.json")):
+        where = os.path.join(root, *parts)
+        check(u"bundled: %s" % u"/".join(parts), os.path.isfile(where),
+              u"%d bytes" % os.path.getsize(where) if os.path.isfile(where)
+              else u"MISSING -- see hato.spec, D8")
+
+    # ⭐ 5d · 🚨 ADVERSARY 2026-09-22 D1 -- GUESSIT ITSELF, ASKED INSIDE THE BYTES.
+    # 5c cannot tell: tsubasa's wrapper swallows a guessit that imports and then
+    # raises, so a run's parse is the SAME with guessit or without it -- and a
+    # bundle built WITHOUT `collect_submodules` (babelfish's converters, loaded
+    # by name on first use) passed every check above. `hato doctor` asks the
+    # parser directly, with a name it must number; HATO_NO_NETWORK keeps it free.
+    code, out, err = run([cli, "doctor", "--json"], keyed, timeout=180)
+    lines = {}
+    try:
+        lines = dict((l["label"], l) for l in json.loads(out)["lines"])
+    except (ValueError, KeyError, TypeError):
+        pass
+    for parser in (u"guessit", u"anitopy"):
+        said = lines.get(parser) or {}
+        check(u"%s parses a name inside the frozen build" % parser, said.get("state") == "ok",
+              said.get("text") or u"no %s line :: %s" % (parser, (err or out)[-160:]))
+
     # -- 6 · the WINDOW is visible, not merely alive ----------------------
     window_mb = _window(gui, env)
 
@@ -334,6 +512,19 @@ def _drive(bundle, cli, gui, watch, env, store):
 
     # -- 8 · the tray watcher starts --------------------------------------
     _watcher(watch, env, store, window_mb)
+
+    # -- 9 · 🚨 ADVERSARY 2026-09-22 D2 -- WHAT THE BYTES CARRY IS WHAT THE
+    # NOTICE NAMES. The notice check in `tests/` reads `pyproject.toml`, which
+    # declares fifteen packages; the 1.0.1 download carried some thirty, PyYAML
+    # and an LGPL chardet among the unnamed. ⭐ Read from the frozen archives.
+    _notices(bundle)
+
+    # -- 10 · ⭐ RUNBOOK D2 -- THE DAILY RUN, AS TASK SCHEDULER STARTS IT ------
+    _daily_run(cli, watch, keyed, store, empty)
+    check(u"the window carries hato.schedule",
+          _archived(gui, u"hato.schedule"),
+          u"in %s's archive" % GUI_NAME if _archived(gui, u"hato.schedule")
+          else u"MISSING -- the switch would die on its first click")
 
     failed = [n for n, ok, _ in _results if not ok]
     print(u"\n  %d checks, %d failed\n" % (len(_results), len(failed)))

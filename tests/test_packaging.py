@@ -95,6 +95,19 @@ NOTICES = os.path.join(ROOT, u"THIRD_PARTY_LICENSES.md")
 #: one package, which is the tell that the mapping and not the code was wrong.
 PROVIDES = {u"tsubasa-sync": (u"tsubasa",), u"pyqt6": (u"PyQt6",)}
 
+#: What a declared requirement's EXTRA installs, where hato imports it itself.
+#: ONE entry: `tsubasa-sync[parsing]` is how anitopy and guessit reach every
+#: install, and `hato doctor` asks each of them to number a name -- the engine's
+#: wrapper swallows a parser that fails, so asking through it proves nothing
+#: (ADVERSARY 2026-09-22 D1). ⛔ A health check, not a second parser: nothing
+#: under hato/ reads a name with them. Recorded from the engine's own metadata,
+#: https://pypi.org/pypi/tsubasa-sync/0.1.6/json read 2026-09-22 --
+#: `anitopy>=2.1; extra == "parsing"`, `guessit>=3.4; extra == "parsing"`.
+#: ⚠ Never counted as UNUSED: they are the engine's, and hato not importing
+#: them would be no fault. Every key must be a declared requirement WITH that
+#: extra -- checked below, so this cannot outlive what it describes.
+EXTRA_PROVIDES = {(u"tsubasa-sync", u"parsing"): (u"anitopy", u"guessit")}
+
 #: Modules that are STDLIB from a later Python than the floor, so they are
 #: neither third-party nor declarable. Each must be imported behind a
 #: `sys.version_info` test -- asserted, not assumed.
@@ -228,11 +241,12 @@ def _hard_names(cfg):
 
 
 def _import_names_for(req):
-    u"""The top-level modules a requirement provides."""
+    u"""The top-level modules a requirement provides -- and its extras'."""
     canon = canonicalize_name(req.name)
-    if canon in PROVIDES:
-        return set(PROVIDES[canon])
-    return {canon.replace(u"-", u"_")}
+    names = set(PROVIDES[canon]) if canon in PROVIDES else {canon.replace(u"-", u"_")}
+    for extra in req.extras:
+        names |= set(EXTRA_PROVIDES.get((canon, extra), ()))
+    return names
 
 
 def _package_data_globs(cfg):
@@ -456,9 +470,10 @@ def test_every_third_party_import_under_hato_is_DECLARED():
 
     spec/01-scope.md's list was written before the code and is wrong three
     ways: it names `httpx` where the built client imports `requests`, and it
-    names `anitopy` and `guessit`, which nothing under hato/ imports at all
-    (LEDGER-HOT.md forbids a second filename parser here -- they arrive
-    through the engine's own `parsing` extra).
+    names `anitopy` and `guessit` as hato's own (LEDGER-HOT.md forbids a second
+    filename parser here -- they arrive through the engine's own `parsing`
+    extra). ⚠ Since 2026-09-22 `hato doctor` imports both, to ask each to
+    number a name (D1): declared through that extra, `EXTRA_PROVIDES`.
 
     Walked with ast, so a module name in a comment or a docstring is not
     mistaken for an import.
@@ -468,6 +483,12 @@ def test_every_third_party_import_under_hato_is_DECLARED():
     declared = set()
     for req, _where in reqs:
         declared |= _import_names_for(req)
+    for (dist, extra), _names in EXTRA_PROVIDES.items():
+        assert any(canonicalize_name(req.name) == dist and extra in req.extras
+                   for req, _where in reqs), (
+            u"EXTRA_PROVIDES names %s[%s], which pyproject.toml no longer declares -- "
+            u"the modules it lists are not installed by anything" % (dist, extra))
+    via_extras = set(n for names in EXTRA_PROVIDES.values() for n in names)
 
     sites = _third_party_sites()
     assert sites, (
@@ -487,7 +508,8 @@ def test_every_third_party_import_under_hato_is_DECLARED():
         % (u", ".join(missing), len(sites)))
 
     unused = sorted(name for name in declared
-                    if name not in sites and name not in STDLIB_FROM)
+                    if name not in sites and name not in STDLIB_FROM
+                    and name not in via_extras)
     assert not unused, (
         u"declared in pyproject.toml and imported nowhere under hato/: %s -- a "
         u"dependency the code does not use is as wrong as a missing one"

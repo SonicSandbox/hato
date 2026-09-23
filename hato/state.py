@@ -13,6 +13,8 @@ The state DB -- what hato has tried, and what jimaku did not have
     db.skip_reason(video_hash, lang, force=)    ⭐ the ONE question the fetch loop asks
     db.record_attempt(...)  db.record_not_found(...)  db.record_present(...)
     db.blacklist_add(...)   db.blacklist_remove(...)  db.blacklist_list()
+    db.candidates(video_hash, lang)             every file tried since the last success
+    db.problems(lang)                           ⭐ RUNBOOK 8c -- what still needs a person
     db.stats()                                  for `hato state --stat`
 
 ⭐ THE FILESYSTEM IS CANONICAL; THIS DB IS ADVISORY. It only ever PREVENTS work --
@@ -75,6 +77,10 @@ SOFT_DAYS = 1
 HARD_DAYS = 30
 SOFT = "soft"
 HARD = "hard"
+#: How long a PASSED retry date is still carried for the tray (RUNBOOK 8h,
+#: `retry_dues`). ⚠ A passed date nobody has looked at is still owed; past this,
+#: its video is one no run CAN look at -- moved, gone, or outside the folders.
+RETRY_OWED_DAYS = HARD_DAYS
 
 #: ⚠ BUMPED 1 -> 2 for the blacklist table. An older file is migrated by the
 #: CREATE ... IF NOT EXISTS pass in `_prepare`; a NEWER one is left untouched.
@@ -82,14 +88,36 @@ SCHEMA_VERSION = 2
 _BUSY_SECONDS = 5.0
 _NEXT_RETRIES_SHOWN = 10
 
+#: ⭐ RUNBOOK 8b. Columns ADDED to `attempts` without a version bump -- and the
+#: bump is what must not happen. Sonic's tray runs the released 1.0.1 exe against
+#: this very file: a `user_version` of 3 would make that reader answer *"written
+#: by a newer hato"*, fall back to an in-memory DB, and repeat every download on
+#: every run. An additive nullable column is invisible to it instead: every
+#: statement it makes names its columns, and its open-time check asks only that
+#: ITS columns exist. `_add_columns` puts them on an older file at open.
+#:
+#: `match_rate`      tsubasa's own fraction for a candidate that was timed, so a
+#:                   refusal remembered tomorrow still says how close it came
+#: `newest_offered`  RUNBOOK 8f: on a NOT_FOUND, the newest episode the entry
+#:                   offered, in the video's own numbering
+_ADDED_COLUMNS = (("match_rate", "REAL"), ("newest_offered", "INTEGER"))
+
 Attempt = namedtuple("Attempt", (
     "id video_hash video_path lang jimaku_entry jimaku_filename jimaku_size "
     "jimaku_last_modified subtitle_hash outcome reason output_path kept_path "
-    "negative_kind retry_after attempted_at"))
-Negative = namedtuple("Negative", "kind retry_after reason")
+    "negative_kind retry_after attempted_at match_rate newest_offered"))
+#: ⚠ `newest_offered` (RUNBOOK 8f) rides along: a run inside the retry window
+#: skips the video, and its row must still say *"probably not out yet"*.
+Negative = namedtuple("Negative", "kind retry_after reason newest_offered",
+                      defaults=(None,))
 Blacklisted = namedtuple("Blacklisted", "video_hash video_path added_at note")
 #: What `skip_reason` answers with. `kind` is "blacklist" or "negative".
-Skip = namedtuple("Skip", "kind reason retry_after")
+Skip = namedtuple("Skip", "kind reason retry_after newest_offered", defaults=(None,))
+#: ⭐ RUNBOOK 8c. One (video x language) still waiting on something: its latest
+#: row -- a REFUSED, an ERROR or a NOT_FOUND -- and every candidate it has tried
+#: since it last succeeded. ⛔ The DB never looks at the disk; `hato/problems.py`
+#: decides which of these are still true.
+Problem = namedtuple("Problem", "video_hash video_path lang latest candidates")
 
 _PRESENT_COLUMNS = ("video_hash", "lang", "video_path", "recorded_at")
 _BLACKLIST_COLUMNS = Blacklisted._fields
@@ -121,6 +149,8 @@ _SCHEMA = (
             CHECK (negative_kind IS NULL OR negative_kind IN ('soft', 'hard')),
         retry_after           TEXT,
         attempted_at          TEXT    NOT NULL,
+        match_rate            REAL,
+        newest_offered        INTEGER,
         CHECK (outcome <> 'REFUSED' OR (jimaku_entry IS NOT NULL
                AND jimaku_filename IS NOT NULL AND length(jimaku_filename) > 0)),
         CHECK ((outcome = 'NOT_FOUND') = (negative_kind IS NOT NULL AND retry_after IS NOT NULL))
@@ -245,6 +275,30 @@ def _last_modified(value):
                      "verbatim, got %r" % (value,))
 
 
+def _rate(value):
+    """tsubasa's match rate, a fraction 0..1, or None when nothing was timed.
+
+    ⚠ `0.0` is a real answer -- *it matched nothing* -- and must stay distinct
+    from None. ⚠ bool is an int, and True is not a 100% match.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("match_rate must be tsubasa's fraction 0..1, got %r" % (value,))
+    rate = float(value)
+    if not 0.0 <= rate <= 1.0:          # ⚠ NaN fails this too
+        raise ValueError("match_rate must be tsubasa's fraction 0..1, got %r" % (value,))
+    return rate
+
+
+def _newest(value):
+    if value is None:
+        return None
+    if type(value) is not int or value < 0:     # ⚠ bool is an int
+        raise ValueError("newest_offered must be a whole episode number, got %r" % (value,))
+    return value
+
+
 def _blacklisted(row):
     values = list(row)
     values[_BLACKLIST_COLUMNS.index("added_at")] = _moment(row[_BLACKLIST_COLUMNS.index("added_at")])
@@ -265,13 +319,21 @@ def _attempt(row):
 class StateDB(object):
     """The only way into the state DB. Usable as a context manager."""
 
-    def __init__(self, path=None, now=None, soft_days=None, hard_days=None):
+    def __init__(self, path=None, now=None, soft_days=None, hard_days=None, repair=True):
         """`soft_days` / `hard_days` override the negative-cache windows.
 
         ⭐ Kept configurable (RUNBOOK 1c) so the window's Retry and a future
         config key change one number in one place -- ⛔ never a literal at a call
         site, which is how two callers come to disagree about when a retry is due.
+
+        `repair=False` -- ⭐ for a VIEW (`hato problems`, a dry `--clear`). A corrupt
+        file is LEFT EXACTLY AS IT IS for the next run to repair, and this object
+        answers from an empty in-memory DB with `persistent` False -- so the view
+        can say its answer is not the store's. ⛔ A read-only command must never
+        be the thing that moves a person's database aside (ADVERSARY 2026-09-22
+        F3a/F3b: `hato problems` did, at window startup, with no run lock).
         """
+        self._repair = bool(repair)
         self.path = Path(path) if path is not None else paths.state_db_path()
         self._now = now if now is not None else _utcnow
         self.retry_days = {SOFT: _days("soft_days", soft_days, SOFT_DAYS),
@@ -349,6 +411,7 @@ class StateDB(object):
                 except sqlite3.Error:
                     pass
                 raise
+        self._add_columns(conn)
         for table, wanted in (("attempts", Attempt._fields), ("present", _PRESENT_COLUMNS),
                               ("blacklist", _BLACKLIST_COLUMNS)):
             have = set(row[1] for row in conn.execute("PRAGMA table_info(%s)" % table))
@@ -356,7 +419,48 @@ class StateDB(object):
             if missing:
                 raise _Corrupt("table %s has no %s" % (table, ", ".join(missing)))
 
+    @staticmethod
+    def _add_columns(conn):
+        """Put `_ADDED_COLUMNS` on a file that predates them. Rows are kept.
+
+        ⚠ RE-READ INSIDE `BEGIN IMMEDIATE`, and that is the whole guard. The tray's
+        run and the window's `hato problems` can open an old file at the same
+        moment: both see the column missing, and the second ALTER raises
+        *"duplicate column name"* -- an OperationalError, which `_connect` would
+        turn into an in-memory DB for that run. Taking the write lock first and
+        asking again makes the second opener find the column already there.
+        """
+        def missing():
+            have = set(row[1] for row in conn.execute("PRAGMA table_info(attempts)"))
+            return [(name, kind) for name, kind in _ADDED_COLUMNS if name not in have]
+
+        # ⚠ NO `attempts` TABLE AT ALL is not a file that predates two columns -- it
+        # is a broken one, and the check after this says so and it is set aside.
+        # ALTERing it raised "no such table", an OperationalError, which kept every
+        # later run in MEMORY instead (ADVERSARY 2026-09-22 F6).
+        if not list(conn.execute("PRAGMA table_info(attempts)")):
+            return
+        if not missing():
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for name, kind in missing():
+                conn.execute("ALTER TABLE attempts ADD COLUMN %s %s" % (name, kind))
+            conn.execute("COMMIT")
+        except BaseException:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+
     def _set_aside_and_start_fresh(self, problem):
+        if not self._repair:
+            # ⭐ A VIEW DOES NOT REPAIR. The file stays byte for byte as it was.
+            return self._in_memory(
+                "The state DB at %s is unreadable (%s). It was left exactly as it is for "
+                "the next run to repair, so nothing it holds can be shown."
+                % (self.path, problem))
         try:
             aside = self._move_aside()
         except OSError as exc:
@@ -446,7 +550,7 @@ class StateDB(object):
 
     def record_attempt(self, *, video_hash, video_path, lang, jimaku_entry, jimaku_filename,
                        jimaku_size, jimaku_last_modified, subtitle_hash, outcome, reason="",
-                       output_path=None, kept_path=None):
+                       output_path=None, kept_path=None, match_rate=None):
         """Record one candidate tried against one video. -> the row id.
 
         Refused loudly, with ValueError: an unknown outcome · a NOT_FOUND (use
@@ -454,6 +558,11 @@ class StateDB(object):
         non-CONFIDENT row with no reason · a CONFIDENT row with no output_path
         (spec/03-permissions.md: CONFIDENT is not WRITTEN) · a REFUSED row that
         does not name its candidate.
+
+        ⭐ `subtitle_hash` + `match_rate` (RUNBOOK 8b) are what let a refusal be
+        OFFERED again later: the hash finds the downloaded file in the working
+        cache, the rate says how close it came. Both were missing -- the column
+        02-data-model.md specifies had been recorded as None since 1b.
         """
         if outcome not in OUTCOMES:
             raise ValueError("unknown outcome %r -- one of %s" % (outcome, ", ".join(OUTCOMES)))
@@ -488,15 +597,21 @@ class StateDB(object):
             "negative_kind": None,
             "retry_after": None,
             "attempted_at": _stamp(self._clock()),
+            "match_rate": _rate(match_rate),
+            "newest_offered": None,
         })
 
-    def record_not_found(self, *, video_hash, video_path, lang, kind, reason, jimaku_entry=None):
+    def record_not_found(self, *, video_hash, video_path, lang, kind, reason, jimaku_entry=None,
+                         newest_offered=None):
         """Record that jimaku has nothing for this video. -> when to ask again.
 
         kind "soft": the entry exists, with no file for this episode -- 1 day, so
         a just-aired episode is looked at again tomorrow. kind "hard": no entry
         matched at all -- 30 days. A soft negative names its entry and a hard one
         cannot, so the two can never be swapped.
+
+        `newest_offered` (RUNBOOK 8f): the newest episode the entry offered, in the
+        video's own numbering, or None when no release could be placed.
         """
         if kind not in self.retry_days:
             raise ValueError("unknown negative kind %r -- 'soft' (the entry exists, no file for "
@@ -529,8 +644,35 @@ class StateDB(object):
             "negative_kind": kind,
             "retry_after": _stamp(retry_after),
             "attempted_at": _stamp(now),
+            "match_rate": None,
+            "newest_offered": _newest(newest_offered),
         })
         return retry_after
+
+    def note_path(self, video_hash, video_path):
+        """The video is at `video_path` now. -> True when a row was corrected.
+
+        ⭐ RUNBOOK 8e -- THE ADVISORY PATH, KEPT TRUE. `video_path` on a row is the
+        last place it was SEEN, and a skip records nothing -- so a video moved
+        while it waited for a retry kept its old path here for ever. `problems()`
+        is filtered by the disk, the old path is gone, and the one problem 4a
+        says must never disappear did, quietly. ⚠ The latest row only (the one
+        `problems()` reads), and nothing is written when it already agrees: a
+        quiet re-run still writes nothing. ⛔ Only ever the advisory column --
+        like `blacklist_add` correcting a moved file's path, it causes no work.
+        """
+        key = {"video_hash": _required("video_hash", video_hash),
+               "video_path": _optional(video_path)}
+        if key["video_path"] is None:
+            return False
+        # ⚠ The latest row PER LANGUAGE: `problems(lang)` reads one per language,
+        # and updating only the newest row overall left a second language's
+        # problem naming the place the video left (ADVERSARY 2026-09-22 S2).
+        cursor = self._run(lambda conn: conn.execute(
+            "UPDATE attempts SET video_path = :video_path WHERE id IN ("
+            "  SELECT max(id) FROM attempts WHERE video_hash = :video_hash GROUP BY lang) "
+            "AND video_path IS NOT :video_path", key))
+        return cursor.rowcount > 0
 
     def record_present(self, video_hash, video_path, lang):
         """The backfill: the subtitle was already on disk and the DB knew nothing.
@@ -619,7 +761,7 @@ class StateDB(object):
         negative = self.negative(video_hash, lang)
         if negative is None:
             return None
-        return Skip("negative", negative.reason, negative.retry_after)
+        return Skip("negative", negative.reason, negative.retry_after, negative.newest_offered)
 
     def _latest(self, video_hash, lang, only=""):
         sql = ("SELECT %s FROM attempts WHERE video_hash = :video_hash AND lang = :lang %s "
@@ -669,7 +811,132 @@ class StateDB(object):
             return None
         if self._clock() >= row.retry_after:
             return None
-        return Negative(row.negative_kind, row.retry_after, row.reason)
+        return Negative(row.negative_kind, row.retry_after, row.reason, row.newest_offered)
+
+    def candidates(self, video_hash, lang):
+        """-> [Attempt], every candidate tried for (video x language) since its
+        last success, newest first, one row per candidate (its latest verdict).
+
+        ⭐ RUNBOOK 8d. A refusal used to be forgotten by the very next run: the
+        negative skip carried a reason and a date and no candidates, so the pick
+        a person was offered yesterday was gone today. These rows are what lets
+        a later run -- and `problems()` -- offer the same files again.
+
+        A candidate is `(entry, filename, size, last_modified)`, the identity
+        `refused()` uses; a re-upload is a new one. ⚠ ERROR rows count: a download
+        that failed or a write that did not land is still something that was tried.
+        """
+        key = {"video_hash": _required("video_hash", video_hash), "lang": _lang(lang)}
+        sql = ("SELECT %s FROM attempts WHERE video_hash = :video_hash AND lang = :lang "
+               "AND jimaku_filename IS NOT NULL AND outcome IN ('REFUSED', 'ERROR') "
+               "AND id > coalesce((SELECT max(id) FROM attempts WHERE video_hash = :video_hash "
+               "AND lang = :lang AND outcome = 'CONFIDENT'), 0) "
+               "ORDER BY id DESC" % _SELECT)
+        rows = self._run(lambda conn: conn.execute(sql, key).fetchall())
+        seen, out = set(), []
+        for row in (_attempt(r) for r in rows):
+            ident = (row.jimaku_entry, row.jimaku_filename, row.jimaku_size,
+                     row.jimaku_last_modified)
+            if ident not in seen:
+                seen.add(ident)
+                out.append(row)
+        return out
+
+    def problems(self, lang):
+        """-> [Problem], every video whose latest row for `lang` is not a success.
+
+        ⭐ RUNBOOK 8c -- *"a problem episode must never disappear from Needs you."*
+        The window painted Needs you from `last-run.json`, which is a SNAPSHOT of
+        one run by design, so a refused episode vanished the moment a run looked
+        somewhere else. This is the store that outlives a run.
+
+        ⛔ Still advisory, and it never looks at the disk: a problem whose subtitle
+        has since appeared is still listed here. `hato/problems.py` asks the
+        filesystem, which is canonical. ⛔ A blacklisted video is left out: the
+        person already decided about it.
+        """
+        key = {"lang": _lang(lang)}
+        sql = ("SELECT %s FROM attempts AS a "
+               "JOIN (SELECT max(id) AS id FROM attempts WHERE lang = :lang "
+               "      GROUP BY video_hash) AS latest ON latest.id = a.id "
+               "WHERE a.outcome <> 'CONFIDENT' "
+               "  AND a.video_hash NOT IN (SELECT video_hash FROM blacklist) "
+               "ORDER BY a.id" % ", ".join("a." + f for f in Attempt._fields))
+        rows = self._run(lambda conn: conn.execute(sql, key).fetchall())
+        out = []
+        for latest in (_attempt(r) for r in rows):
+            out.append(Problem(latest.video_hash, latest.video_path, latest.lang, latest,
+                               self.candidates(latest.video_hash, latest.lang)))
+        return out
+
+    def retry_dues(self, lang):
+        """-> [datetime], every distinct date a retry for `lang` is promised and not
+        yet kept, soonest first.
+
+        ⭐ RUNBOOK 8h. The gate honours a negative until its `retry_after`, so the
+        one resident process wakes for these dates -- nothing else runs hato on its
+        own (D2). The latest row per video decides, as the gate's does. ⛔ A
+        blacklisted video's date is left out: nothing will be tried for it, so
+        waking would be a run for nobody.
+
+        🚨 A DATE THAT HAS PASSED IS STILL OWED while its negative is the latest
+        row: no run has looked at that video since (one that does records a new
+        row). Only dates still AHEAD used to be listed -- so a run that held the
+        lock across a date rewrote the file WITHOUT it, the tray, correctly waiting
+        for that lock, then had nothing left to keep, and the row said *"retrying
+        now"* for ever (ADVERSARY 2026-09-22 R1). ⚠ A passed date does not make the
+        tray run twice: it fires once per date, and one already passed when it
+        starts belongs to its catch-up run (`watch.RetryClock`).
+        """
+        now = self._clock()
+        key = {"lang": _lang(lang),
+               "since": _stamp(now - timedelta(days=RETRY_OWED_DAYS))}
+        sql = ("SELECT DISTINCT a.retry_after FROM attempts AS a "
+               "JOIN (SELECT max(id) AS id FROM attempts WHERE lang = :lang "
+               "      GROUP BY video_hash) AS latest ON latest.id = a.id "
+               "WHERE a.outcome = 'NOT_FOUND' AND a.retry_after > :since "
+               "  AND a.video_hash NOT IN (SELECT video_hash FROM blacklist) "
+               "ORDER BY a.retry_after")
+        rows = self._run(lambda conn: conn.execute(sql, key).fetchall())
+        return [_moment(r[0]) for r in rows if r[0]]
+
+    def clear(self, blacklist=False, dry_run=True):
+        """Forget what hato remembers. -> {"tables": {name: rows}, "videos": n}
+
+        ⭐ RUNBOOK 8g. ⛔ DRY BY DEFAULT: counted, and nothing deleted, unless
+        the caller says otherwise (`doctrine/robustness` §destructive).
+
+        ⭐ SCOPED BY SHAPE, NOT BY A LIST: every table `sqlite_master` says the
+        file holds -- the whole DB is advisory, so a table added next year is
+        memory too -- except `blacklist`, the person's own instruction, which
+        goes only when `blacklist` is True. ⛔ Counted and deleted inside ONE
+        write transaction, so the counts are exactly what went.
+        """
+        def op(conn):
+            # ⚠ A dry count is a READ transaction: a write lock taken only to
+            # count would stall a run recording its rows at the same moment.
+            conn.execute("BEGIN" if dry_run else "BEGIN IMMEDIATE")
+            try:
+                names = [r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+                chosen = [n for n in names if blacklist or n != "blacklist"]
+                counts = dict((n, conn.execute('SELECT count(*) FROM "%s"' % n).fetchone()[0])
+                              for n in chosen)
+                videos = (conn.execute("SELECT count(DISTINCT video_hash) FROM attempts")
+                          .fetchone()[0] if "attempts" in chosen else 0)
+                if not dry_run:
+                    for n in chosen:
+                        conn.execute('DELETE FROM "%s"' % n)
+                conn.execute("ROLLBACK" if dry_run else "COMMIT")
+            except BaseException:
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
+            return {"tables": counts, "videos": videos}
+        return self._run(op)
 
     def stats(self):
         """-> row counts by outcome, the backfilled count, and the next retry dates."""

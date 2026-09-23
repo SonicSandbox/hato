@@ -124,11 +124,25 @@ class Candidate(object):
                                                         self.offset, self.coverage)
 
 
+#: ⭐ A part never fitted against any videos (`_one_partition_each` found it fits
+#: two seasons equally). Not None: None is a real partition, the videos that
+#: read no season.
+UNFITTED = object()
+
+#: The reason a video with no readable episode number is refused. ⭐ ONE copy:
+#: the pipeline records it as that video's soft negative, and `hato problems`
+#: recognises it by EQUALITY -- hato's own sentence, never engine prose -- so it
+#: files the video with "had a problem", as the run does, instead of under "not
+#: on jimaku yet" (ADVERSARY 2026-09-22 F20).
+NO_EPISODE = (u"No episode number was read from the video; a film goes through the "
+              u"movie path, and nothing else is guessed.")
+
+
 class GroupSummary(object):
     """One part of one release, as it was placed -- the rows of `--explain`."""
 
     __slots__ = ("group", "season", "episodes", "files", "offsets", "quality",
-                 "coverage", "how", "against")
+                 "coverage", "how", "against", "partition")
 
     def __init__(self, group, season, episodes, files, against=None):
         self.group = group
@@ -138,6 +152,9 @@ class GroupSummary(object):
         #: which videos it was fitted against, when the folder reads several
         #: seasons ("S1 videos", "absolute-numbered videos"); None when it reads one
         self.against = against
+        #: ⭐ RUNBOOK 8f -- the same fact as a KEY: the video season it was fitted
+        #: against, or UNFITTED. `against` is words for a person.
+        self.partition = UNFITTED
         self.offsets = ()               # () when it could not be placed
         self.quality = None
         self.coverage = 0.0
@@ -345,8 +362,7 @@ def _align_episodes(result, files, by_name):
             special_videos.append(video)
             continue
         if video.episode is None:
-            result.refused[path] = (u"No episode number was read from the video; a film goes "
-                                    u"through the movie path, and nothing else is guessed.")
+            result.refused[path] = NO_EPISODE
             continue
         if not _is_whole(video.episode):
             half_videos.append(video)
@@ -447,6 +463,7 @@ def _fit_partition(result, parts, season, by_episode, several):
         summary = GroupSummary(part.group, part.season, tuple(sorted(part.episodes)), len(part.files),
                                None if not several else (u"absolute-numbered videos" if season is None
                                                          else u"S%d videos" % season))
+        summary.partition = season
         if not full:
             result.notes.append(
                 u"%s (%s): %d episodes against %d videos is past the full-fit budget, so only the "
@@ -741,6 +758,131 @@ def _finish(result, partitions, refused_files, not_subtitles, skipped, unnumbere
     if unnumbered:
         result.notes.append(u"%d file(s) carry no episode number and are offered to no video: %s"
                             % (len(unnumbered), u"; ".join(unnumbered)))
+
+
+# ---------------------------------------------------------------------------
+# ⭐ RUNBOOK 8f -- the newest episode on offer, for *probably not out yet*
+# ---------------------------------------------------------------------------
+
+def newest_offered(alignment, video):
+    """The newest episode jimaku's releases offer, in `video`'s own numbering. -> int or None
+
+    ⭐ RUNBOOK 8f (HANDOFF 4c): an episode exactly ONE past the newest on offer
+    is probably not out yet, and the window says so instead of presenting what
+    was tried as a pick.
+
+    🚨 NOT `max(episodes) - offset` OF WHATEVER THE FIT CHOSE, and the reason
+    is measured. The fit takes the offset under which MOST videos land, so a
+    folder that holds the episode a release does not have yet SLIDES it: a
+    release of S04E01-22 against videos 21-23 lands three videos at -1 and
+    only two at 0. Sonic's own Iruma-kun S4 23 was offered E22, E20 and E03 on
+    2026-09-20 -- the fit's anchors -- and timing refused all three, correctly.
+    Read off that placement, the release "offers 23", and the one case this
+    exists for could never be said. So a part counts only where its numbering
+    is KNOWN:
+
+      the video's own count        its own number. ⛔ A release counted the way
+      (`_one_count`: its season,   the video is cannot number an episode LOWER
+      absolute against absolute,   than it is, so a negative placement is the
+      or absolute against          slide; a single positive one is a release
+      season 1)                    numbering on through the season, and is
+                                   honoured
+      the absolute count against   its newest, moved by that offset
+      a LATER season, placed by a
+      RANGE fit (`range` /
+      `overlap`) at ONE offset
+      that can be the gap between
+      them (`_across_the_gap`)
+      anything else, or placed     nothing -- no number is proved
+      nowhere
+
+    ⚠ Absolute against absolute is the SAME count (ADVERSARY 2026-09-22 F4b:
+    read as another one, a slid absolute release "offered" an episode no file
+    has) -- and so is absolute against season 1, which is where the absolute
+    count STARTS: Sonic's Tsuihou 12 and Tetsunabe 09 are a first season's
+    release against a folder numbered without one. A literal or position
+    placement of another count is a guess (F4d: one video, a whole-show
+    release, and a made-up newest episode of 87 in a season of 22).
+
+    🚨 AND BETWEEN THE ABSOLUTE COUNT AND A LATER SEASON THE OFFSET *IS* THE
+    EPISODES BEFORE THAT SEASON -- never 0, and one way only. A `range` fit at
+    0, or the wrong way, is the numbers coinciding: a whole-show release 1-88
+    covers a season-4 folder's 21-23 at its literal number, and reading that
+    said the newest on offer is 88 -- which hid *probably not out yet* for an
+    episode no release had.
+
+    🚨 AND THE CLAIM IS A POSITIVE ONE, so evidence against it wins. An
+    ABSOLUTE release fitted against a season, spanning just MORE episodes than
+    the newest proved -- 23 against 22 -- is most likely that season in the
+    whole-show count, one episode further on: it may hold this one, and nothing
+    is said (F4a: such a release, placed by a guess, DID carry E23, and the
+    window said *probably not out yet* over it). ⚠ Its guess cannot say so by
+    itself: on the real capture the absolute releases are guessed too, and one
+    of their guesses puts the season's LAST file on the late video -- the same
+    slide as a seasonal release's. ⛔ Beyond `SPAN_SLACK` it is a whole-show
+    release, and its length says nothing about this season.
+
+    ⚠ Only parts fitted against the VIDEO'S OWN partition: in a folder holding
+    two seasons, season 1's releases say nothing about season 2's episodes.
+    ⛔ A derivation, never stored by this module; a film has no next episode.
+    """
+    episode = getattr(video, "episode", None)
+    if alignment.movie or episode is None or isinstance(episode, bool):
+        return None
+    season = getattr(video, "season", None)
+    mine = [s for s in alignment.groups
+            if s.partition is not UNFITTED and s.partition == season and s.episodes]
+    newest = None
+    for summary in mine:
+        if not summary.offsets:
+            continue                                # placed nowhere counts for nothing
+        top = max(summary.episodes)
+        if _one_count(summary.season, season):
+            positive = [d for d in summary.offsets if d > 0]
+            if len(positive) == 1 and len(summary.offsets) == 1:
+                value = top - positive[0]           # numbered on through the season
+            elif positive:
+                continue                            # a guess among upward shifts
+            else:
+                value = top                         # 0, or the slide: its own number
+        elif (len(summary.offsets) == 1 and summary.quality in PROVEN
+              and _across_the_gap(summary.season, summary.offsets[0])):
+            value = top - summary.offsets[0]
+        else:
+            continue                                # a guess proves no number (F4d)
+        newest = value if newest is None else max(newest, value)
+    if newest is not None and not _one_count(None, season):
+        for summary in mine:
+            span = max(summary.episodes) - min(summary.episodes) + 1
+            if summary.season is None and newest < span <= newest + SPAN_SLACK:
+                return None                         # it may hold this episode (F4a)
+    return int(newest) if newest is not None else None
+
+
+def _one_count(release, video):
+    """True when two season readings number episodes the SAME way: one season,
+    or the absolute count against season 1 -- the absolute count starts there,
+    so S01E12 and episode 12 are one episode (`newest_offered`)."""
+    return release == video or (release is None and video == 1) or (release == 1 and video is None)
+
+
+def _across_the_gap(release, offset):
+    """True when `offset` can be the gap between the absolute count and a LATER
+    season: the episodes before that season, so never 0, and one way only. An
+    absolute release numbers the season HIGHER; the season's own release numbers
+    the absolute count LOWER. Anything else is the numbers coinciding."""
+    return offset > 0 if release is None else offset < 0
+
+
+#: ⭐ RUNBOOK 8f -- the placements that PROVE a release's numbering: a range of
+#: its episodes landed on the folder's at one offset. Everything below them in
+#: `QUALITIES` is a hypothesis for the timing check, and proves no number.
+PROVEN = ("range", "overlap")
+
+#: How much LONGER than the newest proved an absolute release may be and still
+#: read as the same season further on (`newest_offered`, F4a). ⚠ A release is
+#: a few episodes ahead at most; past this it counts the whole show.
+SPAN_SLACK = 3
 
 
 # ---------------------------------------------------------------------------

@@ -171,14 +171,25 @@ are in the tree. Read from installed metadata on 2026-09-17:
 
 | Via | Packages |
 | --- | --- |
-| `requests` | certifi (MPL-2.0) · urllib3 (MIT) · charset-normalizer (MIT) · idna (BSD-3-Clause) |
-| `guessit` | rebulk (MIT) · babelfish (BSD-3-Clause) · python-dateutil (dual BSD / Apache-2.0) |
-| `py7zr` | several LGPL-2.1-or-later components — pyppmd, pybcj, inflate64, multivolumefile — plus texttable (MIT), brotli (MIT), psutil (BSD-3-Clause), pycryptodomex (BSD / public domain) |
+| `requests` | certifi (MPL-2.0) · urllib3 (MIT) · charset-normalizer (MIT) · idna (BSD-3-Clause) · **chardet (LGPL, v2 or later)** · PySocks (BSD) |
+| `guessit` | rebulk (MIT) · babelfish (BSD-3-Clause) · python-dateutil (dual BSD / Apache-2.0) · six (MIT) · importlib_metadata (Apache-2.0) · zipp (MIT) · packaging (dual Apache-2.0 / BSD) |
+| `py7zr` | several LGPL-2.1-or-later components — pyppmd, pybcj, inflate64, multivolumefile — plus texttable (MIT), brotli (MIT), psutil (BSD-3-Clause), pycryptodomex (BSD / public domain), backports.zstd (PSF-2.0) · and through psutil: pyreadline3 (BSD), setuptools (MIT) |
 | `tsubasa-sync` | numpy (BSD-3-Clause) |
+| `PyQt6` | PyQt6-sip (BSD-2-Clause) |
+| the build's own imports | PyYAML (MIT) · cffi (MIT) with pycparser (BSD) · platformdirs (MIT) · typing_extensions (PSF-2.0) · backports.tarfile (MIT) |
+
+⚠ **The second half of this table was MISSING until 2026-09-22** — the 1.0.1
+download carried every package above and this file named only the first
+fifteen (ADVERSARY 2026-09-22 D2). The list is now read from the FROZEN BUILD
+itself — what its archives actually hold — not from what `pyproject.toml`
+declares; see below.
 
 ## Verifying this file
 
 `tests/test_packaging.py` derives the list of names that must appear here
 **from `pyproject.toml`**, so adding a dependency without its notice fails the
-suite. It cannot check that a licence *identifier* above is still correct —
-that needs reading the project, which is what the note at the top says.
+suite. ⭐ And `packaging/smoke_standalone.py` reads the FROZEN BUILD's own
+archives — every third-party top-level module it carries — and fails the
+release when one is not named here. It cannot check that a licence
+*identifier* above is still correct — that needs reading the project, which
+is what the note at the top says.

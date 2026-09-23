@@ -100,9 +100,18 @@ def ffmpeg():
 
     Three places, in order, and the ORDER is the whole design:
 
+      0. `HATO_TEST_FFMPEG`, when a caller names one -- and ⛔ RAISE if it is
+         not there: a tool asked for by name is never skipped past
       1. the path `hato.config.json` names (`media.ffmpegRelative`)
       2. ⛔ IN THE VAULT, stop here and RAISE -- never skip
       3. outside the vault: `ffmpeg` on PATH, then skip
+
+    🚨 WHY STEP 0 EXISTS, MEASURED 2026-09-22. `_mutants.mjs --scratch` runs the
+    suite in a COPY under %TEMP%: not the vault, no `media-kit` beside it, and
+    ffmpeg is not on PATH -- so every check that builds a real video SKIPPED
+    there, and a skipped witness reads as a SURVIVOR. M8zd-37 (a pick under
+    `out`) survived for exactly that reason. The mutation runner knows where
+    the vault's ffmpeg is and passes it here.
 
     🚨 WHY STEP 2 EXISTS. `spec/07-test-plan.md` requires the tsubasa contract
     test to run, not to be skipped: on Sonic's machine ffmpeg is bundled at
@@ -123,6 +132,13 @@ def ffmpeg():
     step 1 returns and steps 2-3 never run. If it ever goes missing IN the
     vault that is still a hard failure, which is what step 2 is for.
     """
+    named = os.environ.get("HATO_TEST_FFMPEG")
+    if named:
+        if os.path.isfile(named):
+            return named
+        raise FfmpegMissing(
+            "HATO_TEST_FFMPEG names %s, which is not there. An ffmpeg asked for by "
+            "name is never skipped past -- point it at one, or unset it." % named)
     with io.open(str(ROOT / "hato.config.json"), encoding="utf-8") as handle:
         relative = json.load(handle)["media"]["ffmpegRelative"]
     path = (ROOT / relative).resolve()

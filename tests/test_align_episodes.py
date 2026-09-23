@@ -761,3 +761,295 @@ def test_hato_align_refuses_a_recording_of_another_entry(tmp_path, capsys):
     assert _run_align(["--explain", str(tmp_path / "v"), "440",
                        "--files", str(API / "entries_11446_files.json")]) == 1
     assert u"entry 11446, not entry 440" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# ⭐ RUNBOOK 8f -- the newest episode on offer, for *probably not out yet*
+# ---------------------------------------------------------------------------
+# The shapes are Sonic's own history (state DB, 2026-09-19..21): which release
+# names, which numbering, which episodes his folder held when each ran.
+
+def nanako(show, season, numbers):
+    return [file_dict(u"[NanakoRaws] %s S%02dE%02d (TV 1080p HEVC AAC).ass" % (show, season, n))
+            for n in numbers]
+
+
+def amazon(title, season, numbers):
+    return [file_dict(u"%s.S%02dE%02d.第%d話.WEBRip.Amazon.ja-jp[sdh].srt" % (title, season, n, n))
+            for n in numbers]
+
+
+def subsplease(show, season, numbers):
+    return [u"[SubsPlease] %s S%d - %02d (1080p) [ABCD1234].mkv" % (show, season, n)
+            for n in numbers]
+
+
+def newest_by_episode(tmp_path, files, video_names):
+    videos = stubs(tmp_path / "v", video_names)
+    a = episodes.align(files, videos, workdir=tmp_path / "w")
+    return a, videos, dict((v.episode, episodes.newest_offered(a, v)) for v in videos)
+
+
+def test_sonics_iruma_s4_23_the_fit_slides_and_the_newest_offered_is_still_22(tmp_path):
+    """🚨 THE CASE 8f EXISTS FOR, AND WHY ITS FORMULA COULD NOT BE THE FIT'S.
+
+    2026-09-20: Iruma-kun S4 23 was offered NanakoRaws E22 and Amazon E20 and
+    E03, and timing refused all three. The fit takes the offset where MOST
+    videos land, and with the folder one episode ahead of every release, a shift
+    of -1 lands three videos where the true 0 lands two. Read off that placement
+    the release "offers 23" and the highlight could never fire.
+    """
+    files = (nanako(u"Mairimashita! Iruma-kun", 4, range(1, 23))
+             + amazon(u"魔入りました！入間くん", 4, range(1, 21)))
+    a, videos, newest = newest_by_episode(
+        tmp_path, files, subsplease(u"Mairimashita! Iruma-kun", 4, (21, 22, 23)))
+    v23 = [v for v in videos if v.episode == 23][0]
+    slid = [n for n in offered(a, v23) if u"E23" not in n]
+    assert slid, (u"the control: the fit did not slide here, so this check proves nothing "
+                  u"-- offered to 23: %s" % offered(a, v23))
+    assert newest == {21: 22, 22: 22, 23: 22}, (
+        u"the newest episode on offer is 22 -- read off the slid placement it says %r" % newest)
+
+
+def test_sonics_honzuki_s4_22_one_past_the_newest(tmp_path):
+    a, videos, newest = newest_by_episode(
+        tmp_path, nanako(u"Honzuki no Gekokujou", 4, range(1, 22)),
+        subsplease(u"Honzuki no Gekokujou", 4, (20, 21, 22)))
+    assert newest[22] == 21, newest
+
+
+def test_sonics_tsuihou_12_and_tetsunabe_09_are_on_offer_so_nothing_is_probably_late(tmp_path):
+    u"""The two that must NOT highlight: their episode was offered, and refused."""
+    shincaps = [file_dict(u"[shincaps] Tsuihou Sareta Tensei Juukishi wa Game Chishiki de Musou "
+                          u"Suru - %02d (AT-X 1440x1080 MPEG2 AAC).ass" % n) for n in range(1, 12)]
+    a, videos, newest = newest_by_episode(
+        tmp_path / "tsuihou",
+        nanako(u"Tsuihou Sareta Tensei Juukishi wa Game Chishiki de Musou Suru", 1, range(1, 13))
+        + shincaps,
+        [u"[SubsPlease] Tsuihou sareta Tensei Juukishi wa Game Chishiki de Musou suru - %02d "
+         u"(1080p) [ABCD1234].mkv" % n for n in (11, 12)])
+    assert newest[12] is not None and newest[12] >= 12, newest
+    a, videos, newest = newest_by_episode(
+        tmp_path / "tetsunabe", nanako(u"Tetsunabe no Jan!", 1, range(1, 12)),
+        [u"[SubsPlease] Tetsunabe no Jan! - %02d (1080p) [ABCD1234].mkv" % n
+         for n in range(2, 12)])
+    assert newest[9] is not None and newest[9] >= 9, newest
+
+
+def test_newest_offered_across_seasonal_and_absolute_releases_of_one_entry(
+        tmp_path, reading, season):
+    """06-edge-cases.md §2 on the REAL capture: seasonal releases (S2 - 01..) and
+    absolute ones (- 29..) in one entry, a folder one episode past the season."""
+    last = season["numbers"][-1]
+    a, videos, newest = newest_by_episode(tmp_path, FILES,
+                                          seasonal(season["numbers"] + [last + 1]))
+    assert newest[last + 1] == last, (
+        u"one past the season must read the season's last episode, %d: %r" % (last, newest))
+    assert set(newest.values()) == {last}, newest
+
+
+def test_a_release_placed_nowhere_counts_for_nothing(tmp_path, reading, season):
+    u"""⛔ A lone file far ahead, same season, placed nowhere -- its number is not
+    evidence of anything, and must not hide *probably not out yet*."""
+    last = season["numbers"][-1]
+    stray = file_dict(u"[Stray] Sousou no Frieren S2 - %02d (1080p).ass" % (last + 30))
+    a, videos, newest = newest_by_episode(tmp_path, FILES + [stray],
+                                          seasonal(season["numbers"] + [last + 1]))
+    placed = [s for s in a.groups if s.group == u"Stray"]
+    assert placed and not placed[0].offsets, (
+        u"the control: the stray release was placed after all -- %r" % placed)
+    assert newest[last + 1] == last, newest
+
+
+def test_a_release_fitted_against_another_season_says_nothing_about_this_one(tmp_path):
+    files = nanako(u"Honzuki no Gekokujou", 3, range(1, 13))
+    a, videos, newest = newest_by_episode(
+        tmp_path, files,
+        subsplease(u"Honzuki no Gekokujou", 3, (11, 12)) + subsplease(u"Honzuki no Gekokujou", 4, (1, 2)))
+    assert newest[12] == 12 and newest[1] is None and newest[2] is None, newest
+
+
+def test_an_absolute_release_fitted_against_another_season_says_nothing_about_this_one(tmp_path):
+    u"""The same rule for a release numbered ANOTHER way. An absolute release
+    fitted against season 3 is season 3 in the whole-show count; read against
+    season 4's videos it said the newest on offer was 12, for a season jimaku
+    has no file of. ⚠ The seasonal check above cannot see this any more: a
+    season-3 release can never be read as the gap to season 4 (`_across_the_gap`),
+    so only an absolute one still needs the partition to keep it out."""
+    files = [file_dict(u"[Erai-raws] Honzuki no Gekokujou - %02d [1080p].ass" % n)
+             for n in range(25, 37)]
+    videos = stubs(tmp_path / "v", subsplease(u"Honzuki no Gekokujou", 3, range(1, 13))
+                   + subsplease(u"Honzuki no Gekokujou", 4, (1, 2)))
+    a = episodes.align(files, videos, workdir=tmp_path / "w")
+    placed = [s for s in a.groups if s.season is None]
+    assert placed and placed[0].partition == 3 and placed[0].offsets == (24,), (
+        u"the control: the absolute release is not fitted to season 3 at +24 -- %r" % a.groups)
+    newest = dict(((v.season, v.episode), episodes.newest_offered(a, v)) for v in videos)
+    assert newest[(3, 12)] == 12, u"the control: it speaks for season 3 -- %r" % newest
+    assert newest[(4, 1)] is None and newest[(4, 2)] is None, (
+        u"a release fitted against season 3 spoke for season 4: %r" % newest)
+
+
+def test_a_release_numbering_on_through_the_season_is_read_through_its_offset(tmp_path):
+    u"""The one same-season case where the offset IS the reading: a release that
+    numbers the season's second cour 13-24 against a folder numbered 1-12. ⚠ And
+    one video further on, the fit can only GUESS between two upward shifts --
+    which proves no number, so nothing is said."""
+    files = nanako(u"Kusuriya no Hitorigoto", 2, range(13, 25))
+    a, videos, newest = newest_by_episode(
+        tmp_path / "cour", files, subsplease(u"Kusuriya no Hitorigoto", 2, range(1, 13)))
+    placed = [s for s in a.groups if s.group == u"NanakoRaws"]
+    assert placed and placed[0].offsets == (12,), (
+        u"the control: the release was not placed at +12 -- %r" % placed)
+    assert set(newest.values()) == {12}, newest
+    a, videos, newest = newest_by_episode(
+        tmp_path / "guess", files, subsplease(u"Kusuriya no Hitorigoto", 2, range(1, 14)))
+    assert newest[13] is None, (
+        u"a guess between upward shifts said a newest episode: %r" % newest)
+
+
+def test_an_absolute_release_one_longer_than_the_season_may_hold_the_episode(tmp_path):
+    u"""ADVERSARY 2026-09-22 F4a. Sonic's own Iruma folder and releases -- plus ONE
+    absolute release numbering season 4 from 66, that DOES carry episode 23 (88).
+    It is guessed between two offsets, so it proves no number; but it is the
+    season in the whole-show count and one episode LONGER than the newest the
+    others prove, so *probably not out yet* would be said over an episode that
+    is out. ⚠ The control: Sonic's shape alone still says 22."""
+    files = (nanako(u"Mairimashita! Iruma-kun", 4, range(1, 23))
+             + [file_dict(u"[Erai-raws] Mairimashita! Iruma-kun - %02d [1080p].ass" % n)
+                for n in range(66, 89)])
+    videos = subsplease(u"Mairimashita! Iruma-kun", 4, (21, 22, 23))
+    _a, _v, alone = newest_by_episode(tmp_path / "alone", files[:22], videos)
+    assert alone[23] == 22, u"the control: without the absolute release, 22 -- %r" % alone
+    a, found, newest = newest_by_episode(tmp_path / "both", files, videos)
+    v23 = [v for v in found if v.episode == 23][0]
+    assert [n for n in offered(a, v23) if u"- 88 " in n], (
+        u"the control: E23 (88) is not offered at all: %s" % offered(a, v23))
+    assert newest[23] is None or newest[23] >= 23, (
+        u"episode 23 is on offer (88) and the newest said is %r -- the window would say "
+        u"*probably not out yet*" % newest[23])
+
+
+def test_an_absolute_folder_one_ahead_of_an_absolute_release_reads_its_own_number(tmp_path):
+    u"""ADVERSARY 2026-09-22 F4b. The D11 slide in an ABSOLUTE folder: 1110-1122
+    against a release of 1109-1121. Read as ANOTHER numbering, the slid placement
+    said the release offers 1122 -- which no file anywhere is."""
+    files = [file_dict(u"[NanakoRaws] One Piece - %d (TV 1080p HEVC AAC).ass" % n)
+             for n in range(1109, 1122)]
+    a, videos, newest = newest_by_episode(
+        tmp_path, files,
+        [u"[SubsPlease] One Piece - %d (1080p) [ABCD1234].mkv" % n for n in range(1110, 1123)])
+    assert newest[1122] == 1121, (
+        u"the newest file is 1121, and 1122 is one past it: %r" % newest[1122])
+
+
+def test_a_whole_show_absolute_release_says_nothing_about_this_season(tmp_path):
+    u"""⚠ The OTHER side of F4a's rule. An absolute release a little longer than
+    the season is that season further on; one numbering the whole show (1-88
+    against a season of 22) is not, and must not silence *probably not out
+    yet*. 🚨 Its fit is a `range` -- 21-23 lands on the folder's 21-23 at its
+    literal number -- and that is the numbers coinciding: between the absolute
+    count and season 4 the offset is the episodes before it, never 0."""
+    files = (nanako(u"Mairimashita! Iruma-kun", 4, range(1, 23))
+             + [file_dict(u"[Erai-raws] Mairimashita! Iruma-kun - %02d [1080p].ass" % n)
+                for n in range(1, 89)])
+    a, videos, newest = newest_by_episode(
+        tmp_path, files, subsplease(u"Mairimashita! Iruma-kun", 4, (21, 22, 23)))
+    whole = [s for s in a.groups if s.season is None and s.partition == 4]
+    assert whole and whole[0].quality == "range" and whole[0].offsets == (0,), (
+        u"the control: the whole-show release is not placed at its literal number as a "
+        u"`range` -- the coincidence this check exists for is not here: %r" % a.groups)
+    assert newest[23] == 22, (
+        u"a release numbering the WHOLE show hid *probably not out yet*: %r" % newest[23])
+
+
+def test_an_absolute_release_numbered_below_the_season_says_nothing_about_it(tmp_path):
+    u"""The same rule the other way round: an absolute release whose numbers sit
+    BELOW the season's is a whole-range fit at a NEGATIVE offset -- 1-3 on a
+    season-4 folder's 21-23 -- and the absolute count numbers a later season
+    HIGHER, never lower. Read as the gap between them, it said 23 is on offer."""
+    files = (nanako(u"Mairimashita! Iruma-kun", 4, range(1, 23))
+             + [file_dict(u"[Erai-raws] Mairimashita! Iruma-kun - %02d [1080p].ass" % n)
+                for n in range(1, 4)])
+    a, videos, newest = newest_by_episode(
+        tmp_path, files, subsplease(u"Mairimashita! Iruma-kun", 4, (21, 22, 23)))
+    low = [s for s in a.groups if s.season is None and s.partition == 4]
+    assert low and low[0].quality in episodes.PROVEN and low[0].offsets == (-20,), (
+        u"the control: the absolute release is not a range fit at -20 -- %r" % a.groups)
+    assert newest[23] == 22, (
+        u"an absolute release below the season was read as its gap: newest %r" % newest[23])
+
+
+def test_a_single_guessed_offset_of_another_numbering_proves_no_newest_episode(tmp_path):
+    u"""F4d where it is REACHABLE -- measured by the M8zd builder, after the
+    orchestrator had argued it was not: one stray file far outside an absolute
+    release's range pushes one of the three anchors out of the tie, and what is
+    left is a GUESS at a single offset. Read as proof, it said the newest on
+    offer was 25, in a season whose releases stop at 10, and *probably not out
+    yet* went silent over an episode nobody has."""
+    files = (nanako(u"Mairimashita! Iruma-kun", 4, range(1, 11))
+             + [file_dict(u"[Erai-raws] Mairimashita! Iruma-kun - %02d [1080p].ass" % n)
+                for n in list(range(66, 76)) + [90]])
+    a, videos, newest = newest_by_episode(
+        tmp_path, files, subsplease(u"Mairimashita! Iruma-kun", 4, range(1, 12)))
+    guessed = [s for s in a.groups if s.season is None]
+    assert guessed and guessed[0].quality == "guess" and guessed[0].offsets == (65,), (
+        u"the control: the absolute release is not a guess at ONE offset -- %r" % a.groups)
+    assert newest[11] == 10, (
+        u"a guess of another numbering was read as proof: newest %r for S4 11" % newest[11])
+
+
+def test_a_first_season_folder_reads_an_absolute_release_at_its_own_number(tmp_path):
+    u"""Season 1 and the absolute count are ONE count, from the other side too:
+    an absolute release against a season-1 folder one episode ahead of it is
+    the slide, read at its own number -- 11 is on offer, 12 probably is not. Read
+    as another count, its two guessed offsets proved nothing and the late
+    episode was never said."""
+    files = [file_dict(u"[Erai-raws] Tetsunabe no Jan! - %02d [1080p].ass" % n)
+             for n in range(1, 12)]
+    a, videos, newest = newest_by_episode(
+        tmp_path, files, subsplease(u"Tetsunabe no Jan!", 1, (11, 12)))
+    placed = [s for s in a.groups if s.season is None]
+    assert placed and len(placed[0].offsets) == 2, (
+        u"the control: the absolute release is not guessed between two offsets -- %r" % a.groups)
+    assert newest[12] == 11, (
+        u"a season-1 folder read an absolute release as another count: %r" % newest)
+
+
+def test_a_later_seasons_release_is_read_across_the_gap_into_an_absolute_folder(tmp_path):
+    u"""The gap the other way: a folder numbered in the absolute count (13-24 is
+    season 2 of a 12-episode show) and a release numbering season 2 from 1. Its
+    whole range lands at -12, and -- the season's own release numbering the
+    absolute count LOWER -- that offset IS the gap: the newest on offer is 24."""
+    files = nanako(u"Honzuki no Gekokujou", 2, range(1, 13))
+    a, videos, newest = newest_by_episode(
+        tmp_path, files, [u"[SubsPlease] Honzuki no Gekokujou - %02d (1080p) [ABCD1234].mkv" % n
+                          for n in range(13, 25)])
+    placed = [s for s in a.groups if s.season == 2]
+    assert placed and placed[0].offsets == (-12,), (
+        u"the control: the season-2 release is not placed at -12 -- %r" % a.groups)
+    assert set(newest.values()) == {24}, (
+        u"a later season's release was not read across the gap: %r" % newest)
+
+
+def test_a_literal_guess_of_another_numbering_proves_no_newest_episode(tmp_path):
+    u"""ADVERSARY 2026-09-22 F4d. One video, S4 23, and a release numbering the
+    whole show 1-87. With one video there is no range to fit, so the release is
+    placed on its LITERAL number -- a guess -- and reading that guess as a
+    numbering said the newest on offer is 87, in a season of 22."""
+    files = [file_dict(u"[Erai-raws] Mairimashita! Iruma-kun - %02d [1080p].ass" % n)
+             for n in range(1, 88)]
+    a, videos, newest = newest_by_episode(
+        tmp_path, files, subsplease(u"Mairimashita! Iruma-kun", 4, (23,)))
+    placed = [s for s in a.groups if s.offsets]
+    assert placed and all(s.quality not in episodes.PROVEN for s in placed), (
+        u"the control: the release was placed by a real range fit -- %r" % a.groups)
+    assert newest[23] is None, (
+        u"a guess was read as a numbering: newest %r for S4 23" % newest[23])
+
+
+def test_a_film_and_an_unnumbered_video_have_no_newest(tmp_path):
+    class Film(object):
+        episode, season = None, None
+    a = episodes.align([], [], workdir=tmp_path / "w", movie=True)
+    assert episodes.newest_offered(a, Film()) is None

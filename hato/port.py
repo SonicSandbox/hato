@@ -138,8 +138,19 @@ class PortError(RuntimeError):
 # the port
 # ---------------------------------------------------------------------------
 
-def sync(video, subtitle, write=True, out_dir=None, engine=None):
+def sync(video, subtitle, write=True, out_dir=None, engine=None, force=False):
     u"""Hand ONE pair to tsubasa. -> tsubasa's `Result`, unchanged.
+
+    `force`
+        ⭐ RUNBOOK 8e -- A PERSON'S PICK, and never the fetch loop's. tsubasa's own
+        `force`: for an explicit pair it overrides a REFUSAL (the timing did not
+        hold) and never an ERROR (nothing could be measured). Measured 2026-09-22
+        on a real pair: the file lands, `outcome` stays REFUSED, `output_path` is
+        set, and the reason opens *"WRITTEN UNDER --force"* -- so `wrote()`, which
+        asks for CONFIDENT, correctly says the TIMING never held, and `forced()`
+        says the person's choice was written anyway. ⛔ `pipeline.py` never passes
+        it: hato's own ranking is a hypothesis, and only a person may overrule the
+        referee.
 
     `video` · `subtitle`
         paths. The subtitle is the finished download, already named
@@ -172,7 +183,8 @@ def sync(video, subtitle, write=True, out_dir=None, engine=None):
                     rename=True,           # load-bearing: <video>.<lang>.<ext>
                     dedupe=False,          # hato never authorises a trash
                     out_dir=os.fspath(out_dir) if out_dir else None,
-                    results=RESULTS)
+                    results=RESULTS,
+                    force=bool(force))     # ⛔ only ever True for a person's pick
     return _only_result(report, video, subtitle)
 
 
@@ -223,6 +235,20 @@ def wrote(result):
     with no `output_path` is an ERROR.*
     """
     return result.outcome == CONFIDENT and bool(result.output_path)
+
+
+def forced(result):
+    u"""Was a file written because a PERSON overrode the timing check? -> bool
+
+    ⭐ RUNBOOK 8e. tsubasa's forced write keeps `outcome` REFUSED -- the timing
+    never held -- sets `output_path`, and opens its reason *"WRITTEN UNDER
+    --force"* (measured on the real engine, 2026-09-22). ⭐ It also carries its
+    OWN `forced` field, and its constructor refuses a REFUSED result with a file
+    that does not set it -- so this reads tsubasa's answer rather than inferring
+    one from the outcome. ⛔ Never a success in the fetch loop's sense (`wrote()`).
+    """
+    return (result is not None and bool(getattr(result, "forced", False))
+            and bool(result.output_path))
 
 
 def nothing_was_written(result):
@@ -374,7 +400,7 @@ def _stub_result(video, subtitle, outcome, verdict_word, reason, writes,
                  kwargs, fields):
     side = tsubasa.parse_subtitle_name(os.path.basename(os.fspath(subtitle)))
     destination = output_name(video, subtitle, kwargs.get("out_dir"))
-    written, failed = None, False
+    written, failed, forced_write = None, False, False
     text = reason
 
     if outcome == CONFIDENT:
@@ -407,6 +433,23 @@ def _stub_result(video, subtitle, outcome, verdict_word, reason, writes,
             if text is None:
                 text = (u"NOT WRITTEN: the stub was told not to write. The "
                         u"pair aligned; the file is not there.")
+    elif outcome == REFUSED and kwargs.get("force") and kwargs.get("write") and writes:
+        # ⭐ RUNBOOK 8e -- tsubasa's FORCED write, the shape measured on the real
+        # engine 2026-09-22: the file lands, the outcome STAYS REFUSED, and the
+        # reason opens "WRITTEN UNDER --force". `test_port.py` pins this against
+        # the engine. ⛔ And an occupied destination is still refused: force
+        # overrides the timing, never a person's existing file.
+        try:
+            _copy_atomically(subtitle, destination)
+        except FileExistsError:
+            failed = True
+            text = (u"NOT WRITTEN: %s already exists and is not one of the files "
+                    u"this run accounted for, so writing would destroy it."
+                    % destination)
+        else:
+            written, forced_write = destination, True
+            text = (u"WRITTEN UNDER --force. The pairing was accepted; the "
+                    u"alignment was NOT: %s" % (text or u"the timing did not hold"))
 
     values = dict(outcome=outcome, reason=text or u"", verdict_word=verdict_word,
                   segments=[(None, -7.0)], match_rate=1.0,
@@ -415,6 +458,8 @@ def _stub_result(video, subtitle, outcome, verdict_word, reason, writes,
                   reference=u"stubbed -- no container was opened",
                   output_path=written, write_failed=failed,
                   lang=side.lang, lang_tag=side.tag)
+    if forced_write:
+        values["forced"] = True         # tsubasa's own field; its constructor insists
     values.update(fields)
     return tsubasa.Result(os.fspath(video), os.fspath(subtitle), **values)
 
@@ -459,5 +504,5 @@ def _copy_atomically(source, destination):
 
 
 __all__ = ["CONFIDENT", "REFUSED", "ERROR", "UND", "RESULTS", "PortError",
-           "sync", "wrote", "nothing_was_written", "why_nothing_was_written",
+           "sync", "wrote", "forced", "nothing_was_written", "why_nothing_was_written",
            "outcome_and_reason", "output_name", "stub_engine"]

@@ -301,6 +301,40 @@ def download_name(jimaku_name, lang):
     return made
 
 
+def remembered_file(row, lang, cache):
+    u"""Where the file a remembered attempt tried is on disk now. -> str or None
+
+    ⭐ RUNBOOK 8d. A candidate refused in an earlier run is offered to a person
+    again -- and a pick is `hato sync <video> <this file>`, so it needs the file
+    itself, with no request to jimaku. In order:
+
+      the kept original     a re-sync's candidate lives in subs_dir, not the cache
+      the content hash      what every attempt records since 8b
+      the name AND size     a row recorded before 8b, which has no hash
+
+    ⛔ None when it is gone -- a cleared cache, a deleted kept original -- and the
+    caller says so rather than offering something it cannot hand over.
+    """
+    kept = getattr(row, "kept_path", None)
+    if kept and os.path.isfile(kept):
+        return str(kept)
+    name = getattr(row, "jimaku_filename", None)
+    if not name:
+        return None
+    try:
+        stored = download_name(name, lang)
+    except (UntaggedOriginal, ValueError):
+        return None
+    digest = getattr(row, "subtitle_hash", None)
+    if digest:
+        found = cache.find(digest, stored)
+    else:
+        # ⚠ Stored when THIS attempt ran, or it is a later re-upload (F11).
+        found = cache.find_named(stored, getattr(row, "jimaku_size", None),
+                                 not_after=getattr(row, "attempted_at", None))
+    return str(found) if found is not None else None
+
+
 # ---------------------------------------------------------------------------
 # ⛔ the kept original -- never deleted, never overwritten
 # ---------------------------------------------------------------------------
@@ -469,4 +503,4 @@ __all__ = ["SURASURA_FOLDER", "TEMP_PREFIX", "InsideScan", "SubsDirInsideScan",
            "OutDirInsideScan",
            "KeptOriginalProblem", "UntaggedOriginal", "inside", "check_subs_dir",
            "check_out_dir", "target_dir", "mirrored_dir", "download_name",
-           "entry_folder", "keep_original", "surasura_copy"]
+           "remembered_file", "entry_folder", "keep_original", "surasura_copy"]

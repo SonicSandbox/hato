@@ -98,7 +98,7 @@ already asserts the watcher module imports no toolkit.
 """
 import os
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 HERE = os.path.abspath(SPECPATH)                          # noqa: F821
 
@@ -151,10 +151,41 @@ HOOKSPATH = [TSUBASA_HOOKS] if TSUBASA_HOOKS else []
 # it.
 HATO_DATA = collect_data_files("hato", includes=["data/*.png", "data/*.ico"])
 
+# ===========================================================================
+# 🚨 D8 -- TSUBASA'S THIRD OPINION ON A NAME SHIPPED WITHOUT ITS DATA
+# ===========================================================================
+#
+# tsubasa asks guessit about a Western-style name its own two parsers cannot
+# number, and guessit imports babelfish, which reads `data/iso-3166-1.txt` AT
+# IMPORT. PyInstaller 6.18 ships no hook for any of the three, so their code
+# went into the archive and their data did not -- and tsubasa's
+# `parse_guessit` guards only `ImportError`, so the FileNotFoundError took the
+# WHOLE FOLDER's scan with it. Measured 2026-09-22 on the RELEASED 1.0.1
+# bytes, two arms: a folder holding `The.Show.Special.1080p.WEB.x264-GRP.mkv`
+# -> *"none of the 1 folder(s) given could be scanned (FileNotFoundError)"*,
+# exit 1; the same folder with an anime name -> exit 0; source mode -> exit 0
+# both ways.
+#
+# ⛔ OPTIONAL, and that is correct: absent at build time, tsubasa falls back
+# to its two parsers through the ImportError it already handles. PRESENT, it
+# must bring what it reads. ⚠ `test/` stays behind -- guessit's alone is some
+# forty YAML files. ⚠ babelfish loads its converters BY NAME on first use,
+# which static analysis cannot see -- hence the submodules too.
+THIRD_OPINION_DATA, THIRD_OPINION_HIDDEN = [], []
+for _name in ("babelfish", "guessit", "rebulk"):
+    try:
+        __import__(_name)
+    except Exception:                                     # noqa: BLE001
+        continue
+    THIRD_OPINION_DATA += collect_data_files(
+        _name, excludes=["**/test/**", "**/tests/**"])
+    THIRD_OPINION_HIDDEN += collect_submodules(
+        _name, filter=lambda m: ".test" not in m)
+
 # ⚠ `numpy` belt-and-braces, mirroring tsubasa's hook: its import is deferred
 # into the two align modules, and a frozen app that lost it imports cleanly,
 # passes a self-check, and raises on the first alignment.
-COMMON_HIDDEN = COMMAND_MODULES + ["numpy"]
+COMMON_HIDDEN = COMMAND_MODULES + ["numpy"] + THIRD_OPINION_HIDDEN
 
 #: Optional archive support. ⚠ Guarded extras -- `hato/archives.py` degrades
 #: with a stated reason when they are absent, so a missing one is a smaller
@@ -185,7 +216,7 @@ def _analysis(script, excludes):
         [os.path.join(HERE, script)],
         pathex=[],
         binaries=[],
-        datas=HATO_DATA,
+        datas=HATO_DATA + THIRD_OPINION_DATA,
         hiddenimports=COMMON_HIDDEN,
         hookspath=HOOKSPATH,
         hooksconfig={},

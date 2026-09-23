@@ -508,6 +508,7 @@ def collect(session=None, capture_dir=None, sleep=time.sleep, rng=None,
 
     # -- tsubasa --------------------------------------------------------------
     _tsubasa_lines(ro, video)
+    _parser_lines(ro)
 
     # -- archives -------------------------------------------------------------
     # ⚠ Every tool rarfile can extract with, not just `unrar` (found by the 3c
@@ -626,6 +627,53 @@ def _tsubasa_lines(ro, video):
     else:
         extra.append("pass --video <file> to read one video through it")
     ro.add("track reader", OK, "tsubasa.%s" % reader, extra)
+
+
+#: The optional parsers tsubasa consults, and a name each must be able to number.
+#: ⚠ Asked DIRECTLY, never through tsubasa, whose wrapper swallows a parser that
+#: raises -- which is the whole reason this line exists.
+PARSERS = (
+    (u"anitopy", u"[SubsPlease] Sousou no Frieren S2 - 03 (1080p) [ABCD1234].mkv", 3),
+    (u"guessit", u"The.Show.S02E05.1080p.WEB.x264-GRP.mkv", 5),
+)
+
+
+def _parse_with(name, filename):
+    u"""-> the episode `name`'s parser reads in `filename`. Raises what it raises."""
+    if name == u"anitopy":
+        import anitopy
+        value = anitopy.parse(filename).get(u"episode_number")
+        return int(value) if value is not None else None
+    from guessit import guessit
+    value = guessit(filename).get(u"episode")
+    return value[0] if isinstance(value, list) and value else value
+
+
+def _parser_lines(ro):
+    u"""Does each optional parser WORK -- import, and number a name? -> None
+
+    🚨 ADVERSARY 2026-09-22 D1. A frozen build that left out babelfish's
+    converter modules imports guessit fine and then fails on every name --
+    and tsubasa's wrapper swallows the failure, so a run's parse is IDENTICAL
+    with guessit or without it. The smoke check that was meant to guard D8
+    passed on exactly that bundle. ⭐ Here the parser is asked itself, and a
+    parser that cannot answer is FAILED with its own words.
+    ⚠ MISSING is not a fault: these are optional (tsubasa's `pyproject` extras).
+    """
+    for name, filename, wanted in PARSERS:
+        try:
+            got = _parse_with(name, filename)
+        except ImportError as exc:
+            ro.add(name, MISSING, u"not importable (%s) -- tsubasa goes on without this "
+                   u"opinion" % exc)
+            continue
+        except Exception as exc:                  # noqa: BLE001 -- the finding IS a raise
+            ro.add(name, FAILED, u"imports, but could not parse a name (%s: %s)"
+                   % (type(exc).__name__, exc))
+            continue
+        ro.add(name, OK if got == wanted else FAILED,
+               u"parses: %s -> episode %s" % (filename, got),
+               [] if got == wanted else [u"expected episode %s" % wanted])
 
 
 def _capture_traps(ro, capture, session, api_get, full_url, sleep, rng, files_list):

@@ -58,7 +58,7 @@ from datetime import datetime
 from pathlib import Path
 
 from hato import config as config_module, credentials, lastrun, paths, pipeline, \
-    present, report
+    present, report, retries
 from hato.cache import Cache
 from hato.client import JimakuClient, NoRecording, RecordedSession
 from hato.kitsu import KitsuClient
@@ -69,6 +69,12 @@ from hato.state import StateDB
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_USAGE = 2
+
+#: How long `--wait` keeps trying for a lock another run holds, and how often.
+#: ⚠ Longer than any run a person starts; a first run over a large library is
+#: the longest there is.
+LOCK_WAIT_SECONDS = 3 * 3600
+LOCK_POLL_SECONDS = 2.0
 
 #: Recorded responses were made with a real key and check none (`hato identify`).
 STAND_IN_KEY = u"recorded-responses-need-no-key"
@@ -99,6 +105,26 @@ def register(parser):
     parser.add_argument("--force", action="store_true",
                         help="ignore the state DB -- re-try refusals, re-query negatives. "
                              "⛔ Never overrides a blacklist")
+    # ⭐ RUNBOOK 8e -- the window's *Look again now* (D3). Narrower than --force on
+    # purpose: it skips the WAIT, and a file already refused for the video is
+    # still never downloaded again.
+    parser.add_argument("--retry-now", action="store_true",
+                        help="look again now at a video hato is waiting to retry -- a "
+                             "file already refused is still never downloaded again")
+    parser.add_argument("--only", action="append", metavar="VIDEO",
+                        help="work on just this video, inside the folders given "
+                             "(repeatable). Such a run leaves the window's memory of "
+                             "the last full run alone")
+    # ⭐ ADVERSARY 2026-09-22 A33 -- the window's *Look again now* over a few
+    # hundred waiting episodes was a command line Windows refused to start.
+    parser.add_argument("--only-list", metavar="FILE",
+                        help="like --only, for every video named in FILE, one per line")
+    # ⭐ ADVERSARY 2026-09-22 L1 -- how the TRAY starts every run. It asks whether
+    # a run holds the lock and then spawns; a run starting in the second or two
+    # before this child reaches the lock made it exit with nothing scanned.
+    parser.add_argument("--wait", action="store_true",
+                        help="if another hato run holds the lock, wait for it to finish "
+                             "(up to %d hours) instead of exiting" % (LOCK_WAIT_SECONDS // 3600))
     parser.add_argument("--candidates", type=int, metavar="N",
                         help="how many candidates to try before refusing (default 3)")
     parser.add_argument("--out", metavar="DIR",
@@ -337,6 +363,95 @@ def _usage_fail(message):
     return EXIT_USAGE
 
 
+def _retry_dues(db, cfg):
+    u"""The dates the TRAY is to keep (RUNBOOK 8h). -> [datetime] or None.
+
+    ⚠ THE CONFIGURED LANGUAGE, RESOLVED -- whatever this run was asked for. The
+    tray runs `hato` over the configured folders in the configured language, so
+    those are the only promises it can keep: a `--lang` one-off rewrote the file
+    with its own language's dates and dropped every other (ADVERSARY 2026-09-22
+    R3), and a config spelling `jpn` asked the DB for rows it keeps under `ja`,
+    which emptied the file on every run (F1).
+
+    ⛔ NONE FROM A DB IN MEMORY: it holds only this run's rows, so its dates would
+    replace every promise on disk with this run's (F5).
+    ⛔ NEVER FAILS A FINISHED RUN: the subtitles are already beside the videos,
+    and a tray that misses one wake-up is recovered by the next arrival or the
+    next time it starts. None means *do not touch the file* -- a failed read
+    writing an EMPTY list would cancel every promise already on disk.
+    """
+    if not getattr(db, "persistent", True):
+        return None
+    try:
+        return db.retry_dues(present.language(cfg.lang))
+    except Exception:                         # noqa: BLE001
+        return None
+
+
+def _remember(args, run_report, db, cfg):
+    u"""What a finished run leaves behind for the window and the tray.
+
+    🚨 CALLED INSIDE THE RUN LOCK (ADVERSARY 2026-09-22 S1). Written after the
+    release, a run that finished first could overwrite the NEXT run's newer
+    answer with its own older one -- the window's memory of the last run, and
+    the dates the tray keeps. ⛔ Never fails a run: each writer swallows its own
+    failure, and the subtitles are already beside the videos.
+    """
+    # ⭐ EVERY RUN LEAVES A TRACE THE WINDOW CAN READ (RUNBOOK 7i), whoever
+    # started it -- the tray, the scheduler, or a terminal. Until this existed
+    # only the window wrote one, so a tray-triggered run did its job and the
+    # open window showed nothing: *"it worked but the ui didn't update."*
+    #
+    # 🚨 EXCEPT A DRY RUN, WHICH IS NOT A RUN (RUNBOOK 8a). `--dry-run` promises
+    # *"write nothing"*, and this wrote the window's memory: measured 2026-09-22,
+    # the handoff's own diagnostic command replaced Sonic's last real run with 68
+    # rows of *"would fetch"*, which the window paints as *"something went
+    # wrong"*. The command a person runs to LOOK must not change what it shows.
+    if args.dry_run:
+        return
+    # ⚠ NOR A RUN OVER --only VIDEOS (RUNBOOK 8e): *Look again now* on one row
+    # would otherwise replace the whole library's snapshot with one row, and the
+    # Subtitles tab would forget everything else. The window that asked is
+    # reading this run's stream; nobody else is waiting on it.
+    if not args.only:
+        lastrun.save([report.as_dict(r) for r in run_report.results],
+                     report.run_dict(run_report))
+    # ⭐ RUNBOOK 8h -- AND WHEN IT PROMISED TO LOOK AGAIN, for the tray to keep.
+    # ⚠ An `--only` run writes this one: it is read from the state DB, not from
+    # the run's rows, so one row's look-again cannot shrink it.
+    dues = _retry_dues(db, cfg)
+    if dues is not None:
+        retries.save(dues)
+
+
+def check_only(settings):
+    u"""An `--only` video no walk of this run could reach, refused. -> message|None
+
+    ⛔ A VIDEO THE WALK WILL NOT FIND IS REFUSED, NOT RUN (ADVERSARY 2026-09-22
+    F7). `--only` filters what the walk finds, so a real file outside every
+    folder given -- or inside a skipped one, or in a subfolder of a run that
+    does not look in subfolders -- is found by no walk, and the run exited 0
+    having looked at nothing: the silent miss `check_flags` already refuses for
+    a name that is not a file. ⚠ The walk's own rules, asked of the same
+    functions (`paths.under_any`), never a second copy of them.
+    """
+    for video in settings.only:
+        roots = [f for f in settings.folders if paths.under_any(video, (f,))]
+        if not roots:
+            return (u"--only names %s, which is not inside %s -- no run over %s would "
+                    u"look at it." % (video, u" or ".join(settings.folders),
+                                      u"that folder" if len(settings.folders) == 1
+                                      else u"those folders"))
+        if paths.under_any(video, settings.skip_folders):
+            return (u"--only names %s, which is inside a skipped folder -- no run "
+                    u"looks there." % video)
+        here = paths.normalised(os.path.dirname(video))
+        if not settings.recurse and here not in [paths.normalised(r) for r in roots]:
+            return (u"--only names %s, which is in a subfolder, and this run does not "
+                    u"look in subfolders." % video)
+    return None
+
+
 def check_flags(args):
     u"""Everything a FLAG can get wrong, refused before the run. -> message|None
 
@@ -389,6 +504,12 @@ def check_flags(args):
     if args.progress and args.quiet:
         return (u"--progress and --quiet contradict each other: --quiet means "
                 u"nothing is printed, and progress is something printed.")
+    for video in (args.only or ()):
+        # ⛔ A NAME THAT MATCHES NOTHING IS REFUSED, NOT RUN. A run over the
+        # folders that then found nothing to do would exit 0 having looked at
+        # nothing -- the silent miss this flag exists to replace.
+        if not os.path.isfile(os.path.abspath(os.path.expanduser(video))):
+            return u"--only names %s, which is not a file." % video
     return None
 
 
@@ -396,11 +517,32 @@ def check_flags(args):
 # run
 # ---------------------------------------------------------------------------
 
+def read_only_list(args):
+    u"""`--only-list FILE` folded into `args.only`. -> message|None
+
+    ⚠ UTF-8, one video per line, blank lines ignored -- a Japanese path is the
+    commonest line there is. A list that cannot be read is a usage mistake,
+    refused before anything runs: running without it would look at every video.
+    """
+    source = getattr(args, "only_list", None)
+    if not source:
+        return None
+    try:
+        with open(os.path.expanduser(source), encoding="utf-8-sig") as handle:
+            named = [line.strip() for line in handle if line.strip()]
+    except (OSError, UnicodeDecodeError) as exc:
+        return u"--only-list could not be read (%s: %s)." % (type(exc).__name__, exc)
+    if not named:
+        return u"--only-list names no video: %s" % source
+    args.only = list(args.only or ()) + named
+    return None
+
+
 def run(args):
     # ⭐ FIRST, AND BEFORE ANYTHING IS READ OR OPENED. A flag with a value it
     # may not have is wrong whatever config.toml says, and refusing it here
     # spends no key, no lock, no DB handle and no API call.
-    problem = check_flags(args)
+    problem = read_only_list(args) or check_flags(args)
     if problem:
         return _usage_fail(problem)
 
@@ -430,7 +572,9 @@ def run(args):
             skip_embedded=False if args.even_if_embedded else None,
             allow_ai=True if args.allow_ai else None,
             recurse=False if args.no_recurse else None,
-            force=args.force, dry_run=args.dry_run)
+            force=args.force, dry_run=args.dry_run,
+            retry_now=args.retry_now,
+            only=[os.path.abspath(os.path.expanduser(v)) for v in (args.only or ())])
     except (pipeline.ConfigProblem, paths.PathError) as exc:
         # ⚠ `paths.PathError` TOO, AND THAT IS NOT DEFENSIVE. `cfg.subs_dir` is
         # a lazy property: with `subs_dir` empty it calls `paths.default_subs_dir()`
@@ -438,6 +582,9 @@ def run(args):
         # HATO_CACHE was therefore 22 lines of traceback while a relative
         # HATO_CONFIG -- caught above -- was one clean line. Measured 2026-09-17.
         return _fail(str(exc))
+    problem = check_only(settings)
+    if problem:
+        return _usage_fail(problem)
 
     try:
         world = build_world(args)
@@ -466,7 +613,8 @@ def run(args):
     lock = RunLock()
     try:
         try:
-            lock.acquire()
+            lock.acquire(wait=LOCK_WAIT_SECONDS if args.wait else 0.0,
+                         poll=LOCK_POLL_SECONDS)
         except LockHeld as exc:
             # ⛔ NOT a failure. See the module docstring -- exit 0, and say
             # plainly that nothing ran.
@@ -478,6 +626,15 @@ def run(args):
             _say(args, u"hato: %s" % exc)
             if args.json:
                 sys.stderr.write(u"hato: %s\n" % exc)
+                # ⭐ RUNBOOK 8e. A machine reading `--json` got an EMPTY stdout and
+                # exit 0 -- which the window read as a finished run and said
+                # "done" over, while nothing had been looked at. It is told now,
+                # in the grammar it reads: one typed NDJSON object.
+                if not args.quiet:
+                    sys.stdout.write(json.dumps(
+                        {u"type": u"busy", u"reason": u"%s" % exc}, ensure_ascii=False)
+                        + u"\n")
+                    sys.stdout.flush()
             sys.stderr.write(u"hato: nothing was scanned and nothing was written.\n")
             return EXIT_OK
         except LockUnusable as exc:
@@ -492,6 +649,11 @@ def run(args):
                 resolutions=world.resolutions, kitsu=world.kitsu, cache=world.cache,
                 downloader=world.downloader, engine=world.engine, reader=world.reader,
                 on_progress=_progress_emitter(args))
+            if lock.note:
+                run_report.notes.append(lock.note)
+            # ⭐ INSIDE the lock and before `world.close()`: the snapshot and the
+            # dates are this run's, and no later run's answer is overwritten (S1).
+            _remember(args, run_report, world.db, cfg)
         except pipeline.ConfigProblem as exc:
             return _fail(str(exc))
         except Exception as exc:                  # ⚠ a crash is a fault: say so, loudly
@@ -502,17 +664,6 @@ def run(args):
             lock.release()
     finally:
         world.close()
-
-    if lock.note:
-        run_report.notes.append(lock.note)
-
-    # ⭐ EVERY RUN LEAVES A TRACE THE WINDOW CAN READ (RUNBOOK 7i), whoever
-    # started it -- the tray, the scheduler, or a terminal. Until this existed
-    # only the window wrote one, so a tray-triggered run did its job and the
-    # open window showed nothing: *"it worked but the ui didn't update."*
-    # ⛔ Never fails a run: the subtitles are already beside the videos.
-    lastrun.save([report.as_dict(r) for r in run_report.results],
-                 report.run_dict(run_report))
 
     plain = report.render(run_report, colour=False, verbose=args.verbose,
                           width=report.DEFAULT_WIDTH)

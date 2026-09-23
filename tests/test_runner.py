@@ -132,6 +132,28 @@ def test_verify_registration_runs_no_suite(tmp_path):
     assert not (proj / "_runs").exists() or not list((proj / "_runs").glob("*/red.txt"))
 
 
+def test_a_py_file_that_does_not_parse_is_a_tooling_fault_even_if_nothing_imports_it(
+        tmp_path):
+    """⭐ HANDOFF §5 -- the gate for the heredoc trap. The broken line is the one a
+    shell heredoc made twice in this project: a Windows path whose `\\x` became
+    an escape Python refuses. It sits in `packaging/`, which no suite imports --
+    so only this gate could see it. ⚠ And a build output is not our source."""
+    proj = project(tmp_path, [suite("green", "test_green.py")], {"test_green.py": GOOD})
+    rc, text = run(proj, "--verify-registration")
+    assert rc == 0 and "every .py parses" in text, "the control is not clean:\n" + text
+    (proj / "dist").mkdir()
+    (proj / "dist" / "frozen.py").write_text('p = "C:\\hato\\cache\\x0"\n', encoding="utf-8")
+    rc, text = run(proj, "--verify-registration")
+    assert rc == 0, "a file under dist/ is a build output, not source:\n" + text
+    (proj / "packaging").mkdir()
+    (proj / "packaging" / "shipped.py").write_text('p = "C:\\hato\\cache\\x0"\n',
+                                                   encoding="utf-8")
+    rc, text = run(proj, "--verify-registration")
+    assert rc == 3, "a .py that does not parse passed the self-check:\n" + text
+    assert "packaging" in text and "shipped.py" in text and "line 1" in text, (
+        "the fault does not name the file and the line:\n" + text)
+
+
 def test_an_opt_in_suite_is_registered_but_not_run_by_default(tmp_path):
     proj = project(tmp_path,
                    [suite("a", "test_a.py"),

@@ -248,6 +248,92 @@ def test_store_is_content_addressed_and_a_second_store_writes_nothing(tmp_path):
     assert not list((c.root / "partial").iterdir()), "a temp file was left behind"
 
 
+def test_a_stored_file_is_found_again_by_its_hash_and_its_name(tmp_path):
+    """⭐ RUNBOOK 8b. A refusal remembered in the state DB carries the content hash,
+    so the SAME downloaded file can be offered to a person tomorrow with no request.
+    ⚠ And a miss is a MISS -- a gone file, a wrong name, a digest that is not one --
+    never a path built out of whatever was passed."""
+    c = cache.Cache(tmp_path / "c")
+    data = u"1\n00:00:01,000 --> 00:00:02,000\n字幕\n".encode("utf-8")
+    name = "[NanakoRaws] Show S01E12 (CBC TV 1080p).ja.ass"
+    path = c.store(data, name)
+    digest = hashlib.sha256(data).hexdigest()
+    assert c.find(digest, name) == path
+    assert c.find(digest, "another name.ja.ass") is None
+    assert c.find("0" * 64, name) is None and c.find(None, name) is None
+    # ⚠ A PLANTED FILE, so the guard is what stops it: without one, a traversal
+    # "digest" pointing at nothing returns None anyway and the check proves nothing.
+    # `blobs/../../evil/<name>` is `<tmp>/evil/<name>`, outside the cache.
+    outside = tmp_path / "evil"
+    outside.mkdir()
+    (outside / cache.safe_name(name)).write_bytes(b"not a subtitle hato stored")
+    assert c.find("../evil", name) is None, (
+        "a digest that is not a sha256 walked out of the cache and found a file")
+    path.unlink()
+    assert c.find(digest, name) is None, "a file that is gone was still offered"
+
+
+def test_a_file_recorded_before_hashes_were_kept_is_found_by_name_AND_size(tmp_path):
+    """⚠ Rows written before RUNBOOK 8b carry no hash. A name alone is not an
+    identity -- a re-upload keeps its name and changes its bytes -- so the size
+    jimaku listed must agree, and two files that fit both are an AMBIGUITY,
+    answered with None rather than with a guess."""
+    c = cache.Cache(tmp_path / "c")
+    name = "[shincaps] Show - 94 (AT-X).ja.ass"
+    small = c.store(b"x" * 100, name)
+    c.store(b"y" * 250, name)
+    assert c.find_named(name, 100) == small
+    assert c.find_named(name, 99) is None
+    assert c.find_named("[shincaps] Show - 95 (AT-X).ja.ass", 100) is None
+    c.store(b"z" * 100, name)                           # same name, same size, other bytes
+    assert c.find_named(name, 100) is None, "two candidates fit and one was guessed"
+    assert cache.Cache(tmp_path / "never").find_named(name, 100) is None
+
+
+def test_the_name_index_is_built_once_and_again_only_after_a_store(tmp_path, monkeypatch):
+    """ADVERSARY 2026-09-22 S7. A row from before 8b is found by NAME, and the
+    first version walked the whole cache for every such row, every run. The
+    index is built on the first lookup, kept, and dropped only by a store."""
+    c = cache.Cache(tmp_path / "c")
+    name = "[shincaps] Show - 94 (AT-X).ja.ass"
+    c.store(b"x" * 100, name)
+    built = []
+    real = cache.Cache._index_names
+    monkeypatch.setattr(cache.Cache, "_index_names",
+                        lambda self: built.append(1) or real(self))
+    assert c.find_named(name, 100) and c.find_named(name, 100)
+    assert c.find_named("[shincaps] Show - 95 (AT-X).ja.ass", 100) is None
+    assert len(built) == 1, "the cache was walked %d times for three lookups" % len(built)
+    other = "[shincaps] Show - 95 (AT-X).ja.ass"
+    c.store(b"y" * 100, other)
+    assert c.find_named(other, 100), "a file stored since the index was built is not found"
+    assert len(built) == 2, "the index was not rebuilt after a store"
+
+
+def test_a_file_stored_after_its_row_was_recorded_is_not_that_rows_file(tmp_path):
+    """ADVERSARY 2026-09-22 F11. A re-timed re-upload keeps its name AND its size
+    (timestamps are fixed width), so name + size alone handed a LATER download to
+    an old row -- offered under that row's verdict. The row's own moment bounds
+    it: the refused file was stored when its attempt ran."""
+    from datetime import datetime, timedelta, timezone
+    c = cache.Cache(tmp_path / "c")
+    name = "[shincaps] Show - 96 (AT-X).ja.ass"
+    tried = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+    later = c.store(b"x" * 100, name)
+
+    def stored_at(moment):
+        os.utime(str(later), (moment.timestamp(), moment.timestamp()))
+
+    stored_at(tried + timedelta(days=2))
+    assert c.find_named(name, 100) == later, "the control: with no moment, name and size find it"
+    assert c.find_named(name, 100, not_after=tried) is None, (
+        "a file stored two days AFTER the row was recorded was offered as that row's file")
+    assert c.find_named(name, 100, not_after=tried.timestamp()) is None, "epoch seconds, too"
+    stored_at(tried + timedelta(minutes=5))
+    assert c.find_named(name, 100, not_after=tried) == later, (
+        "a clock a few minutes out is slack, not a re-upload -- the file was refused")
+
+
 def test_store_file_files_the_copy_exactly_where_store_would(tmp_path):
     c = cache.Cache(tmp_path / "c")
     data = os.urandom(2 * MiB + 11)

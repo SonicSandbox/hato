@@ -551,6 +551,419 @@ def test_every_run_leaves_a_trace_the_window_can_read(tmp_path, monkeypatch,
         u"never notice this run")
 
 
+def test_a_dry_run_leaves_the_windows_memory_exactly_as_it_was(tmp_path, monkeypatch,
+                                                               capsys):
+    u"""🚨 RUNBOOK 8a. `--dry-run` says *"write nothing"* -- and it rewrote
+    `last-run.json`, the file the window paints from.
+
+    Measured 2026-09-22: the handoff's own first diagnostic command, run over
+    Sonic's real folders, replaced his last real run with 68 rows of *"would
+    fetch"*, which the window renders as *"something went wrong"*. ⛔ The command
+    a person runs to LOOK must not change what the window shows.
+
+    ⚠ BYTES AND STAMP, not just "rows exist": a snapshot rewritten with the same
+    rows would pass a row check and still move the stamp, which is the signal a
+    watching window reloads on.
+    """
+    from hato import lastrun, paths
+
+    lab = normal(Lab(tmp_path), monkeypatch)
+    code, out, err = lab.cli(capsys, "--candidates", "1")
+    assert code == 0, err
+    memory = paths.last_run_path()
+    before = memory.read_bytes()
+    stamp = lastrun.stamp()
+    assert json.loads(before.decode("utf-8"))[u"summary"].get(u"dry_run") is False
+
+    code, out, err = lab.cli(capsys, "--dry-run")
+    assert code == 0, err
+    assert memory.read_bytes() == before, (
+        u"a dry run rewrote the window's memory -- it now holds the PLAN, not the "
+        u"last real run")
+    assert lastrun.stamp() == stamp
+
+
+def test_looking_again_at_one_video_leaves_the_windows_memory_alone(tmp_path, monkeypatch,
+                                                                    capsys):
+    u"""⭐ RUNBOOK 8e. *Look again now* on one row is `--only <video>`. Written to
+    `last-run.json` it would replace the whole library's snapshot with ONE row,
+    and the Subtitles tab would forget everything else."""
+    from hato import lastrun, paths
+
+    lab = normal(Lab(tmp_path), monkeypatch)
+    code, out, err = lab.cli(capsys, "--candidates", "1")
+    assert code == 0, err
+    before = paths.last_run_path().read_bytes()
+
+    one = str(lab.media / u"frieren S2 - 03.mkv")
+    code, out, err = lab.cli(capsys, "--json", "--retry-now", "--only", one)
+    assert code == 0, err
+    rows = [json.loads(line) for line in out.splitlines() if line.strip()]
+    assert [r[u"name"] for r in rows if r[u"type"] == u"video"] == [u"frieren S2 - 03.mkv"]
+    assert paths.last_run_path().read_bytes() == before, (
+        u"one row's look-again replaced the whole library's memory")
+
+
+def test_retry_now_on_the_command_line_reaches_the_run(tmp_path, monkeypatch, capsys):
+    u"""⭐ RUNBOOK 8e, TWO ARMS, THROUGH `cli.main`. Every pipeline check hands
+    `Settings(retry_now=True)` in directly, and the check above asserts the memory
+    and the row list -- so a flag the command line parsed and never passed on left
+    all of them green, and *Look again now* would have waited out the day exactly
+    like the button it replaced (D3). Found by mutant M8e-34 surviving."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+    code, out, err = lab.cli(capsys, "--candidates", "1")    # 03 refused: a soft negative
+    assert code == 0, err
+    one = str(lab.media / u"frieren S2 - 03.mkv")
+
+    del lab.downloads[:]
+    code, out, err = lab.cli(capsys, "--json", "--only", one)          # arm A: no flag
+    assert code == 0, err
+    row, = [json.loads(line) for line in out.splitlines()
+            if line.strip() and json.loads(line)[u"type"] == u"video"]
+    assert row[u"skip"] == u"negative" and lab.downloads == [], (
+        u"the control: inside the wait a plain run must try nothing -- %r, %s"
+        % (row[u"skip"], lab.downloads))
+
+    code, out, err = lab.cli(capsys, "--json", "--retry-now", "--only", one)   # arm B
+    assert code == 0, err
+    assert lab.downloads, (
+        u"--retry-now was parsed and never reached the run: inside the wait it "
+        u"tried nothing, which is the defect the flag exists to fix")
+
+
+def test_every_real_run_writes_down_when_it_promised_to_look_again(tmp_path, monkeypatch,
+                                                                   capsys):
+    u"""⭐ RUNBOOK 8h. The tray wakes for these dates, and nothing else runs hato on
+    its own (D2) -- so a run that refused an episode must leave its retry date
+    where the tray reads it. ⛔ A dry run writes nothing, this included."""
+    from datetime import timedelta
+    from hato import retries
+
+    lab = normal(Lab(tmp_path), monkeypatch)
+    code, out, err = lab.cli(capsys, "--dry-run", "--candidates", "1")
+    assert code == 0, err
+    assert not retries.path().exists(), u"a DRY run wrote the retry dates"
+
+    code, out, err = lab.cli(capsys, "--candidates", "1")    # 03 refused: a soft negative
+    assert code == 0, err
+    promised = (NOW + timedelta(days=1)).timestamp()
+    assert retries.load() == [promised], (
+        u"the run did not write down the retry it left waiting: %s" % retries.load())
+
+    retries.path().unlink()
+    one = str(lab.media / u"frieren S2 - 05.mkv")
+    code, out, err = lab.cli(capsys, "--json", "--only", one)
+    assert code == 0, err
+    assert retries.load() == [promised], (
+        u"a run over ONE video must still write every date the DB holds -- the file "
+        u"is the state DB's, not the run's rows")
+
+
+def test_a_failed_read_of_the_retry_dates_leaves_the_file_alone():
+    u"""⛔ None, never []. An EMPTY list written after a failed read would cancel
+    every promise already on disk, and the tray would sleep through all of them.
+    ⛔ And none from a DB in MEMORY, which holds only this run's rows (F5)."""
+    class Cfg(object):
+        lang = u"ja"
+
+    class Broken(object):
+        persistent = True
+
+        def retry_dues(self, lang):
+            raise RuntimeError("database disk image is malformed")
+
+    class Fine(object):
+        persistent = True
+
+        def retry_dues(self, lang):
+            return []
+
+    class InMemory(Fine):
+        persistent = False
+
+    assert run_cmd._retry_dues(Broken(), Cfg()) is None
+    assert run_cmd._retry_dues(Fine(), Cfg()) == [], u"the control: a real empty answer"
+    assert run_cmd._retry_dues(InMemory(), Cfg()) is None, (
+        u"a DB in memory answered for the file -- its dates are this run's alone, and "
+        u"they would replace every promise already on disk")
+
+
+def test_only_naming_something_that_is_not_a_file_is_refused(tmp_path, monkeypatch, capsys):
+    u"""⛔ A run that then found nothing to do would exit 0 having looked at
+    nothing -- the silent miss `--only` exists to replace."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+    code, out, err = lab.cli(capsys, "--only", str(lab.media / u"nope.mkv"))
+    assert code == 2 and u"not a file" in err
+
+
+# -- ADVERSARY 2026-09-22: the tray's file, and the reach of --only ---------------------------
+
+def _promised():
+    from datetime import timedelta
+    return (NOW + timedelta(days=1)).timestamp()
+
+
+@pytest.mark.parametrize("spelled", [u"ja", u"jpn"])
+def test_the_trays_file_holds_the_promise_however_the_language_is_spelled(
+        tmp_path, monkeypatch, capsys, spelled):
+    u"""ADVERSARY 2026-09-22 F1, the run half. A run records its rows under the
+    RESOLVED tag -- `jpn` is `ja` -- and asked the DB for its dates with the raw
+    setting, so under `lang = "jpn"` (the spelling hato's own error message
+    suggests) every run emptied the file and the tray kept no promise."""
+    from hato import retries
+    lab = normal(Lab(tmp_path), monkeypatch)
+    lab.config.write_text(u'lang = "%s"\n' % spelled, encoding="utf-8")
+    code, out, err = lab.cli(capsys, "--candidates", "1")          # 03 refused
+    assert code == 0, err
+    assert retries.load() == [_promised()], (
+        u"lang = %r: the tray's file holds %r -- the refusal's retry is not in it"
+        % (spelled, retries.load()))
+
+
+@pytest.mark.parametrize("flag", [u"jpn", u"en"])
+def test_a_one_off_language_flag_leaves_the_trays_promises_alone(
+        tmp_path, monkeypatch, capsys, flag):
+    u"""ADVERSARY 2026-09-22 F1c + R3. The tray runs the CONFIGURED language, so
+    the file holds that language's dates whatever one run was asked -- a
+    `--lang` one-off rewrote it with its own and dropped every other."""
+    from hato import retries
+    lab = normal(Lab(tmp_path), monkeypatch)
+    code, out, err = lab.cli(capsys, "--candidates", "1")          # ja: 03 refused
+    assert code == 0, err
+    assert retries.load() == [_promised()], u"the control"
+    one = str(lab.media / u"frieren S2 - 05.mkv")
+    code, out, err = lab.cli(capsys, "--lang", flag, "--only", one)
+    assert code == 0, err
+    assert retries.load() == [_promised()], (
+        u"`--lang %s` for one run rewrote the tray's file to %r" % (flag, retries.load()))
+
+
+def test_a_run_whose_state_db_is_in_memory_leaves_the_trays_promises_on_disk(
+        tmp_path, monkeypatch, capsys):
+    u"""ADVERSARY 2026-09-22 F5 / R2. A store this build cannot read leaves the run
+    keeping its state in MEMORY -- which holds this run's rows and nothing else,
+    so its dates replaced every promise on disk with this run's."""
+    import sqlite3
+    from datetime import timedelta
+    from hato import retries
+    lab = normal(Lab(tmp_path), monkeypatch)
+    raw = sqlite3.connect(str(lab.root / "state.db"))
+    raw.execute("PRAGMA user_version = 99")                        # a newer hato's store
+    raw.commit()
+    raw.close()
+    earlier = NOW + timedelta(hours=5)                             # a promise already made
+    retries.save([earlier])
+    code, out, err = lab.cli(capsys, "--candidates", "1")
+    assert code == 0, err
+    assert lab.db.persistent is False, u"the control: this run kept its state in memory"
+    assert retries.load() == [earlier.timestamp()], (
+        u"a run whose state DB was IN MEMORY rewrote the tray's file: %r" % retries.load())
+
+
+def test_a_date_that_passed_while_nobody_looked_is_still_owed_to_the_tray(
+        tmp_path, monkeypatch, capsys):
+    u"""ADVERSARY 2026-09-22 R1. A run that held the lock across a due date
+    rewrote the file with the dates still AHEAD, so the one it had not served
+    vanished -- and the tray, correctly waiting for that lock, then had nothing
+    to keep. The row read *"retrying now"* for ever."""
+    from datetime import timedelta
+    from hato import cache as cache_module, retries
+    lab = normal(Lab(tmp_path), monkeypatch)
+    late = lab.media / u"frieren S2 - 04.mkv"
+    with state.StateDB(lab.root / "state.db", now=lambda: NOW - timedelta(hours=25)) as db:
+        owed = db.record_not_found(video_hash=cache_module.video_hash(late),
+                                   video_path=str(late), lang=u"ja", kind=u"soft",
+                                   jimaku_entry=ENTRY, reason=u"not on jimaku yet")
+    assert owed < NOW, u"the control: the date passed before this run"
+    one = str(lab.media / u"frieren S2 - 05.mkv")                   # the run passes 04 by
+    code, out, err = lab.cli(capsys, "--json", "--only", one)
+    assert code == 0, err
+    assert owed.timestamp() in retries.load(), (
+        u"a date no run has kept was dropped from the tray's file: %r" % retries.load())
+
+
+def test_what_a_run_leaves_behind_is_written_while_it_still_holds_the_lock(
+        tmp_path, monkeypatch, capsys):
+    u"""ADVERSARY 2026-09-22 S1. Written after the release, a run that finished
+    first could overwrite the NEXT run's newer answer with its own older one --
+    the window's memory of the last run, and the dates the tray keeps."""
+    from hato import lastrun, paths, retries
+    lab = normal(Lab(tmp_path), monkeypatch)
+    held = {}
+
+    def watching(name, real):
+        def save(*args, **kwargs):
+            lock = paths.lock_path()
+            try:
+                held[name] = json.loads(lock.read_text(encoding="utf-8"))["pid"] == os.getpid()
+            except (OSError, ValueError, KeyError):
+                held[name] = False
+            return real(*args, **kwargs)
+        return save
+
+    monkeypatch.setattr(lastrun, "save", watching(u"last-run.json", lastrun.save))
+    monkeypatch.setattr(retries, "save", watching(u"retries-due.json", retries.save))
+    code, out, err = lab.cli(capsys, "--candidates", "1")
+    assert code == 0, err
+    assert held == {u"last-run.json": True, u"retries-due.json": True}, (
+        u"written without the run lock held: %r" % held)
+
+
+def test_a_list_of_videos_in_a_file_is_read_like_only(tmp_path, monkeypatch, capsys):
+    u"""ADVERSARY 2026-09-22 A33. The window's *Look again now* over a few hundred
+    waiting episodes was a command line Windows refused to start; the list goes
+    in a file. ⚠ UTF-8 -- a Japanese path is the commonest line there is -- and a
+    list that cannot be read is refused, never run as "every video"."""
+    lab = normal(Lab(tmp_path, names=episodes(1, 6) + [u"葬送のフリーレン S2 - 07.mkv"]),
+                 monkeypatch)
+    listed = tmp_path / u"only.txt"
+    wanted = [str(lab.media / u"frieren S2 - 05.mkv"), str(lab.media / u"葬送のフリーレン S2 - 07.mkv")]
+    listed.write_text(u"\n".join(wanted) + u"\n\n", encoding="utf-8")
+    code, out, err = lab.cli(capsys, "--json", "--only-list", str(listed))
+    assert code == 0, err
+    names = sorted(json.loads(line)[u"name"] for line in out.splitlines()
+                   if json.loads(line).get(u"type") == u"video")
+    assert names == sorted(os.path.basename(v) for v in wanted), names
+    code, out, err = lab.cli(capsys, "--only-list", str(tmp_path / u"absent.txt"))
+    assert code == 2 and u"--only-list could not be read" in err, (code, err)
+
+
+def test_a_list_file_saved_with_a_byte_order_mark_is_read_whole(tmp_path, monkeypatch, capsys):
+    u"""A33, the encoding. Notepad and PowerShell save UTF-8 WITH a byte-order
+    mark; read as plain UTF-8 the first line became `\\ufeffD:\\...`, a video no
+    walk finds -- and the whole look-again was refused (found by the M8zd
+    builder: the list checks ran under PYTHONUTF8 with no mark in the file)."""
+    lab = normal(Lab(tmp_path, names=episodes(1, 3)), monkeypatch)
+    listed = tmp_path / u"only.txt"
+    wanted = str(lab.media / u"frieren S2 - 02.mkv")
+    listed.write_bytes(b"\xef\xbb\xbf" + (wanted + u"\n").encode("utf-8"))
+    code, out, err = lab.cli(capsys, "--json", "--only-list", str(listed))
+    assert code == 0, err
+    names = [json.loads(line)[u"name"] for line in out.splitlines()
+             if json.loads(line).get(u"type") == u"video"]
+    assert names == [u"frieren S2 - 02.mkv"], names
+
+
+def test_a_list_file_naming_no_video_is_refused_never_run_as_every_video(
+        tmp_path, monkeypatch, capsys):
+    u"""A33's other edge. A list of blank lines names no video -- and an empty
+    `--only` is NO filter at all, so *Look again now* over it ran every video in
+    the library."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+    listed = tmp_path / u"only.txt"
+    listed.write_text(u"\n\n   \n", encoding="utf-8")
+    code, out, err = lab.cli(capsys, "--only-list", str(listed))
+    assert code == 2 and u"names no video" in err, (code, err)
+
+
+def test_only_a_video_no_walk_of_this_run_could_reach_is_refused(tmp_path, monkeypatch, capsys):
+    u"""ADVERSARY 2026-09-22 F7. `--only` filters what the walk finds -- so a real
+    file outside the folders given, inside a skipped one, or in a subfolder of a
+    run that does not look in subfolders, was looked at by nobody, and the run
+    exited 0. The same silent miss as a name that is not a file."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+    elsewhere = tmp_path / u"elsewhere"
+    elsewhere.mkdir()
+    stray = elsewhere / u"frieren S2 - 03.mkv"
+    stray.write_bytes(b"\x1aE\xdf\xa3 another copy")
+    code, out, err = lab.cli(capsys, "--only", str(stray))
+    assert code == 2 and u"not inside" in err and str(lab.media) in err, (code, err)
+
+    deeper = lab.media / u"Extras"
+    deeper.mkdir()
+    extra = deeper / u"frieren S2 - 07.mkv"
+    extra.write_bytes(b"\x1aE\xdf\xa3 an extra")
+    code, out, err = lab.cli(capsys, "--no-recurse", "--only", str(extra))
+    assert code == 2 and u"subfolder" in err, (code, err)
+
+    lab.config.write_text(u"skip_folders = [%s]\n" % json.dumps(str(deeper)), encoding="utf-8")
+    code, out, err = lab.cli(capsys, "--only", str(extra))
+    assert code == 2 and u"skipped folder" in err, (code, err)
+
+    lab.config.write_text(u"", encoding="utf-8")                   # the control: reachable
+    code, out, err = lab.cli(capsys, "--json", "--only", str(extra))
+    assert code == 0, err
+    assert [json.loads(line)[u"name"] for line in out.splitlines()
+            if json.loads(line).get(u"type") == u"video"] == [extra.name], out
+
+
+def test_a_video_with_no_episode_number_is_trouble_in_what_hato_remembers(
+        tmp_path, monkeypatch, capsys):
+    u"""ADVERSARY 2026-09-22 F20, through a REAL run. The run says REFUSED -- the
+    name carries no number -- and records a soft negative; read back, `hato
+    problems` filed it under *not on jimaku yet*, and a person waited a day on
+    jimaku when the fix is a rename."""
+    import argparse
+    import shutil
+    from hato.commands import problems as problems_cmd
+    lab = normal(Lab(tmp_path, names=episodes(1, 3) + [u"frieren S2.mkv"]), monkeypatch)
+    # ⚠ The view lists only what is under a CONFIGURED folder -- the run's own
+    # folder, written where `hato problems` reads it.
+    lab.config.write_text(u"folders = [%s]\n" % json.dumps(str(lab.media)), encoding="utf-8")
+    code, out, err = lab.cli(capsys, "--json", "--candidates", "1")
+    assert code == 0, err
+    ran = dict((o[u"name"], o) for o in (json.loads(l) for l in out.splitlines())
+               if o.get(u"type") == u"video")
+    assert ran[u"frieren S2.mkv"][u"outcome"] == u"REFUSED", ran[u"frieren S2.mkv"]
+    lab.data.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(str(lab.root / "state.db"), str(lab.data / "state.db"))
+    parser = argparse.ArgumentParser()
+    problems_cmd.register(parser)
+    assert problems_cmd.run(parser.parse_args([]), now=NOW) == 0
+    text = capsys.readouterr().out
+    groups = dict((block.splitlines()[0], block) for block in text.split(u"\n\n")[1:])
+    mine = [heading for heading, block in groups.items() if u"frieren S2.mkv" in block]
+    assert mine == [u"had a problem"], (
+        u"the run said REFUSED (no episode number); what hato remembers filed it under "
+        u"%r:\n%s" % (mine, text))
+    assert u"No episode number was read from the video" in groups[u"had a problem"], text
+
+
+def test_a_run_that_meets_another_one_says_so_in_the_stream(tmp_path, monkeypatch, capsys):
+    u"""⭐ RUNBOOK 8e. Under `--json` a held lock produced an EMPTY stdout and exit 0,
+    which the window read as a finished run -- it said "done" over nothing. It is
+    one typed object now, in the grammar the window reads."""
+    from hato.runlock import RunLock
+
+    lab = normal(Lab(tmp_path), monkeypatch)
+    held = RunLock()
+    held.acquire()
+    try:
+        code, out, err = lab.cli(capsys, "--json")
+    finally:
+        held.release()
+    assert code == 0
+    said = [json.loads(line) for line in out.splitlines() if line.strip()]
+    assert [o[u"type"] for o in said] == [u"busy"], out
+    assert said[0][u"reason"]
+
+
+def test_a_run_told_to_wait_runs_once_the_other_one_finishes(tmp_path, monkeypatch, capsys):
+    u"""ADVERSARY 2026-09-22 L1, through the real entry point. The tray's runs
+    carry `--wait`: one meeting another run's lock queues behind it and then
+    runs -- where it used to scan nothing, and the arrival it was spawned for
+    was never looked at. ⚠ The control is the check above: without it, busy."""
+    import threading
+    from hato.runlock import RunLock
+
+    lab = normal(Lab(tmp_path), monkeypatch)
+    monkeypatch.setattr(run_cmd, "LOCK_POLL_SECONDS", 0.05)
+    held = RunLock()
+    held.acquire()
+    finishes = threading.Timer(0.5, held.release)
+    finishes.start()
+    try:
+        code, out, err = lab.cli(capsys, "--json", "--wait")
+    finally:
+        finishes.cancel()
+        held.release()
+    assert code == 0, err
+    said = [json.loads(line) for line in out.splitlines() if line.strip()]
+    kinds = [o[u"type"] for o in said]
+    assert u"busy" not in kinds and kinds.count(u"video") == len(lab.names), (
+        u"a run told to wait gave up or scanned part of the folder: %s" % kinds)
+
+
 def test_progress_lines_arrive_before_the_objects_built_from_the_finished_run(
         tmp_path, monkeypatch, capsys):
     u"""RUNBOOK 7b. The window paints these while the run is happening.

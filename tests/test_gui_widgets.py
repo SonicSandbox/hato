@@ -40,7 +40,8 @@ import pytest
 
 from PyQt6.QtCore import QPoint, QPointF, Qt
 from PyQt6.QtGui import QEnterEvent, QMouseEvent, QPalette
-from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton
+from PyQt6.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton,
+                             QWidget)
 
 from hato.gui import app as gui_app
 from hato.gui import branding, theme
@@ -74,9 +75,13 @@ def tsu(match_rate=0.82, verdict=u"locked", segments=((None, -33.07),),
 
 
 def added(episode=1, title=u"\u846c\u9001\u306e\u30d5\u30ea\u30fc\u30ec\u30f3",
-          season=u"S2", rate=0.82, name=None, entry=11446):
+          season=2, rate=0.82, name=None, entry=11446):
     u"""One CONFIDENT row that really was written. [!] `output_path` is what
-    makes it *added*: a CONFIDENT row with no path is a dry run."""
+    makes it *added*: a CONFIDENT row with no path is a dry run.
+
+    \u26a0 `season` IS AN INT, as the wire carries it -- every fixture here used to
+    write the STRING "S2", and the released window printed a bare *"\u00b7 4"* that
+    no picture had ever shown (D10; ADVERSARY 2026-09-22's fixture findings)."""
     filename = name or (u"[NanakoRaws] Sousou no Frieren S2 - %02d "
                         u"(NTV 1080p).ass" % episode)
     return {u"type": u"video",
@@ -114,7 +119,7 @@ FRIEREN_POOL = [
 
 def needs_you(episode=54,
               title=u"Re:\u30bc\u30ed\u304b\u3089\u59cb\u3081\u308b\u7570\u4e16\u754c\u751f\u6d3b",
-              season=u"3rd Season", how_many=3, pool=None):
+              season=3, how_many=3, pool=None):
     u"""One REFUSED row -- which the interface calls *needs a pick*.
 
     [!] The engine's `reason` DELIBERATELY carries the alarming word, because
@@ -123,6 +128,10 @@ def needs_you(episode=54,
 
     \u26a0 `pool` defaults to Re:Zero's. Pass the show's OWN candidates for any
     other row -- see the note on REZERO_POOL.
+
+    \u26a0 THE WIRE'S SHAPE: an INT season, and a retry date -- every refusal of
+    files records the soft negative `_all_refused` writes, and a REFUSED row
+    with no `retry_after` is one the engine never sends (ADVERSARY 2026-09-22).
     """
     pool = REZERO_POOL if pool is None else pool
     attempts = []
@@ -143,35 +152,70 @@ def needs_you(episode=54,
             u"candidates_tried": how_many, u"candidates_offered": how_many,
             u"tsubasa": None, u"nothing_written": u"nothing was written",
             u"output_path": None, u"kept_path": None, u"api_calls": 1,
-            u"bytes_downloaded": 71680, u"retry_after": None,
+            u"bytes_downloaded": 71680,
+            u"retry_after": u"2026-09-23T12:00:00.123456+00:00",
             u"attempts": attempts}
 
 
 def skipped(episode=7,
-            title=u"\u7247\u7530\u820e\u306e\u304a\u3063\u3055\u3093\u3001\u5263\u8056\u306b\u306a\u308b"):
-    return {u"type": u"video",
-            u"video": u"D:\\Anime\\Katainaka II\\ep%02d.mkv" % episode,
-            u"name": u"ep%02d.mkv" % episode, u"title": title,
-            u"season": None, u"episode": episode, u"outcome": u"CONFIDENT",
-            u"skip": u"already has a Japanese subtitle", u"reason": u"",
-            u"jimaku_entry": None, u"jimaku_filename": None,
-            u"candidates_tried": 0, u"candidates_offered": 0,
-            u"tsubasa": None, u"nothing_written": None, u"output_path": None,
-            u"kept_path": None, u"api_calls": 0, u"bytes_downloaded": 0,
-            u"retry_after": None, u"attempts": []}
+            title=u"\u7247\u7530\u820e\u306e\u304a\u3063\u3055\u3093\u3001\u5263\u8056\u306b\u306a\u308b",
+            skip=u"present", **over):
+    u"""A SKIP row.
+
+    🚨 `skip` USED TO BE THE SENTENCE *"already has a Japanese subtitle"*, and
+    the engine cannot emit that. It emits one of five TOKENS -- `present`,
+    `embedded`, `negative`, `no-track`, `blacklisted` (`pipeline.py`) -- and
+    every widget check about a skipped row was therefore driving a shape that
+    has never come down the wire. It passed only because the reader did
+    `if obj.get("skip")`, which any non-empty string satisfies.
+
+    ⛔ That is the fixture holding constant the exact thing the defect varied.
+    """
+    row = {u"type": u"video",
+           u"video": u"D:\\Anime\\Katainaka II\\ep%02d.mkv" % episode,
+           u"name": u"ep%02d.mkv" % episode, u"title": title,
+           u"season": None, u"episode": episode, u"outcome": u"CONFIDENT",
+           u"skip": skip, u"reason": u"",
+           u"jimaku_entry": None, u"jimaku_filename": None,
+           u"candidates_tried": 0, u"candidates_offered": 0,
+           u"tsubasa": None, u"nothing_written": None, u"output_path": None,
+           u"kept_path": None, u"api_calls": 0, u"bytes_downloaded": 0,
+           u"retry_after": None, u"attempts": []}
+    row.update(over)
+    return row
+
+
+def embedded(episode=11, title=u"Katainaka no Ossan Kensei ni Naru"):
+    u"""Sonic's real Katainaka row: an Erai-raws [MultiSub], Japanese INSIDE."""
+    return skipped(episode=episode, title=title, skip=u"embedded",
+                   outcome=u"SKIPPED",
+                   reason=u"an embedded ja text track is already there "
+                          u"(track 11, S_TEXT/ASS) -- already in sync, so "
+                          u"nothing was fetched")
+
+
+def retrying(episode=12,
+             title=u"Tsuihou sareta Tensei Juukishi wa Game Chishiki de Musou suru"):
+    u"""Sonic's real Tsuihou row: downloaded 3 of 10, kept none, retries."""
+    return skipped(episode=episode, title=title, skip=u"negative",
+                   outcome=u"SKIPPED",
+                   reason=u"3 of 10 candidate(s) tried, all refused by timing",
+                   retry_after=u"2026-09-20T07:03:05.264054+00:00")
 
 
 def not_yet(episode=24, title=u"\u846c\u9001\u306e\u30d5\u30ea\u30fc\u30ec\u30f3"):
+    u"""NOT_FOUND. ⚠ The wire's `retry_after` is a full ISO moment with its zone,
+    never a bare date -- a date-only fixture was a shape the engine never sends."""
     return {u"type": u"video",
             u"video": u"D:\\Anime\\Sousou no Frieren S2\\ep%02d.mkv" % episode,
             u"name": u"ep%02d.mkv" % episode, u"title": title,
-            u"season": u"S2", u"episode": episode, u"outcome": u"NOT_FOUND",
+            u"season": 2, u"episode": episode, u"outcome": u"NOT_FOUND",
             u"skip": None, u"reason": u"nothing on jimaku yet; retry 19 Sep",
             u"jimaku_entry": 11446, u"jimaku_filename": None,
             u"candidates_tried": 0, u"candidates_offered": 0,
             u"tsubasa": None, u"nothing_written": None, u"output_path": None,
             u"kept_path": None, u"api_calls": 1, u"bytes_downloaded": 0,
-            u"retry_after": u"2026-09-19", u"attempts": []}
+            u"retry_after": u"2026-09-19T07:03:05.264054+00:00", u"attempts": []}
 
 
 def broke(episode=1, title=u"Tetsunabe no Jan"):
@@ -189,10 +233,10 @@ def broke(episode=1, title=u"Tetsunabe no Jan"):
             u"bytes_downloaded": 0, u"retry_after": None, u"attempts": []}
 
 
-def summary(api_calls=6, seconds=41.2):
+def summary(api_calls=6, seconds=41.2, notes=()):
     return {u"type": u"run", u"api_calls": api_calls, u"seconds": seconds,
             u"videos": 7, u"stopped": False, u"dry_run": False,
-            u"folders": [u"D:\\Anime"], u"lang": u"ja", u"notes": [],
+            u"folders": [u"D:\\Anime"], u"lang": u"ja", u"notes": list(notes),
             u"shows": []}
 
 
@@ -203,7 +247,7 @@ KATAINAKA = (u"\u7247\u7530\u820e\u306e\u304a\u3063\u3055\u3093\u3001"
 
 
 def rezero_added(episode, rate, verdict=u"locked"):
-    row = added(episode, REZERO, u"3rd Season", rate,
+    row = added(episode, REZERO, 3, rate,
                 name=u"[Erai-raws] Re Zero kara Hajimeru Isekai Seikatsu "
                      u"3rd - %d.ass" % episode, entry=9921)
     row[u"tsubasa"][u"verdict_word"] = verdict
@@ -232,7 +276,7 @@ def full_rows():
             rezero_added(52, 0.80), weak,
             one_piece(),
             needs_you(54),
-            needs_you(3, FRIEREN, u"S2", how_many=1, pool=FRIEREN_POOL),
+            needs_you(3, FRIEREN, 2, how_many=1, pool=FRIEREN_POOL),
             skipped(7), skipped(8), not_yet(24), broke(1)]
 
 
@@ -281,14 +325,18 @@ SETTINGS = dict(
                {u"name": u"Bocchi the Rock - 07.mkv",
                 u"note": u"not on this machine any more",
                 u"when": u"28 Jul", u"gone": True}],
-    key_hint=u"JyQ", schedule=u"03:00", next_run=u"next run in 4 hours",
-    last_run=u"03:00", video_total=68, live=u"Tetsunabe no Jan",
+    key_hint=u"JyQ", schedule=u"03:00",
+    last_run=u"03:00", live=u"Tetsunabe no Jan",
     running=True)
 
 
 def make(rows=None, **over):
     u"""A window over fixture rows, with `spawn` recording instead of running."""
     settings = dict(SETTINGS)
+    # ⚠ THE SUITE'S OWN CLOCK. The rows carry real retry dates now, as the wire
+    # does, and a window reading the wall clock would say "retry due" on one day
+    # and "retry after 13h" on another -- a check that depends on the date.
+    settings.setdefault(u"now", NOW8)
     settings.update(over)
     state = gui_app.build_state_from(
         full_rows() if rows is None else rows, summary(), **settings)
@@ -665,6 +713,35 @@ def test_a_run_this_window_is_painting_is_not_overwritten(qapp, tmp_path,
 
     assert [r.get(u"episode") for r in window.state.rows] == [1], (
         u"the live run's rows were replaced by a stale snapshot")
+
+
+def test_a_dry_run_landing_does_not_replace_what_the_window_shows(qapp, tmp_path,
+                                                                  monkeypatch):
+    u"""🚨 RUNBOOK 8a. hato 1.0.1 writes a dry run's PLAN into the window's
+    memory, and one is sitting on Sonic's disk now: its rows are PLANNED, which
+    `outcome_word` calls *"something went wrong"*.
+
+    ⚠ THE STAMP MOVES, SO THE WINDOW LOOKS -- and must then keep the real run it
+    already has. A dry run is not a run.
+    """
+    from hato import lastrun
+
+    memory = tmp_path / "last-run.json"
+    monkeypatch.setattr(gui_run, "last_run_stamp",
+                        lambda path=None: lastrun.stamp(path=memory))
+    monkeypatch.setattr(gui_run, "load_last_run",
+                        lambda path=None: lastrun.load(path=memory))
+
+    window = make(rows=[added(1)], running=False)
+    window.follow_other_runs(every_ms=60000)
+    planned = dict(added(99), outcome=u"PLANNED", output_path=None,
+                   reason=u"would fetch: 3 candidates offered")
+    lastrun.save([planned], {u"type": u"run", u"dry_run": True}, path=memory)
+    window._others_timer.timeout.emit()
+
+    assert [r.get(u"episode") for r in window.state.rows] == [1], (
+        u"a dry run's plan replaced the last real run on screen")
+    assert u"99" not in u" ".join(gui_app.texts(window))
 
 
 def test_the_surasura_card_is_last_and_carries_its_mark(qapp):
@@ -1562,9 +1639,16 @@ def test_clicking_a_candidate_commits_exactly_that_pair(qapp):
     attempt = row[u"attempts"][1]           # the SECOND one, not the best
     argv = window.commit_pair(key, attempt)
     expected = gui_run.argv_for_pair(row[u"video"],
-                                     gui_app.candidate_path(attempt))
+                                     gui_app.candidate_path(attempt),
+                                     force=gui_run.PICK_OVERRIDES_TIMING)
     assert argv == expected
     assert window.spawned == [expected]
+
+
+def _pair_in(argv):
+    u"""-> (video, subtitle) from a `hato sync` argv, wherever the flags sit."""
+    at = argv.index(u"sync")
+    return argv[at + 1], argv[at + 2]
 
 
 def test_the_committed_pair_names_the_file_that_was_clicked(qapp):
@@ -1572,16 +1656,15 @@ def test_the_committed_pair_names_the_file_that_was_clicked(qapp):
     row = window.state.of(gui_run.NEEDS_YOU)[0]
     attempt = row[u"attempts"][2]
     window.commit_pair(window.state.key(row), attempt)
-    #: argv is [..., "sync", <video>, <subtitle>, "--json"].
-    assert attempt[u"name"] in window.spawned[0][-2]
+    _video, subtitle = _pair_in(window.spawned[0])
+    assert attempt[u"name"] in subtitle
     # ⚠ ABSOLUTISED ON BOTH SIDES. `run.argv_for_pair` calls `abspath` on
     # purpose -- a GUI's working directory is wherever the shortcut pointed --
     # so comparing against the raw fixture value only held on Windows, where
     # these fixture paths are already absolute. On a POSIX runner `abspath`
     # prefixes the checkout, and the two differed. CI found it on the first
     # run that reached Linux.
-    assert window.spawned[0][-2] == os.path.abspath(
-        gui_app.candidate_path(attempt))
+    assert subtitle == os.path.abspath(gui_app.candidate_path(attempt))
 
 
 def test_a_relative_candidate_path_is_made_absolute_before_it_is_run(qapp):
@@ -1602,9 +1685,11 @@ def test_a_relative_candidate_path_is_made_absolute_before_it_is_run(qapp):
     window = make(rows=[row])
     argv = window.commit_pair(window.state.key(row), row[u"attempts"][0])
     assert argv == gui_run.argv_for_pair(u"anime/rezero/ep54.mkv",
-                                         u"subs/ep54.ja.ass")
-    assert os.path.isabs(argv[-2]), u"the subtitle path is still relative"
-    assert os.path.isabs(argv[-3]), u"the video path is still relative"
+                                         u"subs/ep54.ja.ass",
+                                         force=gui_run.PICK_OVERRIDES_TIMING)
+    video, subtitle = _pair_in(argv)
+    assert os.path.isabs(subtitle), u"the subtitle path is still relative"
+    assert os.path.isabs(video), u"the video path is still relative"
 
 
 def test_a_candidate_with_no_file_on_disk_commits_nothing(qapp):
@@ -1630,17 +1715,42 @@ def test_a_click_on_the_card_reaches_commit(qapp):
     assert cards, u"no candidate cards were built"
     click(cards[0])
     assert len(window.spawned) == 1
-    assert window.spawned[0][-4] == u"sync"
+    assert u"sync" in window.spawned[0]
 
 
-def test_the_row_collapses_to_green_naming_the_file_it_used(qapp):
-    u"""[*] A COLLAPSED ROW STILL SAYS WHAT HAPPENED TO IT. That is what makes
-    an accordion safe to collapse."""
+def _land(window, row, attempt, word=gui_run.PAIRED):
+    u"""The pick's child answered: a file landed. -> the key"""
+    key = window.state.key(row)
+    window.commit_pair(key, attempt)
+    window.finish_pick(key, attempt[u"name"], (word, u"", u"D:\\x.ja.ass"))
+    return key
+
+
+def test_a_click_says_pairing_and_NOT_paired_until_a_file_lands(qapp):
+    u"""\ud83d\udea8 D7, measured 2026-09-22. The row went green, *"paired"*, at the CLICK,
+    and the child was never read -- it had died on a usage error for every pick
+    ever made. \u26d4 A click is not a result."""
     window = make()
     window.show_tab(gui_app.TAB_PICK)
     row = window.state.of(gui_run.NEEDS_YOU)[0]
     attempt = row[u"attempts"][0]
     window.commit_pair(window.state.key(row), attempt)
+    assert window.state.picked == {}, u"the click itself was recorded as a pairing"
+    heads = window.findChildren(gui_app.PickHead)
+    assert not [h for h in heads if h.property(u"done") == u"true"]
+    busy = u"using · " if gui_run.PICK_OVERRIDES_TIMING else u"checking · "
+    assert busy in u" ".join(h.best.text() for h in heads), u"the row does not say a pick is in flight"
+    assert _badge_text(window) == u"2", u"the badge moved before anything landed"
+
+
+def test_the_row_collapses_to_green_naming_the_file_it_used(qapp):
+    u"""[*] A COLLAPSED ROW STILL SAYS WHAT HAPPENED TO IT. That is what makes
+    an accordion safe to collapse -- \u2b50 once `hato sync` has said a file landed."""
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    row = window.state.of(gui_run.NEEDS_YOU)[0]
+    attempt = row[u"attempts"][0]
+    _land(window, row, attempt)
     heads = window.findChildren(gui_app.PickHead)
     done = [h for h in heads if h.property(u"done") == u"true"]
     assert len(done) == 1
@@ -1648,22 +1758,62 @@ def test_the_row_collapses_to_green_naming_the_file_it_used(qapp):
     assert attempt[u"name"] in done[0].best.text()
 
 
+def test_a_forced_pick_says_it_was_the_persons_choice(qapp):
+    u"""D6. Written over a timing refusal, the row says *used*, never *paired* --
+    the timing never held, and the row must not say it did."""
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    row = window.state.of(gui_run.NEEDS_YOU)[0]
+    _land(window, row, row[u"attempts"][0], word=gui_run.FORCED)
+    heads = window.findChildren(gui_app.PickHead)
+    assert not [h for h in heads if h.property(u"done") == u"true"], (
+        u"a forced pick is painted as if the timing had held")
+    forced = [h for h in heads if h.property(u"done") == u"forced"]
+    assert forced and forced[0].best.text().startswith(gui_run.FORCED + u" \u00b7 ")
+
+
+def test_a_pick_that_did_not_land_leaves_the_row_asking(qapp):
+    u"""\u2b50 RUNBOOK 7d promised this check and it was never written: *"a refused
+    pick leaves the row asking, not claiming."* The row stays, the badge stays,
+    and hato's reason is under the cards."""
+    window = make()
+    window.show_tab(gui_app.TAB_PICK)
+    row = window.state.of(gui_run.NEEDS_YOU)[0]
+    key = window.state.key(row)
+    window.state.open_pick = key
+    window.commit_pair(key, row[u"attempts"][0])
+    window.finish_pick(key, row[u"attempts"][0][u"name"],
+                       (gui_run.PICK_REFUSED, u"31% -- the timing does not hold", None))
+    assert key not in window.state.picked and window.state.open_pick == key
+    assert _badge_text(window) == u"2"
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_PICK]))
+    assert gui_run.PICK_REFUSED in joined, joined
+    assert u"refus" not in joined.lower()
+
+
 def test_the_next_unresolved_row_opens_as_this_one_closes(qapp):
-    u"""Sonic: *"after selecting one, the next one opens as it closes."*"""
+    u"""Sonic: *"after selecting one, the next one opens as it closes."* \u2b50 As it
+    closes -- which is when the pair has LANDED, not when it was clicked."""
     window = make()
     rows = window.state.of(gui_run.NEEDS_YOU)
     first, second = window.state.key(rows[0]), window.state.key(rows[1])
     window.state.open_pick = first
     window.render()
     window.commit_pair(first, rows[0][u"attempts"][0])
+    assert window.state.open_pick == first, u"it moved on before the answer"
+    window.finish_pick(first, rows[0][u"attempts"][0][u"name"],
+                       (gui_run.PAIRED, u"", u"D:\\x.ja.ass"))
     assert window.state.open_pick == second
 
 
 def test_the_last_pick_leaves_nothing_open(qapp):
+    u"""\u26a0 Starts with a row OPEN: begun at None, "nothing open" is true before
+    anything happens, and the check proved nothing (it did, for a while)."""
     window = make()
     rows = window.state.of(gui_run.NEEDS_YOU)
+    window.state.open_pick = window.state.key(rows[0])
     for row in rows:
-        window.commit_pair(window.state.key(row), row[u"attempts"][0])
+        _land(window, row, row[u"attempts"][0])
     assert window.state.open_pick is None
 
 
@@ -1961,8 +2111,13 @@ def test_a_wholly_skipped_show_is_one_quiet_line_not_a_row_each(qapp):
     window = make(rows=[added(1), skipped(7), skipped(8)])
     window.show_tab(gui_app.TAB_SUBS)
     joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SUBS]))
-    assert u"already subtitled" in joined
+    # ⚠ The wording moved 2026-09-19: "already subtitled" was painted under
+    # EVERY skip, including ones with no subtitle anywhere. The structural
+    # claim -- one line, not a row each -- is what this check is for.
+    assert gui_run.SKIPPED in joined, joined
     assert len(window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow)) == 1
+    # ⭐ And the episodes are named, so two lines of one show differ
+    assert u"eps 7, 8" in joined, joined
 
 
 def test_episodes_skipped_inside_an_added_show_are_counted_under_it(qapp):
@@ -1972,7 +2127,9 @@ def test_episodes_skipped_inside_an_added_show_are_counted_under_it(qapp):
     window = make(rows=[added(1), skipped(7, title), skipped(8, title)])
     window.show_tab(gui_app.TAB_SUBS)
     joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SUBS]))
-    assert u"2 episodes already had subtitles" in joined
+    # ⚠ Was "2 episodes already had subtitles" -- true of `present` and false
+    # of the other four skips this line also counts. The COUNT is the claim.
+    assert u"2 other episodes skipped" in joined, joined
     assert u"nothing was requested for them" in joined
 
 
@@ -2017,6 +2174,155 @@ def test_a_needs_you_row_names_the_VIDEO_FILE_not_just_the_show(qapp):
         u"both rows read %r -- indistinguishable" % shown[0]
     for text in shown:
         assert u".mkv" in text, u"the row does not name a file: %r" % text
+
+
+def test_a_skipped_show_says_WHICH_skip_and_names_the_EPISODE(qapp):
+    u"""🚨 SHIPPED AS A REASSURING LIE. Sonic, 2026-09-19, on 1.0.1:
+    *"Katanai and tsuihou don't have it even though it says its already subbed
+    in the GUI"* and *"for the 'already subbed' i need the ep # in those titles
+    as well."*
+
+    Neither had a subtitle file. Katainaka is an Erai-raws [MultiSub] whose
+    Japanese track is INSIDE the container; Tsuihou downloaded 3 of 10
+    candidates, kept none, and is retrying tomorrow. ⛔ Both rendered as the
+    single line *"— already subtitled"*, under a tooltip asserting *"every
+    episode already carries a Japanese track"*.
+
+    ⚠ The engine sent `skip` correctly the whole time and the CLI printed
+    *"1 already present · 1 waiting to retry · 1 already embedded"*. Only the
+    window collapsed them."""
+    window = make(rows=[embedded(11), retrying(12)])
+    window.show_tab(gui_app.TAB_SUBS)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SUBS]))
+
+    # ⭐ THE EPISODE NUMBER, which is what made two rows of one show the same
+    assert u"ep 11" in joined, joined
+    assert u"ep 12" in joined, joined
+
+    # ⛔ AND THE CLAIM THAT WAS FALSE FOR BOTH OF THEM
+    assert u"already subtitled" not in joined, joined
+
+    # ⭐ Two different facts must not read as one word
+    assert gui_run.RETRYING in joined, joined
+    assert gui_run.INSIDE_VIDEO in joined, joined
+
+    # ⛔ No tooltip may tell a person a retrying video already has a track
+    pane = window.panes[gui_app.TAB_SUBS]
+    tips = [w.toolTip() for w in pane.findChildren(QWidget) if w.toolTip()]
+    for tip in tips:
+        if u"carries a Japanese track" in tip:
+            raise AssertionError(u"the old blanket tooltip is still painted: %r" % tip)
+
+
+def test_the_footer_counts_EVERY_skip_not_only_the_ones_with_a_file(qapp):
+    u"""⚠ Splitting one skip word into five turned the footer tally from *all
+    the skips* into *only the ones that had a file*, without changing a
+    character at the read site. `counts()` pre-seeds every key, so there would
+    never have been a KeyError to notice -- only a silent undercount.
+
+    ⭐ AMENDED AT RUNBOOK 8e: a RETRYING skip is no longer a skip here. It is
+    waiting on something -- a pick, or jimaku -- and it is counted on Needs you,
+    once; counted here as well it would be one video in two of the footer's
+    three numbers. Every SETTLED kind of skip still counts, and all four are here.
+    """
+    blocked = skipped(14, skip=u"blacklisted", outcome=u"SKIPPED",
+                      reason=u"blacklisted by you")
+    raw = skipped(13, skip=u"no-track", outcome=u"SKIPPED",
+                  reason=u"no subtitle track in the video")
+    window = make(rows=[skipped(7), embedded(11), raw, blocked, retrying(12)])
+    window.show_tab(gui_app.TAB_SUBS)
+    tally = window.tally_labels[2].text()
+    assert tally == u"4 skipped", tally
+    assert u"had them" not in tally, u"a retrying row has nothing: %r" % tally
+
+
+def test_a_run_NOTE_reaches_the_WINDOW_and_not_only_the_terminal(qapp):
+    u"""🚨 Sonic, 2026-09-22, on a file inside a blacklisted folder: *"it
+    noticed it but didn't seem to do anything with it ... But nothing in the UI
+    ever popped up about it."*
+
+    ⛔ The pipeline writes *"N video(s) were not looked at because they are
+    inside a skipped folder"* into `report.notes` for exactly this reason --
+    its own comment says a skip rule that is too broad would otherwise be
+    invisible for as long as nobody went looking. `hato/gui/` had NO reference
+    to `notes` anywhere, so the note reached the CLI and stopped there.
+
+    ⚠ The whole risk of `skip_folders` is that it is too broad, and the only
+    reader who could act on that was the one who never saw it."""
+    note = (u"2 video(s) were not looked at because they are inside a "
+            u"skipped folder (D:\\Anime\\Raw).")
+    state = gui_app.build_state_from([added(1)], summary(notes=[note]),
+                                     **dict(SETTINGS))
+    window = gui_app.HatoWindow(state)
+    window.show_tab(gui_app.TAB_SUBS)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SUBS]))
+    assert u"skipped folder" in joined, joined
+    assert u"D:\\Anime\\Raw" in joined, joined
+
+
+def test_a_run_note_in_the_engines_words_is_said_in_hatos(qapp):
+    u"""ADVERSARY 2026-09-22 (suspected on the window surface, fixed with it): a
+    run's notes are ENGINE prose -- one can carry an exception's words or the
+    engine's word for a timing refusal -- and they reached the Subtitles tab
+    raw, past the one gate every other engine-written field goes through."""
+    note = u"2 video(s): every candidate was refused by the timing check"
+    state = gui_app.build_state_from([added(1)], summary(notes=[note]),
+                                     **dict(SETTINGS))
+    window = gui_app.HatoWindow(state)
+    window.show_tab(gui_app.TAB_SUBS)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SUBS]))
+    assert u"refus" not in joined.lower(), joined
+    assert gui_app._HUMAN_SENTENCE in joined, (
+        u"the control: the note went missing rather than being said -- %s" % joined)
+
+
+def test_a_long_run_note_WRAPS_rather_than_running_off_the_window(qapp):
+    u"""🚨 LOOKED, 2026-09-23, over a copy of Sonic's store: *"24 video(s) were not
+    looked at because they are inside a skipped folder (C:\\...)"* ran off the
+    right edge with no ellipsis, and the folder list -- what the note exists to
+    say -- was cut mid-path. Qt does not wrap a label unless told to."""
+    folders = u", ".join(u"D:\\Downloads\\a long folder name %d" % i for i in range(6))
+    note = (u"24 video(s) were not looked at because they are inside a skipped "
+            u"folder (%s)" % folders)
+    state = gui_app.build_state_from([added(1)], summary(notes=[note]),
+                                     **dict(SETTINGS))
+    window = gui_app.HatoWindow(state)
+    window.show_tab(gui_app.TAB_SUBS)
+    lay_out(window)
+    pane = window.panes[gui_app.TAB_SUBS]
+    said = [l for l in pane.findChildren(QLabel) if u"skipped folder" in l.text()]
+    assert said, u"the note is not on the tab at all"
+    right = said[0].mapTo(pane.viewport(), said[0].rect().topRight()).x()
+    assert said[0].wordWrap(), u"a note longer than the window is not told to wrap"
+    assert right <= pane.viewport().width(), (
+        u"the note runs %dpx past the window's edge" % (right - pane.viewport().width()))
+
+
+def test_EVERY_quiet_line_that_carries_prose_it_did_not_write_wraps(qapp):
+    u"""⭐ THE CLASS, NOT THE INSTANCE (the note above was LOOKED, 2026-09-23): a
+    config error is two sentences and a path, four found-on-a-retry names outgrow
+    the window, and jimaku's words about a key are jimaku's to choose. Each is
+    told to wrap -- an unwrapped QLabel does not overflow, it cuts silently."""
+    long_error = (u"C:\\Users\\Someone\\AppData\\Local\\hato\\config.toml: schedule = "
+                  u"'3:00' must be a 24-hour time such as '03:00'. A value whatever "
+                  u"registers the run cannot read would be accepted here and refused "
+                  u"somewhere nobody is looking.")
+    window = make(config_error=long_error, key_status=u"x" * 400, key_ok=False)
+    window.show_tab(gui_app.TAB_PICK)             # ⚠ where "not up to date" is said
+    lay_out(window)
+    stale = [l for l in window.panes[gui_app.TAB_PICK].findChildren(QLabel)
+             if u"could not read what it remembers" in l.text()]
+    assert stale and stale[0].wordWrap(), u"the config error is cut, not wrapped"
+    window.show_tab(gui_app.TAB_SET)
+    said = [l for l in window.panes[gui_app.TAB_SET].findChildren(QLabel)
+            if l.objectName() == u"keybad"]
+    assert said and said[0].wordWrap(), u"jimaku's words about the key are cut, not wrapped"
+    found = [dict(added(n), tried_before=remembered()[u"tried_before"]) for n in (1, 2, 3, 4, 5)]
+    retried = make(rows=found, running=False)
+    retried.show_tab(gui_app.TAB_SUBS)
+    line = [l for l in retried.panes[gui_app.TAB_SUBS].findChildren(QLabel)
+            if u"tried other files first" in l.text()]
+    assert line and line[0].wordWrap(), u"four found-on-a-retry names are cut, not wrapped"
 
 
 def test_not_yet_rows_are_a_quiet_line_on_the_needs_you_tab(qapp):
@@ -2410,10 +2716,17 @@ def test_the_tabs_are_in_sonics_priority_order(qapp):
 
 
 def test_the_title_line_derives_from_the_state(qapp):
+    u"""\ud83d\udea8 FROM THE ROWS, NOT A FIELD. This asserted a `video_total` of 68 that only
+    this file's fixture ever set; every real window said *"0 videos"* (LOOKED,
+    2026-09-23, over a copy of Sonic's store: a run of 63 videos). \u26a0 So the count
+    here is the fixture's ROWS, which is what the product reads."""
     window = make()
-    assert window.titlesub.text() == u"5 folders \u00b7 68 videos \u00b7 last run 03:00"
+    rows = len(window.state.rows)
+    assert rows > 1, u"the control: a fixture with several rows"
+    assert window.titlesub.text() == (
+        u"5 folders \u00b7 %d videos \u00b7 last run 03:00" % rows)
     window.state.folders = window.state.folders[:1]
-    window.state.video_total = 1
+    window.state.rows = window.state.rows[:1]
     window.render()
     assert window.titlesub.text() == u"1 folder \u00b7 1 video \u00b7 last run 03:00"
 
@@ -2530,6 +2843,20 @@ def test_the_blacklist_offers_to_clean_itself(qapp):
     assert u"Remove those 2" in joined
 
 
+def test_one_rotated_out_row_is_said_in_the_singular(qapp):
+    u"""The ruled mock shows twelve; at ONE the same card read *"1 of these are
+    no longer on this machine"* beside *"Remove those 1"* -- found by looking at
+    the Layer 8 shots, not by any check."""
+    window = make()
+    gone = [e for e in window.state.blacklist if e.get(u"gone")]
+    assert len(gone) >= 2, u"the control: the fixture holds two rotated-out rows"
+    window.state.blacklist = [e for e in window.state.blacklist if not e.get(u"gone")] + gone[:1]
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window))
+    assert u"1 of these is no longer on this machine" in joined and u"Remove it" in joined, joined
+    assert u"Remove those 1" not in joined and u"1 of these are" not in joined, joined
+
+
 def test_a_rotated_out_row_is_dimmed_and_labelled_never_removed(qapp):
     u"""[X] DEEMPHASISE, DON'T DELETE."""
     window = make()
@@ -2582,6 +2909,20 @@ def test_the_resident_cost_is_stated_because_it_was_measured(qapp):
     assert u"13.4 MB resident" in joined
 
 
+def test_the_tray_cost_is_the_one_measured_for_THIS_build(qapp, monkeypatch):
+    u"""🚨 A CLAIM ABOUT THE BUILD IT IS SHOWN IN. 1.0.1 told every exe user the
+    tray costs 13 MB -- the SOURCE figure. The exe's tray carries its own CPython
+    and measured 30.6 MB (smoke, 2026-09-22)."""
+    assert gui_app.tray_cost(frozen=False)[0] == u"13 MB"
+    short, detail = gui_app.tray_cost(frozen=True)
+    assert short == u"31 MB" and u"30.6 MB" in detail, (short, detail)
+    monkeypatch.setattr(gui_app.sys, u"frozen", True, raising=False)
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window))
+    assert u"Sits in the tray · 31 MB" in joined and u"13 MB" not in joined, joined
+
+
 # ===========================================================================
 # the run -- [X] and exit 1 is not an error
 # ===========================================================================
@@ -2631,34 +2972,50 @@ def test_a_second_run_now_while_one_is_going_does_nothing(qapp):
     assert window.spawned == []
 
 
-def test_a_finished_run_with_exit_one_is_not_an_error(qapp):
-    u"""[!] EXIT 1 MEANS SOMETHING NEEDS A PICK -- the whole value
-    proposition. Only exit 2 means the command could not be run."""
+def test_a_run_that_STOPPED_says_so_and_why_and_a_pick_is_done(qapp):
+    u"""🚨 ADVERSARY 2026-09-22 A12. This check was called *"a finished run with
+    exit one is not an error"*, and it pinned the misreading: exit 1 is a run CUT
+    SHORT -- a 401, a server gone, a crash -- and was painted *done*, the reason
+    nowhere. A run with picks exits 0 and IS done."""
     window = make()
     window.state.running = True
-    window._runner = _FinishedRunner(gui_run.EXIT_ATTENTION)
+    window._runner = _FinishedRunner(gui_run.EXIT_CLEAN)
     window._drain()
-    assert window.state.live == u"done"
-    assert not window.state.running
+    assert window.state.live == u"done" and not window.state.running
+    stopped = dict(summary(), stopped=u"jimaku rejected the key (401) -- 12 videos not looked at")
+    window.state.running = True
+    window._runner = _FinishedRunner(gui_run.EXIT_STOPPED, summary=stopped)
+    window._drain()
+    assert window.state.live.startswith(u"stopped — ") and u"401" in window.state.live, (
+        window.state.live)
+    window.state.running = True
+    window._runner = _FinishedRunner(gui_run.EXIT_STOPPED, notes=[
+        u"hato: the run stopped on an unexpected RuntimeError: the disk went away"])
+    window._drain()
+    assert u"the disk went away" in window.state.live, window.state.live
 
 
-def test_exit_two_says_it_could_not_run(qapp):
+def test_exit_two_says_it_could_not_run_and_what_hato_said(qapp):
+    u"""A20 -- "could not run" and nothing more was every reason a person got."""
     window = make()
     window.state.running = True
-    window._runner = _FinishedRunner(gui_run.EXIT_CANNOT_RUN)
+    window._runner = _FinishedRunner(gui_run.EXIT_CANNOT_RUN, notes=[
+        u"hato: --only names D:\\gone.mkv, which is not a file."])
     window._drain()
-    assert window.state.live == u"could not run"
+    assert window.state.live == u"could not run — --only names D:\\gone.mkv, which is not a file.", (
+        window.state.live)
 
 
 class _FinishedRunner(object):
-    def __init__(self, code):
-        self.code = code
+    def __init__(self, code, summary=None, notes=()):
+        self.code, self.summary, self.notes = code, summary, list(notes)
 
     def drain(self):
         return []
 
     def finished(self):
-        return gui_run.Run(self.code, [], {u"api_calls": 0}, [], u"")
+        return gui_run.Run(self.code, [], self.summary or {u"api_calls": 0}, self.notes,
+                           u"\n".join(self.notes))
 
 
 def test_progress_lines_reach_the_footer_sanitised(qapp):
@@ -2701,9 +3058,13 @@ def test_the_window_never_reimplements_what_run_py_owns():
     assert u"json.loads" not in text
     assert u"subprocess.Popen" in text          # exactly one, in `_spawn`
     assert text.count(u"subprocess.Popen") == 1
-    for owned in (u"argv_for_pair", u"argv_for_config", u"outcome_word",
-                  u"counts", u"match_percent"):
-        assert u"gui_run." + owned in text
+    # ⚠ `tally` replaced `counts` at RUNBOOK 8e as THE one count: it partitions
+    # the run's rows AND the remembered problems. `counts` still exists, in
+    # run.py, for the run alone -- the window no longer calls it.
+    for owned in (u"argv_for_pair", u"argv_for_config", u"argv_for_retry",
+                  u"argv_for_problems", u"outcome_word", u"tally",
+                  u"needs_you", u"pick_verdict", u"retry_text", u"match_percent"):
+        assert u"gui_run." + owned in text, u"app.py does not call run.py's %s" % owned
 
 
 def test_importing_the_data_layer_still_costs_no_qt():
@@ -2874,3 +3235,1521 @@ def test_every_clickable_thing_has_a_pointer_cursor(qapp):
         assert widget.cursor().shape() == Qt.CursorShape.PointingHandCursor
     for widget in window.findChildren(QPushButton):
         assert widget.cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+
+# ===========================================================================
+# ⭐ RUNBOOK 8e -- Needs you persists, and every wait says so
+# ===========================================================================
+
+from datetime import datetime, timedelta, timezone          # noqa: E402
+
+NOW8 = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)
+
+
+def remembered(episode=12, due=None, files=True, video=None):
+    u"""What `hato problems --json` says about a video no run is showing: Sonic's
+    real Tsuihou 12 -- three files tried on 19 Sep, all refused, a retry pending.
+    ⚠ Its OWN candidates, never another show's (see REZERO_POOL's note)."""
+    tried = [{u"name": u"[NanakoRaws] Tsuihou S01E%02d (CBC TV 1080p).ass" % episode,
+              u"outcome": u"REFUSED", u"reason": u"70% matched overall, but the first "
+              u"2:00 wants its timing moved about +9.8 s", u"bytes": 78228,
+              u"match_rate": 0.70, u"path": u"C:\\hato\\cache\\a.ja.ass",
+              u"when": u"2026-09-19T07:03:04+00:00"},
+             {u"name": u"[shincaps] Tsuihou - %02d (AT-X 1440x1080).ass" % (episode - 1),
+              u"outcome": u"REFUSED", u"reason": u"26% of reference lines matched",
+              u"bytes": 100007, u"match_rate": 0.26, u"path": u"C:\\hato\\cache\\b.ja.ass",
+              u"when": u"2026-09-19T07:03:05+00:00"}] if files else []
+    due = due or NOW8 + timedelta(hours=13, minutes=20)
+    # ⚠ `name` IS THE VIDEO'S OWN BASENAME, as `hato problems` builds it -- the
+    # fixture's name and path used to name two different files.
+    video = video or u"D:\\Anime\\Tsuihou\\[SubsPlease] Tsuihou - %02d (1080p).mkv" % episode
+    return {u"type": u"video", u"source": u"memory",
+            u"video": video, u"name": os.path.basename(video.replace(u"\\", os.sep)),
+            u"title": u"Tsuihou sareta Tensei Juukishi", u"season": None,
+            u"episode": episode, u"outcome": u"REFUSED" if files else u"NOT_FOUND",
+            u"skip": None, u"reason": u"3 of 10 candidate(s) tried, all refused by timing",
+            u"jimaku_entry": 12179, u"attempts": [], u"tried_before": tried,
+            u"retry_after": due.isoformat(), u"newest_offered": None,
+            u"candidates_offered": None, u"output_path": None}
+
+
+def remembering(rows, memory, watching=False, **over):
+    u"""A window whose memory has ANSWERED, after its rows were loaded -- the
+    state a person reopening the window is in a second after it opens."""
+    window = make(rows=rows, running=False, **over)
+    window.state.now = NOW8
+    window.state.watching = watching
+    window.state.rows_at = window.state.moment()      # the snapshot, then...
+    window.apply_problems(memory, {u"type": u"problems", u"retry_days": {u"soft": 1}})
+    return window
+
+
+def test_a_problem_the_last_run_never_looked_at_is_still_on_needs_you(qapp):
+    u"""🚨 4a, THE HEADLINE. `last-run.json` holds only the last run; a run over a
+    different folder -- a 3 a.m. one, a terminal -- used to wipe the problem from
+    the window. The memory keeps it: the row is there, with its files."""
+    window = remembering([added(1)], [remembered()])
+    window.show_tab(gui_app.TAB_PICK)
+    assert _badge_text(window) == u"1", u"the remembered problem is not counted"
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_PICK]))
+    assert u"Tsuihou - 12" in joined, joined
+    cards = window.findChildren(gui_app.CandidateCard)
+    assert len(cards) == 2, u"the remembered files are not on offer"
+
+
+def test_the_row_that_stays_says_when_hato_looks_again(qapp):
+    u"""🚨 4b -- *"retrying in 14h"* ON A ROW THAT STAYS. ⭐ A promise only when
+    the tray is there to keep it (RUNBOOK 8h); without it, when it becomes due."""
+    for watching, said in ((True, u"retrying in 14h"), (False, u"retry after 14h")):
+        window = remembering([], [remembered()], watching=watching)
+        window.show_tab(gui_app.TAB_PICK)
+        head, = window.findChildren(gui_app.PickHead)
+        assert said in head.best.text(), (watching, head.best.text())
+
+
+def test_a_row_the_newer_memory_no_longer_lists_has_been_settled(qapp):
+    u"""A pick landed or a subtitle appeared since the snapshot: the memory, which
+    asks the DISK, is the newer answer."""
+    stale = needs_you(54)
+    window = remembering([stale], [])
+    assert window.state.need_count() == 0
+    assert _badge_text(window) == u"0"
+
+
+def test_look_again_now_runs_those_videos_past_their_wait(qapp, monkeypatch, tmp_path):
+    u"""⭐ The manual half of 4b -- *"not soon unless prompted"* was specified as
+    a Retry on one row and never built. ⛔ `--retry-now`, never `--force`: a file
+    already refused is not fetched again."""
+    started = {}
+
+    def record(**kw):
+        started[u"argv"] = kw.get(u"argv")
+        return _NullRunner()
+
+    monkeypatch.setattr(gui_run, u"Runner", record)
+    video = _on_disk(tmp_path, u"ep12.mkv")
+    window = remembering([], [remembered(files=False, video=video)])
+    window.show_tab(gui_app.TAB_PICK)
+    again = [b for b in window.findChildren(QPushButton) if b.text() == u"Look again now"]
+    assert again, u"the waiting strip has no Look again now"
+    again[0].click()
+    argv = started.get(u"argv") or []
+    assert u"--retry-now" in argv and u"--force" not in argv
+    assert argv[argv.index(u"--only") + 1] == os.path.abspath(video)
+
+
+def _on_disk(tmp_path, name):
+    u"""⚠ A REAL FILE. A look-again now asks only about videos that are still
+    there (A20), so a fixture path that exists nowhere is looked at by nobody."""
+    path = tmp_path / name
+    path.write_bytes(b"\x1aE\xdf\xa3 " + name.encode("utf-8"))
+    return str(path)
+
+
+def test_try_three_more_actually_tries_while_the_wait_stands(qapp, monkeypatch, tmp_path):
+    u"""🚨 D3. It ran the folder with no flag, and for the day after a refusal the
+    gate said "waiting" and it tried nothing."""
+    started = {}
+    monkeypatch.setattr(gui_run, u"Runner",
+                        lambda **kw: started.update(argv=kw.get(u"argv")) or _NullRunner())
+    window = remembering([], [remembered(video=_on_disk(tmp_path, u"ep12.mkv"))])
+    key = window.state.key(window.state.picks()[0])
+    window.try_more(key)
+    argv = started[u"argv"]
+    assert u"--retry-now" in argv and argv[argv.index(u"--candidates") + 1] == u"3"
+
+
+def test_a_look_again_over_videos_no_longer_there_says_so_and_runs_nothing(
+        qapp, monkeypatch, tmp_path):
+    u"""ADVERSARY 2026-09-22 A20. `hato` refuses a whole `--only` batch over one
+    name that is not a file, so one moved episode made *Look again now* on every
+    waiting one say "could not run" and nothing more. ⭐ The ones still there are
+    looked at; with none there, the window says why and runs nothing."""
+    started = []
+    monkeypatch.setattr(gui_run, u"Runner",
+                        lambda **kw: started.append(kw.get(u"argv")) or _NullRunner())
+    here = _on_disk(tmp_path, u"ep12.mkv")
+    gone = str(tmp_path / u"ep13.mkv")
+    window = remembering([], [remembered(12, files=False, video=here),
+                              remembered(13, files=False, video=gone)])
+    window.look_again(window.state.problems())
+    argv, = started
+    assert [argv[i + 1] for i, a in enumerate(argv) if a == u"--only"] == [os.path.abspath(here)]
+    window.state.running = False
+    window.look_again([remembered(13, files=False, video=gone)])
+    assert len(started) == 1 and u"no longer where hato saw it" in window.state.live, (
+        window.state.live)
+
+
+def test_a_look_again_replaces_its_own_row_and_nothing_else(qapp):
+    u"""⭐ One row's look-again must not empty the Subtitles tab."""
+    window = make(rows=[added(1), needs_you(54)], running=False)
+    window.state.running = True
+    window._targeted = True
+    fixed = dict(added(54), video=needs_you(54)[u"video"])
+    window._runner = _EventRunner([fixed])
+    window._drain()
+    episodes = sorted(r[u"episode"] for r in window.state.rows)
+    assert episodes == [1, 54]
+    assert [r[u"outcome"] for r in window.state.rows if r[u"episode"] == 54] == [u"CONFIDENT"]
+
+
+def test_a_run_that_met_another_one_says_so_rather_than_done(qapp):
+    window = make(running=True)
+    window._runner = _EventRunner([{u"type": u"busy", u"reason": u"another hato run"}])
+    window._drain()
+    window._runner = _FinishedRunner(gui_run.EXIT_CLEAN)
+    window._drain()
+    assert u"already running" in window.state.live, window.state.live
+
+
+def test_settings_says_how_long_hato_waits_before_looking_again(qapp):
+    u"""⭐ 4b: *"Sonic asked for the interval shown in Settings."* ⚠ The number is
+    hato's own (`hato problems` reports it), not a literal in the window."""
+    window = remembering([], [])
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SET]))
+    assert u"Looks again after 24 hours" in joined, joined
+    window.apply_problems([], {u"retry_days": {u"soft": 3}})
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SET]))
+    assert u"Looks again after 3 days" in joined, joined
+
+
+def test_a_subtitle_found_on_a_retry_says_so(qapp):
+    u"""⭐ 4b's third clause -- SAY THAT IT HAPPENED. Tsuihou 12 fetched on its own
+    two days after its refusal and nothing anywhere said so."""
+    found = dict(added(12), tried_before=remembered()[u"tried_before"])
+    window = make(rows=[found, added(1)], running=False)
+    window.show_tab(gui_app.TAB_SUBS)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SUBS]))
+    assert u"found on a retry" in joined, joined
+    window = make(rows=[added(1)], running=False)
+    window.show_tab(gui_app.TAB_SUBS)
+    assert u"found on a retry" not in u" ".join(gui_app.texts(window.panes[gui_app.TAB_SUBS]))
+
+
+def test_the_blacklist_card_shows_the_blacklist_hato_holds(qapp, tmp_path):
+    u"""🚨 D5. `state.blacklist` started empty and nothing loaded it -- the card,
+    its count and the sweep for rows whose video is gone ran on fixtures alone."""
+    there = tmp_path / u"Recap - 07.mkv"
+    there.write_bytes(b"x")
+    answer = {u"ok": True, u"blacklist": [
+        {u"video_hash": u"v1-" + u"a" * 64, u"video_path": str(there),
+         u"added_at": u"2026-09-17T03:00:00+00:00", u"note": u"recap"},
+        {u"video_hash": u"v1-" + u"b" * 64, u"video_path": str(tmp_path / u"gone.mkv"),
+         u"added_at": u"2026-08-02T03:00:00+00:00", u"note": u""}]}
+    window = make(blacklist=[], running=False)
+    window._blacklist_read(None, [answer])
+    names = [(e[u"name"], e[u"gone"]) for e in window.state.blacklist]
+    assert names == [(u"Recap - 07.mkv", False), (u"gone.mkv", True)]
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SET]))
+    assert u"2 videos" in joined and u"no longer on this machine" in joined, joined
+
+
+# ===========================================================================
+# ⭐ RUNBOOK 8g -- clear hato's memory
+# ===========================================================================
+
+#: What `hato state --clear --json` counts over Sonic's real store (2026-09-22:
+#: 148 rows over 60 videos; the shows are the resolution cache's).
+MEMORY = {u"type": u"clear", u"ok": True, u"dry_run": True,
+          u"cleared": {u"videos": 60, u"attempts": 148, u"present": 0, u"shows": 12,
+                       u"waiting": 2},
+          u"kept": [u"every subtitle beside your videos"], u"notes": []}
+
+
+def _confirm(answer, blacklist=False):
+    u"""A stand-in for the confirm: its answer, and the switch's position."""
+    class Confirm(object):
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return answer
+
+        def forget_blacklist(self):
+            return blacklist
+    return Confirm
+
+
+def test_the_memory_card_names_what_goes_and_what_stays(qapp):
+    u"""⛔ Before anything is asked: the numbers are hato's own dry count."""
+    window = make(running=False)
+    window._memory_read(None, [MEMORY])
+    window.show_tab(gui_app.TAB_SET)
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SET]))
+    assert u"60 videos tried · 2 waiting to look again · 12 shows found on jimaku" in joined, (
+        joined)
+    assert u"Stays: every subtitle" in joined and u"the blacklist unless" in joined
+    assert [b for b in window.findChildren(QPushButton)
+            if b.text() == u"Clear hato's memory…"], u"the card has no way to clear"
+
+
+def test_a_real_clears_answer_is_never_taken_for_the_count(qapp):
+    u"""⚠ Only a DRY answer is the card's count; a clear that went is 0s."""
+    window = make(running=False)
+    went = dict(MEMORY, dry_run=False)
+    window._memory_read(None, [went])
+    assert window.state.memory is None
+
+
+def test_clearing_asks_first_and_cancel_runs_nothing(qapp, monkeypatch):
+    monkeypatch.setattr(gui_app, u"ClearDialog",
+                        _confirm(gui_app.QDialog.DialogCode.Rejected))
+    window = make(running=False)
+    reads = []
+    window._read = lambda argv, done: reads.append(argv)
+    window.choose_clear()
+    assert reads == [], u"a cancelled confirm still ran something: %s" % reads
+
+
+def test_clearing_takes_the_blacklist_only_when_the_switch_is_on(qapp, monkeypatch):
+    for on in (False, True):
+        monkeypatch.setattr(gui_app, u"ClearDialog",
+                            _confirm(gui_app.QDialog.DialogCode.Accepted, blacklist=on))
+        window = make(running=False)
+        reads = []
+        window._read = lambda argv, done: reads.append(argv)
+        window.choose_clear()
+        argv, = reads
+        assert argv == gui_run.argv_for_clear(yes=True, blacklist=on), argv
+        assert u"--yes" in argv and (u"--blacklist" in argv) is on
+
+
+def test_the_confirm_names_goes_and_stays_and_the_blacklist_starts_off(qapp):
+    dialog = gui_app.ClearDialog(None, MEMORY, blacklisted=2)
+    words = u" ".join(w.text() for w in dialog.findChildren(QLabel) if w.text())
+    assert u"Goes: 60 videos tried" in words and u"Stays: every subtitle" in words, words
+    switches = dialog.findChildren(gui_app.Switch)
+    assert len(switches) == 1 and not switches[0].isChecked(), (
+        u"the blacklist is the person's own instruction -- its switch must start OFF")
+    assert dialog.forget_blacklist() is False
+    switches[0].setChecked(True)
+    assert dialog.forget_blacklist() is True
+    assert gui_app.ClearDialog(None, MEMORY, blacklisted=0).findChildren(gui_app.Switch) == []
+    faint = [w.text()[:12] for w in dialog.findChildren(QLabel)
+             if w.text().startswith((u"Goes:", u"Stays:")) and w.objectName() == u"hint"]
+    assert faint == [], (
+        u"what goes and what stays -- the only two lines this dialog exists for -- "
+        u"are in the faint aside style: %s" % faint)
+
+
+def _late(newest, episode=12):
+    u"""A remembered pick row whose newest episode on offer is `newest`."""
+    return dict(remembered(episode), newest_offered=newest)
+
+
+def test_one_past_the_newest_says_probably_not_out_yet_and_keeps_the_pick(qapp):
+    u"""⭐ RUNBOOK 8f (HANDOFF 4c). The row stays, waits in grey instead of asking
+    in garnet, says why -- and every file tried is still one click away."""
+    window = remembering([], [_late(11)], watching=True)
+    window.show_tab(gui_app.TAB_PICK)
+    head, = window.findChildren(gui_app.PickHead)
+    assert head.best.text().startswith(u"probably not out yet"), head.best.text()
+    assert u"retrying in 14h" in head.best.text(), head.best.text()
+    assert head.property(u"late") == u"true"
+    window.state.open_pick = window.state.key(window.state.picks()[0])
+    window.render()
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_PICK]))
+    assert u"Episode 12 is probably not out yet — the newest on jimaku is 11" in joined, joined
+    assert len(window.findChildren(gui_app.CandidateCard)) == 2, u"the pick went away"
+    assert [b for b in window.findChildren(QPushButton) if u"Look again" in b.text()
+            or u"Try" in b.text()], u"the manual choice is not one click away"
+
+
+def test_the_highlight_is_only_for_one_past_the_newest(qapp):
+    u"""On offer, a gap, or nothing known: an ordinary pick -- and still a pick."""
+    for newest in (12, 10, None):
+        window = remembering([], [_late(newest)])
+        window.show_tab(gui_app.TAB_PICK)
+        head, = window.findChildren(gui_app.PickHead)
+        assert not head.best.text().startswith(u"probably"), (newest, head.best.text())
+        assert head.property(u"late") != u"true", newest
+        assert len(window.findChildren(gui_app.CandidateCard)) == 2, newest
+
+
+def _wait_button(window):
+    found = [b for b in window.findChildren(QPushButton) if b.text() == u"Wait for it"]
+    return found[0] if found else None
+
+
+def test_wait_for_it_is_on_every_pick_and_highlighted_only_one_past_the_newest(qapp):
+    u"""⭐ HANDOFF 4c: *"It should not always offer this as highlighted, only if it
+    seems like the number increment is one higher than the latest option."*"""
+    for newest, highlighted in ((11, True), (12, False), (None, False)):
+        window = remembering([], [_late(newest)])
+        window.show_tab(gui_app.TAB_PICK)
+        window.state.open_pick = window.state.key(window.state.picks()[0])
+        window.render()
+        wait = _wait_button(window)
+        assert wait is not None, u"no Wait for it on a pick (newest %r)" % newest
+        assert (wait.objectName() == u"btnGo") is highlighted, (newest, wait.objectName())
+
+
+def test_a_late_row_recommends_no_file(qapp):
+    u"""⚠ Every file on a late row is another episode's -- outlining the best of
+    them under *probably not out yet* recommended what the sentence says not to."""
+    for newest, outlined in ((11, 0), (12, 1)):
+        window = remembering([], [_late(newest)])
+        window.show_tab(gui_app.TAB_PICK)
+        window.state.open_pick = window.state.key(window.state.picks()[0])
+        window.render()
+        chosen = [c for c in window.findChildren(gui_app.CandidateCard)
+                  if c.property(u"chosen") == u"true"]
+        assert len(chosen) == outlined, (newest, len(chosen))
+
+
+def test_waiting_puts_the_row_away_until_its_date_and_show_them_brings_it_back(
+        qapp, tmp_path, monkeypatch):
+    monkeypatch.setenv(u"HATO_CACHE", str(tmp_path))
+    window = remembering([], [_late(11)])
+    window.show_tab(gui_app.TAB_PICK)
+    window.state.open_pick = window.state.key(window.state.picks()[0])
+    window.render()
+    _wait_button(window).click()
+    assert window.state.picks() == [] and _badge_text(window) == u"0", (
+        u"a row the person chose to wait on still asks for them")
+    joined = u" ".join(gui_app.texts(window.panes[gui_app.TAB_PICK]))
+    assert u"1 waiting for the next search" in joined, joined
+    assert gui_run.load_waits(), u"the choice was not kept -- it would be undone on reopen"
+
+    again = remembering([], [_late(11)])
+    again.state.waits = gui_run.load_waits()
+    assert again.state.picks() == [], u"reopened, the wait was forgotten"
+    show = [b for b in again.findChildren(QPushButton) if b.text() == u"Show them"]
+    again.show_tab(gui_app.TAB_PICK)
+    show = [b for b in again.findChildren(QPushButton) if b.text() == u"Show them"]
+    assert show, u"no way back to the pick"
+    show[0].click()
+    assert len(again.state.picks()) == 1 and gui_run.load_waits() == {}
+
+
+def test_a_row_with_no_retry_offers_no_wait(qapp):
+    u"""⛔ Nothing to wait FOR, so the control would do nothing -- it vanishes."""
+    window = remembering([], [dict(_late(11), retry_after=None)])
+    window.show_tab(gui_app.TAB_PICK)
+    window.state.open_pick = window.state.key(window.state.picks()[0])
+    window.render()
+    assert _wait_button(window) is None
+
+
+def test_a_real_rows_season_reads_as_a_season(qapp):
+    u"""🚨 D10. The wire carries tsubasa's INT; every fixture carried "S2". A real
+    row printed *"· 4"* after its filename and *"2 · 3 added"* beside its show."""
+    assert gui_app.season_text(4) == u"S4" and gui_app.season_text(u"S2") == u"S2"
+    assert gui_app.season_text(None) == u"" and gui_app.season_text(True) == u""
+    window = remembering([], [dict(_late(11), season=4)])
+    window.show_tab(gui_app.TAB_PICK)
+    words = [w.text() for w in window.findChildren(QLabel) if w.objectName() == u"whoi"]
+    assert u"· S4" in words, words
+    subs = make(rows=[dict(added(1), season=2)], running=False)
+    subs.show_tab(gui_app.TAB_SUBS)
+    meta = [w.text() for w in subs.findChildren(QLabel) if w.objectName() == u"showmeta"]
+    assert meta and meta[0].startswith(u"S2 · "), meta
+
+
+def test_a_finished_run_asks_again_what_a_clear_would_take(qapp):
+    u"""The card's numbers are hato's, so a run that moved them is asked about."""
+    window = make(running=True)
+    asked = []
+    window._read = lambda argv, done: asked.append(argv)
+    window._runner = _FinishedRunner(gui_run.EXIT_CLEAN)
+    window._drain()
+    assert gui_run.argv_for_clear() in asked, asked
+
+
+def test_the_confirm_is_painted_by_hato_not_the_toolkit(qapp):
+    u"""⚠ A PIXEL, not the stylesheet's existence -- the check that once passed
+    over a white dialog asserted 16,440 characters of sheet (see the key's)."""
+    dialog = gui_app.ClearDialog(None, MEMORY, blacklisted=2)
+    dialog.resize(480, 260)
+    image = dialog.grab().toImage()
+    assert image.width() > 100 and image.height() > 100, u"nothing rendered"
+    corner = image.pixelColor(6, 6)
+    ceiling = sum(int(theme.SURFACE[i:i + 2], 16) for i in (1, 3, 5)) + 90
+    assert corner.red() + corner.green() + corner.blue() <= ceiling, corner.name()
+
+
+def test_a_clear_refused_by_a_run_says_nothing_was_cleared(qapp):
+    u"""⛔ Never "cleared" over a refusal."""
+    window = make(running=False)
+    window._read = lambda argv, done: None
+    window._memory_cleared(None, [{u"type": u"clear", u"ok": False, u"busy": True,
+                                   u"error": u"a hato run is going"}])
+    assert u"nothing was cleared" in window.state.memory_said
+    window._memory_cleared(None, [dict(MEMORY, dry_run=False)])
+    assert window.state.memory_said.startswith(u"Cleared")
+    window._memory_cleared(None, [])
+    assert u"could not" in window.state.memory_said
+
+
+# ===========================================================================
+# ⭐ ADVERSARY 2026-09-22 -- the window, driven by rows the CLI's own producer
+# built (`report.as_dict`), never a hand-typed shape
+# ===========================================================================
+
+from hato import pipeline as _pipeline, report as _report       # noqa: E402
+
+
+def wire(video, outcome, reason=u"x", **fields):
+    u"""A row built by the SAME producer the CLI's `--json` uses."""
+    return _report.as_dict(_pipeline.VideoResult(video, outcome, reason, **fields))
+
+
+def memory_row(video, outcome, reason=u"x", **fields):
+    u"""What `hato problems --json` prints -- `problems._row`'s shape."""
+    fields.setdefault(u"name", video.replace(u"\\", u"/").rsplit(u"/", 1)[-1])
+    fields.setdefault(u"candidates_offered", None)
+    row = wire(video, outcome, reason, **fields)
+    row[u"source"] = u"memory"
+    return row
+
+
+def rem(name, rate, path=u"C:\\hato\\cache\\x.ja.ass"):
+    return _pipeline.Remembered(name, u"REFUSED", u"%s: the timing did not hold" % name,
+                                40000, rate, path,
+                                datetime(2026, 9, 21, 7, 3, 4, 123456, tzinfo=timezone.utc))
+
+
+IRUMA = u"D:\\Anime\\Iruma S4\\[SubsPlease] Mairimashita! Iruma-kun S4 - 23 (1080p).mkv"
+IRUMA_DUE = NOW8 + timedelta(hours=13, minutes=20)
+IRUMA_TRIED = (rem(u"Iruma.S04E03.ja.srt", 0.36, u"C:\\hato\\cache\\a.ja.srt"),
+               rem(u"Iruma.S04E20.ja.srt", 0.32, u"C:\\hato\\cache\\b.ja.srt"),
+               rem(u"[NanakoRaws] Iruma S04E22.ass", 0.28, u"C:\\hato\\cache\\c.ja.ass"))
+
+
+def iruma_memory(**over):
+    u"""Sonic's own Iruma-kun S4 23, as `hato problems` lists it."""
+    fields = dict(title=u"Mairimashita! Iruma-kun", season=4, episode=23, jimaku_entry=777,
+                  retry_after=IRUMA_DUE, tried_before=IRUMA_TRIED, newest_offered=22)
+    fields.update(over)
+    return memory_row(IRUMA, u"REFUSED", u"3 of 3 candidate(s) tried, all refused by timing",
+                      **fields)
+
+
+def iruma_from_a_run():
+    u"""The SAME video, as a run inside its retry window emits it -- the
+    pipeline's negative skip, which now carries the memory's facts (A5)."""
+    return wire(IRUMA, u"SKIPPED", u"3 of 3 candidate(s) tried, all refused by timing",
+                skip=u"negative", title=u"Mairimashita! Iruma-kun", season=4, episode=23,
+                retry_after=IRUMA_DUE, tried_before=IRUMA_TRIED, newest_offered=22,
+                candidates_offered=None)
+
+
+class Scripted(object):
+    u"""A Runner stand-in: hands out `events`, then finishes with `code`."""
+
+    def __init__(self, events, code=0, rows=None, summary=None, notes=()):
+        self.events, self.code, self.notes = list(events), code, list(notes)
+        self.rows = rows if rows is not None else [e for e in events if e.get(u"type") == u"video"]
+        self.summary = summary or next((e for e in events if e.get(u"type") == u"run"), {})
+
+    def start(self):
+        return self
+
+    def drain(self):
+        out, self.events = self.events, []
+        return out
+
+    def finished(self):
+        return gui_run.Run(self.code, self.rows, self.summary, self.notes,
+                           u"\n".join(self.notes))
+
+    def stop(self):
+        pass
+
+
+def pick_heads(window):
+    return window.findChildren(gui_app.PickHead)
+
+
+def pick_text(window):
+    return u" | ".join(gui_app.texts(window.panes[gui_app.TAB_PICK]))
+
+
+def buttons_called(window, text):
+    return [b for b in window.findChildren(QPushButton) if b.text() == text]
+
+
+def test_a_memory_that_could_not_be_read_keeps_needs_you_and_says_why(qapp):
+    u"""A1. `hato problems` exits 1 for a broken config and answered an EMPTY list
+    for an unreadable store -- and the window took either for "nothing needs
+    you". ⭐ Only exit 0 with a summary that says `ok` replaces what is shown."""
+    row = needs_you(54)
+    window = remembering([row], [dict(row, source=u"memory")])
+    assert _badge_text(window) == u"1"
+    for finished, events, why in (
+            (gui_run.Run(1, [], {}, [u"hato: config.toml: candidates must be at least 1"],
+                         u""), [], u"candidates must be at least 1"),
+            (gui_run.Run(1, [], {}, [], u""),
+             [{u"type": u"problems", u"ok": False, u"error": u"The state DB is unreadable"}],
+             u"The state DB is unreadable"),
+            (gui_run.Run(0, [], {}, [], u""), [], u"it did not answer")):
+        window._problems_read(finished, events)
+        window.show_tab(gui_app.TAB_PICK)
+        assert _badge_text(window) == u"1", (why, u"the problem vanished")
+        assert why in pick_text(window) and u"could not read what it remembers" in \
+            pick_text(window), pick_text(window)
+    window._problems_read(gui_run.Run(0, [], {}, [], u""),
+                          [{u"type": u"problems", u"ok": True, u"count": 0}])
+    assert window.state.remembered == [] and window.state.problems_error == u"", (
+        u"the control: a clean answer is taken, and the notice goes")
+
+
+def test_an_unreadable_store_reaches_the_window_as_a_failure_through_a_real_child(
+        qapp, tmp_path, monkeypatch):
+    u"""A1b, the whole chain: a store that cannot be opened -> `hato problems`
+    exits 1 with `ok: false` -> the window keeps Needs you and says why."""
+    data = tmp_path / u"data"
+    (data / u"state.db").mkdir(parents=True)          # a DB that cannot be opened
+    (tmp_path / u"config.toml").write_text(u"folders = []\n", encoding="utf-8")
+    monkeypatch.setenv(u"HATO_CACHE", str(data))
+    monkeypatch.setenv(u"HATO_CONFIG", str(tmp_path / u"config.toml"))
+    monkeypatch.delenv(u"HATO_CLI", raising=False)
+    row = needs_you(54)
+    window = remembering([row], [dict(row, source=u"memory")])
+    window.spawn = window._spawn
+    window.refresh_problems()
+    deadline = time.time() + 90
+    while window._problems_in_flight and time.time() < deadline:
+        window._poll_reads()
+        time.sleep(0.05)
+    assert not window._problems_in_flight, u"hato problems never answered"
+    window.show_tab(gui_app.TAB_PICK)
+    assert _badge_text(window) == u"1", u"an unreadable store emptied Needs you"
+    assert window.state.problems_error, u"the failure was not said"
+
+
+def test_a_refresh_asked_for_while_one_is_in_flight_is_queued_and_dated_by_its_asking(qapp):
+    u"""A2. The run's own refresh was DROPPED while another was in flight; that
+    one's answer -- the DB before the run -- landed newer than the run's rows and
+    settled the run's new refusal."""
+    old = iruma_memory()
+    window = remembering([], [old])
+    pending = []
+    window._read = lambda argv, done: pending.append((argv, done)) or object()
+    window.refresh_problems()                          # e.g. a pick's refresh
+    # ⚠ IN A CONFIGURED FOLDER. Outside one, memory could never list the row and
+    # A26 keeps it whatever the dates say -- so the first version of this check
+    # passed with the answer dated on ARRIVAL, the defect it names (M8zw-06).
+    new = wire(u"D:\\Anime\\ReZero S03\\ep55.mkv", u"REFUSED", u"3 tried, none held",
+               title=u"Re:Zero", season=3, episode=55, retry_after=IRUMA_DUE,
+               candidates_offered=3,
+               attempts=(_pipeline.Attempted(u"[Erai-raws] Re Zero 3rd - 55.ass", u"REFUSED",
+                                             u"25%", size=70000,
+                                             path=u"C:\\hato\\cache\\s.ja.ass"),))
+    assert window.state.in_scope(new), u"the control: memory COULD list this row"
+    window.state.running = True
+    window._runner = Scripted([new, {u"type": u"run", u"api_calls": 3}])
+    window._drain()                                    # the run finishes
+    asked = [a for a, _d in pending if a[-2:] == [u"problems", u"--json"]]
+    assert len(asked) == 1, u"a second refresh went out while one was in flight"
+    pending[0][1](gui_run.Run(0, [old], {}, [], u""),
+                  [{u"type": u"problems", u"ok": True, u"retry_days": {u"soft": 1}}])
+    assert any(r[u"video"] == new[u"video"] for r in window.state.problems()), (
+        u"an answer asked BEFORE the run settled the run's own new refusal")
+    asked = [a for a, _d in pending if a[-2:] == [u"problems", u"--json"]]
+    assert len(asked) == 2, u"the refresh asked for during the first was never sent"
+
+
+def test_a_run_that_meets_the_lock_leaves_the_last_run_on_screen(qapp, monkeypatch):
+    u"""A3. Rows, summary and picks were cleared at the click; the run then said
+    only "busy" -- an empty Subtitles tab and "last run 21:42" for a run that
+    looked at nothing."""
+    window = make(rows=full_rows(), running=False, last_run=u"03:00")
+    before, added_before = list(window.state.rows), window.state.tallies()[gui_run.ADDED]
+    monkeypatch.setattr(gui_run, u"Runner", lambda **kw: Scripted(
+        [{u"type": u"busy", u"reason": u"another hato run holds the lock"}], code=0, rows=[]))
+    window.start_run()
+    window._timer.stop()
+    window._drain()
+    assert u"already running" in window.state.live
+    assert window.state.rows == before and window.state.last_run == u"03:00"
+    assert window.state.tallies()[gui_run.ADDED] == added_before > 0
+
+
+def test_a_look_again_on_one_row_never_brings_back_a_row_memory_settled(
+        qapp, monkeypatch, tmp_path):
+    u"""A4. One flag: during a look-again on row Y every stale snapshot row beat
+    memory, and a row the person had just paired came back asking."""
+    settled = needs_you(54)
+    other = remembered(video=_on_disk(tmp_path, u"[SubsPlease] Tsuihou - 12 (1080p).mkv"))
+    window = remembering([settled], [other])
+    assert _badge_text(window) == u"1"
+    monkeypatch.setattr(gui_run, u"Runner", lambda **kw: _NullRunner())
+    window.look_again([other])
+    window._timer.stop()
+    assert window.state.running
+    window.show_tab(gui_app.TAB_PICK)
+    assert not [r for r in window.state.picks() if r[u"video"] == settled[u"video"]]
+    assert _badge_text(window) == u"1"
+
+
+def test_a_late_rows_copy_from_a_run_still_says_probably_not_out_yet(qapp):
+    u"""A5. The run's copy of a late row carried no newest episode and "offered 0":
+    while it won, the row turned garnet, OUTLINED another episode's file, and
+    *Look again* claimed every file had been tried."""
+    window = remembering([], [iruma_memory()])
+    window.state.running = True
+    window._runner = _EventRunner([iruma_from_a_run()])
+    window._drain()
+    shown, = window.state.problems()
+    assert shown.get(u"source") != u"memory", u"the control: the run's own copy is shown"
+    window.state.open_pick = window.state.key(shown)
+    window.show_tab(gui_app.TAB_PICK)
+    head, = pick_heads(window)
+    assert head.best.text().startswith(u"probably not out yet"), head.best.text()
+    assert not [c for c in window.findChildren(gui_app.CandidateCard)
+                if c.property(u"chosen") == u"true"], u"another episode's file recommended"
+    assert _wait_button(window).objectName() == u"btnGo"
+    assert buttons_called(window, u"Look again now") and \
+        not buttons_called(window, u"Try 3 more candidates")
+
+
+def test_a_refusal_with_nothing_to_pick_says_its_reason_as_trouble(qapp):
+    u"""A6. A two-episode name was painted as a pick over nothing -- "0 tried ·
+    best —", *Click one to use it.* -- and its reason, the only actionable
+    sentence, was nowhere."""
+    two = wire(u"D:\\Anime\\Frieren S2\\frieren S2 - 01-02.mkv", u"REFUSED",
+               u"the video holds episodes 1-2 -- one subtitle cannot be split between them. "
+               u"Split the file, or pair a subtitle by hand with `hato sync`.",
+               title=u"Frieren", season=2, episode=1)
+    window = remembering([two], [])
+    window.show_tab(gui_app.TAB_PICK)
+    assert pick_heads(window) == [], u"a row with nothing to pick is a pick"
+    text = pick_text(window)
+    assert u"1 had a problem" in text and u"Split the file" in text, text
+    assert u"Click one to use it." not in text
+
+
+def test_two_spellings_of_one_video_are_one_row(qapp):
+    u"""A7."""
+    a = needs_you(54)
+    b = dict(a, video=a[u"video"].lower() if os.name == u"nt" else a[u"video"])
+    window = remembering([a, b], [dict(a, source=u"memory")])
+    window.show_tab(gui_app.TAB_PICK)
+    assert len(pick_heads(window)) == 1 and _badge_text(window) == u"1"
+
+
+def test_wait_for_it_is_offered_only_for_a_date_still_ahead(qapp):
+    u"""A8. With the tray off a retry can be past due; *Wait for it* was offered,
+    highlighted, and a click put nothing away."""
+    due = NOW8 - timedelta(hours=1)
+    window = remembering([], [dict(_late(11), retry_after=due.isoformat())])
+    window.state.open_pick = window.state.key(window.state.picks()[0])
+    window.show_tab(gui_app.TAB_PICK)
+    assert _wait_button(window) is None
+    assert buttons_called(window, u"Look again now") or \
+        buttons_called(window, u"Try 3 more candidates"), u"the manual choice went too"
+
+
+def _landed(window, row, word=gui_run.FORCED):
+    key = window.state.key(row)
+    attempt = gui_run.candidates_of(row)[0]
+    window.commit_pair(key, attempt)
+    window.finish_pick(key, attempt[u"name"], (word, u"", u"D:\\x.ja.ass"))
+    window.state.open_pick = key
+    window.show_tab(gui_app.TAB_PICK)
+    return key
+
+
+def test_a_row_whose_pick_landed_offers_no_wait_and_no_second_pick(qapp, tmp_path,
+                                                                   monkeypatch):
+    u"""A9 + A10. After a pick landed the row still offered *Wait for it* -- which
+    filed a written row as waiting -- and a second pick, which cannot land
+    (tsubasa will not write over the file) and turned the row green over its
+    failure word."""
+    monkeypatch.setenv(u"HATO_CACHE", str(tmp_path))
+    row = _late(11)
+    window = remembering([], [row])
+    key = _landed(window, row)
+    head, = pick_heads(window)
+    assert head.best.text().startswith(u"used · ") and head.property(u"done") == u"forced"
+    assert _wait_button(window) is None and not buttons_called(window, u"Look again now")
+    cards = window.findChildren(gui_app.CandidateCard)
+    assert cards and not any(c.isEnabled() for c in cards), u"a second pick is on offer"
+    assert window.commit_pair(key, gui_run.candidates_of(row)[1]) is None
+    head, = pick_heads(window)
+    assert head.property(u"done") == u"forced", u"the colour is not the pick that landed"
+
+
+def test_a_second_click_while_a_pick_is_with_hato_sync_is_not_taken(qapp):
+    u"""A32. The first answer wiped the second's pending state."""
+    row = needs_you(54)
+    window = remembering([row], [dict(row, source=u"memory")])
+    key = window.state.key(row)
+    first = window.commit_pair(key, row[u"attempts"][0])
+    assert first is not None
+    assert window.commit_pair(key, row[u"attempts"][1]) is None
+    assert window.state.pick_pending == {key: row[u"attempts"][0][u"name"]}
+
+
+def test_a_rejected_key_is_said_in_plain_words(qapp):
+    u"""A11. *"jimaku refused the key"* reached the key card verbatim."""
+    window = make(running=False)
+    window.state.key_status, window.state.key_ok = u"jimaku refused the key", False
+    window.show_tab(gui_app.TAB_SET)
+    words = gui_app.texts(window.panes[gui_app.TAB_SET])
+    assert not [w for w in words if u"refus" in w.lower()], words
+    assert u"jimaku did not accept that key" in words
+
+
+def test_a_file_hato_no_longer_has_is_shown_unavailable_and_never_recommended(qapp):
+    u"""A13. A candidate whose cached file is gone was offered AND outlined, and a
+    click promised a remedy that is not there."""
+    base = remembered()
+    gone = dict(base, tried_before=[dict(base[u"tried_before"][0], path=None),
+                                    base[u"tried_before"][1]])
+    window = remembering([], [gone])
+    window.state.open_pick = window.state.key(window.state.picks()[0])
+    window.show_tab(gui_app.TAB_PICK)
+    cards = dict((c.attempt[u"name"], c) for c in window.findChildren(gui_app.CandidateCard))
+    missing = cards[gone[u"tried_before"][0][u"name"]]
+    kept = cards[gone[u"tried_before"][1][u"name"]]
+    assert not missing.isEnabled() and missing.property(u"gone") == u"true"
+    assert missing.property(u"chosen") != u"true", u"a file hato does not have was recommended"
+    assert kept.isEnabled() and kept.property(u"chosen") == u"true", (
+        u"the control: the file hato has is the recommendation")
+    window.commit_pair(window.state.key(gone), gone[u"tried_before"][0])
+    assert u"Look again now fetches" not in pick_text(window)
+
+
+def test_a_run_that_settles_a_remembered_problem_counts_it_added(qapp):
+    u"""A14. The footer said "0 added · 1 needs you" beside a Subtitles row that
+    said added."""
+    mem = remembered()
+    done = dict(added(12), video=mem[u"video"], title=mem[u"title"])
+    window = remembering([], [mem])
+    window.state.running = True
+    window._runner = _EventRunner([done])
+    window._drain()
+    assert window.tally_labels[0].text() == u"1 added"
+    assert _badge_text(window) == u"0"
+
+
+def test_the_footer_accounts_for_every_video_on_screen(qapp):
+    u"""A15. Three numbers, and waits, "had a problem" and landed picks were in
+    none of them -- the footer summed to less than the rows on screen."""
+    window = make(running=False)
+    shown = [l for l in window.tally_labels if not l.isHidden()]
+    total = sum(int(l.text().split()[0]) for l in shown)
+    videos = set(window.state.key(r) for r in window.state.rows)
+    videos |= set(window.state.key(r) for r in window.state.problems())
+    assert total == len(videos), ([l.text() for l in shown], len(videos))
+    assert [l.text() for l in shown][3:] == [u"1 waiting", u"1 had a problem"]
+
+
+def test_an_idle_window_moves_its_dates_on_as_they_pass(qapp, tmp_path, monkeypatch):
+    u"""A16. Nothing re-rendered on a date: a waited row stayed hidden, and
+    "retrying in 30m" read the same five hours later."""
+    monkeypatch.setenv(u"HATO_CACHE", str(tmp_path))
+    soon = NOW8 + timedelta(minutes=30)
+    window = remembering([], [dict(_late(11), retry_after=soon.isoformat())])
+    window.state.open_pick = window.state.key(window.state.picks()[0])
+    window.show_tab(gui_app.TAB_PICK)
+    _wait_button(window).click()
+    assert _badge_text(window) == u"0"
+    timer = window.follow_other_runs(every_ms=3600000)
+    timer.stop()
+    window.state.now = soon + timedelta(hours=5)
+    window._minute_seen = -1
+    timer.timeout.emit()
+    assert _badge_text(window) == u"1", u"the date passed and the window never said so"
+
+
+def test_the_not_on_jimaku_note_says_both_waits(qapp):
+    u"""A17. A show with no entry waits 30 days, under a note saying 24 hours."""
+    hard = memory_row(u"D:\\Anime\\Obscure\\ep01.mkv", u"NOT_FOUND", u"no jimaku entry matched",
+                      title=u"Obscure", episode=1,
+                      retry_after=NOW8 + timedelta(days=29, hours=23))
+    window = remembering([], [hard])
+    window.apply_problems([hard], {u"type": u"problems", u"ok": True,
+                                   u"retry_days": {u"soft": 1, u"hard": 30}})
+    window.show_tab(gui_app.TAB_PICK)
+    tips = u" ".join(w.toolTip() for w in window.panes[gui_app.TAB_PICK].findChildren(QLabel)
+                     if w.toolTip()).replace(u"\n", u" ")
+    assert u"24 hours" in tips and u"30 days" in tips, tips
+
+
+def test_a_name_with_no_number_never_prints_none(qapp):
+    u"""A18."""
+    row = memory_row(u"D:\\Anime\\Special\\Show - OVA.mkv", u"NOT_FOUND", u"no file yet",
+                     title=u"Show - OVA", retry_after=IRUMA_DUE)
+    window = remembering([], [row])
+    window.show_tab(gui_app.TAB_PICK)
+    assert u"None" not in pick_text(window) and u"Show - OVA" in pick_text(window)
+
+
+def test_blacklisting_a_row_only_the_run_holds_takes_it_off_needs_you(qapp):
+    u"""A19. A clash or a two-episode row is never in hato's memory, so after
+    the person blacklisted it, it went on asking until the next full run."""
+    clash = wire(u"D:\\Anime\\X\\ep06.mkv", u"REFUSED",
+                 u"this video and ep06.mp4 would be given the SAME subtitle file",
+                 title=u"X", episode=6)
+    window = remembering([clash], [])
+    key = window.state.key(clash)
+    window._read = lambda argv, done: None
+    window.blacklist(key)
+    window._blacklisted(key, gui_run.Run(0, [], {}, [], u""), [{u"ok": True}])
+    assert not [r for r in window.state.problems() if window.state.key(r) == key]
+
+
+def test_the_wait_says_who_will_search_when_the_tray_is_off(qapp):
+    u"""A21. With no tray nothing searches on its own, and the tooltip said it would."""
+    window = remembering([], [_late(11)], watching=False)
+    window.state.open_pick = window.state.key(window.state.picks()[0])
+    window.show_tab(gui_app.TAB_PICK)
+    tip = _wait_button(window).toolTip().replace(u"\n", u" ")
+    assert u"on its own (" not in tip and u"the next time it runs" in tip, tip
+
+
+def test_found_on_a_retry_does_not_claim_the_first_files_did_not_line_up(qapp):
+    u"""A22. What was tried first can be a download that FAILED."""
+    errored = [dict(t, outcome=u"ERROR", match_rate=None, path=None,
+                    reason=u"x.ass could not be downloaded: 503")
+               for t in remembered()[u"tried_before"]]
+    window = make(rows=[dict(added(12), tried_before=errored)], running=False)
+    window.show_tab(gui_app.TAB_SUBS)
+    text = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SUBS]))
+    assert u"found on a retry" in text and u"did not line up with your copy;" not in text
+
+
+def test_a_look_agains_cost_is_said(qapp):
+    u"""A23. What a look-again spent was never said."""
+    window = make(running=True)
+    window._targeted = True
+    window._runner = Scripted([], code=0, rows=[],
+                              summary={u"type": u"run", u"api_calls": 9, u"seconds": 12.0})
+    window._drain()
+    assert window.state.live.startswith(u"done · looked again: 9 API calls"), window.state.live
+
+
+def test_a_remembered_pick_whose_offer_is_unknown_offers_to_look_again(qapp):
+    u"""A24. Memory cannot say how many files the entry offers, and "Try 3 more"
+    promised three new ones where there may be none."""
+    window = remembering([], [iruma_memory(newest_offered=None)])
+    window.state.open_pick = window.state.key(window.state.picks()[0])
+    window.show_tab(gui_app.TAB_PICK)
+    assert buttons_called(window, u"Look again now") and \
+        not buttons_called(window, u"Try 3 more candidates")
+
+
+def test_a_refusal_outside_the_configured_folders_is_not_settled_by_memory(qapp):
+    u"""A26. `hato D:\\Elsewhere` from a terminal: memory can never list it."""
+    elsewhere = wire(u"E:\\Elsewhere\\Show - 05.mkv", u"REFUSED", u"3 tried, none held",
+                     title=u"Show", episode=5, retry_after=IRUMA_DUE, candidates_offered=3,
+                     attempts=(_pipeline.Attempted(u"[G] Show - 05.ass", u"REFUSED", u"40%",
+                                                   size=1000, path=u"C:\\hato\\cache\\e.ja.ass"),))
+    window = remembering([elsewhere], [])
+    assert [r[u"video"] for r in window.state.problems()] == [elsewhere[u"video"]]
+    assert _badge_text(window) == u"1"
+
+
+def test_clearing_the_memory_does_not_empty_needs_you(qapp):
+    u"""A27. After a clear, an empty memory "settled" every row on screen."""
+    row = needs_you(54)
+    window = remembering([row], [dict(row, source=u"memory")])
+    window._read = lambda argv, done: None
+    window._memory_cleared(None, [{u"type": u"clear", u"ok": True, u"dry_run": False}])
+    window.apply_problems([], {u"type": u"problems", u"ok": True})
+    window.show_tab(gui_app.TAB_PICK)
+    assert _badge_text(window) == u"1" and u"Nothing needs you." not in pick_text(window)
+
+
+def test_a_half_episode_is_not_printed_as_the_whole_one():
+    u"""A28."""
+    assert gui_app.episode_text(24.5) == u"24.5" and gui_app.episode_text(24.0) == u"24"
+    assert gui_app.episode_text(7) == u"07" and gui_app.episode_text(None) == u""
+
+
+def test_a_blacklist_date_is_the_persons_day():
+    u"""A29. Stored in UTC, and shown as UTC's day."""
+    added_at = u"2026-09-18T02:30:00+00:00"
+    shown = gui_run.blacklist_entries({u"blacklist": [{u"video_hash": u"v1-x",
+                                                        u"video_path": u"", u"note": u"",
+                                                        u"added_at": added_at}]})[0][u"when"]
+    local = datetime.fromisoformat(added_at).astimezone().strftime(u"%d %b").lstrip(u"0")
+    assert shown == local, (shown, local)
+
+
+def test_look_again_is_not_offered_while_a_run_is_going(qapp):
+    u"""A30. During a run it did nothing, and said nothing."""
+    window = remembering([], [remembered(files=False)])
+    window.state.running = True
+    window.show_tab(gui_app.TAB_PICK)
+    again, = buttons_called(window, u"Look again now")
+    assert not again.isEnabled() and u"run is going" in again.toolTip()
+
+
+def test_removing_a_blacklist_row_reads_hatos_answer(qapp):
+    u"""A31. The row was dropped at the click and the answer never read."""
+    window = make(running=False)
+    entry = window.state.blacklist[0]
+    reads = []
+    window._read = lambda argv, done: reads.append((argv, done))
+    window.unblacklist(entry)
+    assert entry in window.state.blacklist and entry.get(u"removing"), (
+        u"the row went at the click")
+    (argv, done), = reads
+    assert u"--remove" in argv
+    asked = []
+    window.refresh_blacklist = lambda: asked.append(True)
+    done(gui_run.Run(0, [], {}, [], u""), [{u"ok": True}])
+    assert asked, u"hato's own list was not asked again"
+
+
+def test_a_long_look_again_goes_in_a_list_file(tmp_path, monkeypatch):
+    u"""A33. Past Windows' command-line limit the child could not even start."""
+    monkeypatch.setenv(u"HATO_CACHE", str(tmp_path / u"data"))
+    videos = [str(tmp_path / (u"Some Long Show Title Number %03d" % i) /
+                  (u"[SubsPlease] Some Long Show Title Number %03d - 01 (1080p).mkv" % i))
+              for i in range(300)]
+    argv = gui_run.argv_for_retry(videos, [str(tmp_path)])
+    assert u"--only" not in argv and u"--only-list" in argv
+    assert len(u" ".join(argv)) < gui_run.COMMAND_LINE_BUDGET
+    listed = open(argv[argv.index(u"--only-list") + 1], encoding="utf-8").read().splitlines()
+    assert listed == [os.path.abspath(v) for v in videos]
+    short = gui_run.argv_for_retry(videos[:2], [str(tmp_path)])
+    assert u"--only-list" not in short and short.count(u"--only") == 2, u"the control"
+
+
+def test_an_older_tray_is_said_and_can_be_replaced(qapp, monkeypatch):
+    u"""V1. A 1.0.1 tray writes the same pid file and keeps no retry promise --
+    and turning watching on does not replace a running tray."""
+    window = make(running=False, old_tray=True)
+    window.show_tab(gui_app.TAB_SET)
+    text = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SET]))
+    assert u"an older version" in text, text
+    calls = []
+    monkeypatch.setattr(window, u"stop_watcher", lambda: calls.append(u"stop"))
+    monkeypatch.setattr(window, u"start_watcher", lambda: calls.append(u"start"))
+    restart, = buttons_called(window, u"Restart the tray")
+    restart.click()
+    assert calls == [u"stop", u"start"] and not window.state.old_tray
+
+
+def test_the_alarming_word_is_nowhere_in_a_window_that_remembers(qapp):
+    u"""The walk at the top of this file, over what LAYER 8 added -- which it
+    never saw: every state it drove was the default fixture's (ADVERSARY
+    2026-09-22, the window's checks that passed for the wrong reason).
+    Remembered rows carry the engine's reason on every file tried, a refusal
+    with nothing to pick shows its reason as trouble, a failed pick shows what
+    `hato sync` answered, and a run's notes are engine prose too."""
+    clash = wire(u"D:\\Anime\\X\\ep06.mkv", u"REFUSED",
+                 u"refused: this video and ep06.mp4 would be given the SAME subtitle file",
+                 title=u"X", episode=6)
+    mem = remembered()
+    window = remembering([needs_you(54), clash], [mem, iruma_memory()], watching=True)
+    window.state.summary = dict(window.state.summary or {},
+                                notes=[u"1 video(s) were refused by the timing check"])
+    window.finish_pick(window.state.key(mem), gui_run.candidates_of(mem)[0][u"name"],
+                       (gui_run.PICK_REFUSED, u"REFUSED: 40% of reference lines matched", None))
+    walked = 0
+    for tab in gui_app.TABS:
+        window.show_tab(tab)
+        for row in window.state.problems():
+            window.state.open_pick = window.state.key(row)
+            window.render()
+            for text in gui_app.texts(window):
+                walked += 1
+                assert u"refus" not in text.lower(), (
+                    u"the engine's word reached the interface: %r" % text)
+    assert walked > 100, u"the walk read almost nothing (%d strings)" % walked
+
+
+def test_the_window_tells_an_older_tray_from_its_real_pid_file(qapp, tmp_path, monkeypatch):
+    u"""V1, the window's half, read off the REAL pid file: this build's tray keeps
+    the retry promise, a 1.0.1 tray's file names no capability and keeps none --
+    and a promise read off "a tray is running" was the defect."""
+    from hato import runlock
+    from hato import watch as _watch
+    monkeypatch.setenv(u"HATO_CACHE", str(tmp_path))
+    win = gui_app.HatoWindow
+    assert not win.tray_is_watching() and not win.tray_is_old(), u"no tray, no promise"
+    _watch.write_pid_file()
+    assert win.tray_is_watching() and not win.tray_is_old(), u"this build's tray was not read"
+    stamp = runlock._process_start(os.getpid())
+    _watch.pid_file_path().write_text(u"%d %s" % (os.getpid(), stamp or u"-"), encoding="utf-8")
+    assert not win.tray_is_watching(), u"a 1.0.1 tray was read as keeping retry promises"
+    assert win.tray_is_old(), u"a 1.0.1 tray was not recognised as an older one"
+
+
+def test_a_look_again_is_newer_only_about_its_own_video(qapp):
+    u"""A4, through the stream. A look-again at ONE row used to make the whole
+    snapshot newer than hato's memory -- so a row the memory had settled since
+    (paired, blacklisted) came back asking while the look-again ran."""
+    settled, asked = needs_you(54), needs_you(55)
+    window = remembering([settled, asked], [dict(asked, source=u"memory")])
+    key = window.state.key
+    assert [key(r) for r in window.state.problems()] == [key(asked)], (
+        u"the control: the memory has settled the other row")
+    window.state.running = True
+    window._targeted = True
+    window._runner = _EventRunner([dict(asked)])
+    window._drain()
+    assert [key(r) for r in window.state.problems()] == [key(asked)], (
+        u"a look-again at one row brought back a row hato had settled: %r"
+        % [r[u"video"] for r in window.state.problems()])
+
+
+def test_a_later_failed_answer_does_not_recolour_the_pick_that_landed(qapp, tmp_path,
+                                                                      monkeypatch):
+    u"""A10, the colour. A row's colour came from the LAST answer, so a failure
+    arriving after a pick had landed painted "still did not line up" over a file
+    that was written."""
+    monkeypatch.setenv(u"HATO_CACHE", str(tmp_path))
+    row = _late(11)
+    window = remembering([], [row])
+    key = _landed(window, row)
+    other = gui_run.candidates_of(row)[1]
+    window.finish_pick(key, other[u"name"], (gui_run.PICK_REFUSED, u"26% matched", None))
+    head, = pick_heads(window)
+    assert head.property(u"done") == u"forced", head.property(u"done")
+    assert head.best.text().startswith(u"used · "), head.best.text()
+
+
+def test_the_windows_moments_never_tie():
+    u"""The merge COMPARES moments to decide which copy of a row is newer, and
+    `time.monotonic()` repeats one reading for ~16 ms on Windows: a row streamed
+    just after the memory answered tied it, and lost."""
+    state = gui_app.State()
+    seen = [state.moment() for _ in range(2000)]
+    assert all(b > a for a, b in zip(seen, seen[1:])), u"two moments tied or went back"
+
+
+# -- halves of the Layer 8 fixes the M8zw builder found no check could see --------------
+#
+# ⭐ Each was a mutant that SURVIVED every check near it: the fix was in the code,
+# and nothing would have noticed it go. One check each, named for its finding.
+
+def test_a_config_that_will_not_read_is_said_on_needs_you(qapp):
+    u"""A1's other door: a broken config.toml sets `config_error`, and Needs you
+    kept its rows without saying they are not up to date -- no check had ever
+    set it."""
+    window = remembering([], [remembered()])
+    window.state.config_error = u"config.toml: candidates must be at least 1"
+    window.show_tab(gui_app.TAB_PICK)
+    text = pick_text(window)
+    assert u"not up to date" in text and u"candidates must be at least 1" in text, text
+
+
+def test_a_look_again_that_finds_the_subtitle_settles_the_row_at_once(qapp):
+    u"""A4's feed. A look-again's streamed row is newer than memory for THAT video:
+    a CONFIDENT one settles it the moment it arrives. Without the live key the
+    stale remembered copy asked on until `hato problems` answered again."""
+    mem = remembered()
+    window = remembering([], [mem])
+    key = window.state.key(mem)
+    assert key in [window.state.key(r) for r in window.state.problems()], u"the control"
+    window.state.running = True
+    window._targeted = True
+    window._runner = _EventRunner([dict(added(12), video=mem[u"video"], title=mem[u"title"])])
+    window._drain()
+    assert key not in [window.state.key(r) for r in window.state.problems()], (
+        u"a look-again that FOUND the subtitle left the row asking until memory answered")
+
+
+def test_every_trouble_row_says_its_own_reason(qapp):
+    u"""A6's list: one reason per trouble row, up to four. Every check held exactly
+    one trouble row, so a list that said only the first was invisible."""
+    one = wire(u"D:\\Anime\\X\\ep06.mkv", u"REFUSED",
+               u"this video and ep06.mp4 would be given the SAME subtitle file",
+               title=u"X", episode=6)
+    two = wire(u"D:\\Anime\\X\\ep07.mkv", u"REFUSED",
+               u"the name holds two episodes, 07 and 08", title=u"X", episode=7)
+    window = remembering([one, two], [])
+    window.show_tab(gui_app.TAB_PICK)
+    text = pick_text(window)
+    assert u"SAME subtitle file" in text and u"holds two episodes" in text, text
+
+
+def test_the_windows_one_identity_for_a_row_is_the_normalised_video():
+    u"""A7 at the root. The pick in flight, the open row and the waits all key on
+    `State.key` -- and every check reached it through a merge that normalises
+    again, so a raw-path key would have split them in silence."""
+    row = needs_you(54)
+    other = dict(row, video=row[u"video"].replace(u"ReZero S03", u"ReZero S03\\x\\.."))
+    if os.name == "nt":
+        other[u"video"] = other[u"video"].lower()
+    assert gui_app.State.key(row) == gui_app.State.key(other), (
+        gui_app.State.key(row), gui_app.State.key(other))
+
+
+def test_a_video_added_under_two_spellings_is_counted_once():
+    u"""A7 in the footer: ADDED counts each video once, whatever it is spelled."""
+    row = added(1)
+    other = dict(row, video=row[u"video"].replace(u"\\ep", u"\\x\\..\\ep"))
+    assert gui_run.tally([row, other], [])[gui_run.ADDED] == 1
+
+
+def test_look_again_on_a_remembered_row_never_claims_every_file_was_tried(qapp):
+    u"""A24 / A5, the words on the button. Memory cannot say how many files the
+    entry offers, so *"every file jimaku offered has been tried"* is a claim it
+    cannot make -- and no check read the tooltip."""
+    window = remembering([], [iruma_memory(newest_offered=None)])
+    window.state.open_pick = window.state.key(window.state.picks()[0])
+    window.show_tab(gui_app.TAB_PICK)
+    again, = buttons_called(window, u"Look again now")
+    assert u"Every file jimaku offered" not in again.toolTip(), again.toolTip()
+
+
+def test_a_refusal_in_a_skipped_folder_is_not_settled_by_memory(qapp):
+    u"""A26 under a SKIPPED folder: memory never lists a video there either, so
+    its silence settles nothing -- the check above covered only a folder outside
+    Settings altogether."""
+    video = u"D:\\Anime\\ReZero S03\\Extras\\ep05.mkv"
+    row = wire(video, u"REFUSED", u"3 tried, none held", title=u"Re:Zero", season=3,
+               episode=5, retry_after=IRUMA_DUE, candidates_offered=3,
+               attempts=(_pipeline.Attempted(u"[G] Re Zero - 05.ass", u"REFUSED", u"40%",
+                                             size=1000, path=u"C:\\hato\\cache\\e.ja.ass"),))
+    window = remembering([row], [])
+    window.state.skip_folders = [u"D:\\Anime\\ReZero S03\\Extras"]
+    assert [r[u"video"] for r in window.state.problems()] == [video], (
+        u"a refusal in a skipped folder was settled by a memory that can never list it")
+
+
+def test_after_a_clear_the_next_run_trusts_memory_again(qapp, tmp_path, monkeypatch):
+    u"""A27's other end. A clear makes memory's silence settle nothing -- UNTIL the
+    next run, this window's or another process's, whose rows are the newest word.
+    Never reset, a row settled after the clear would ask for ever."""
+    monkeypatch.setenv(u"HATO_CACHE", str(tmp_path))
+    row = needs_you(54)
+    window = remembering([row], [dict(row, source=u"memory")])
+    window._read = lambda argv, done: None
+    window._memory_cleared(None, [{u"type": u"clear", u"ok": True, u"dry_run": False}])
+    assert window.state.trust_rows, u"the control: a clear trusts the run's rows"
+    window._fresh = True
+    window._begin_fresh()
+    assert not window.state.trust_rows, u"this window's next run left the clear's trust"
+    window.state.trust_rows = True
+    timer = window.follow_other_runs(every_ms=3600000)
+    timer.stop()
+    gui_run.save_last_run([added(1)], {u"type": u"run", u"dry_run": False})
+    timer.timeout.emit()
+    assert not window.state.trust_rows, u"another process's run left the clear's trust"
+
+
+def test_the_sweep_marks_every_gone_row_removing_and_reads_the_answers(qapp):
+    u"""A31 for *Remove those N*: going, not gone, until hato's own list says so --
+    and painted as going. No check had clicked the sweep or drawn such a row."""
+    window = make(running=False)
+    reads = []
+    window._read = lambda argv, done: reads.append((argv, done))
+    gone = [e for e in window.state.blacklist if e.get(u"gone")]
+    assert gone, u"the control: the fixture holds rotated-out rows"
+    sent = window.remove_stale_blacklist()
+    assert len(sent) == len(gone) == len(reads), (len(sent), len(gone), len(reads))
+    assert all(e.get(u"removing") and e in window.state.blacklist for e in gone), (
+        u"a row went at the click, before hato said so")
+    window.show_tab(gui_app.TAB_SET)
+    assert u"removing…" in gui_app.texts(window.panes[gui_app.TAB_SET])
+
+
+def test_a_row_with_a_pick_in_flight_takes_no_second_click(qapp):
+    u"""A32, drawn: the cards of a row whose pick is with `hato sync` are disabled
+    -- the check above asked the handler, and never rendered the cards."""
+    row = needs_you(54)
+    window = remembering([row], [dict(row, source=u"memory")])
+    window._read = lambda argv, done: None
+    key = window.state.key(row)
+    window.state.open_pick = key
+    assert window.commit_pair(key, row[u"attempts"][0]) is not None, u"the control"
+    window.show_tab(gui_app.TAB_PICK)
+    cards = window.findChildren(gui_app.CandidateCard)
+    assert cards and not any(c.isEnabled() for c in cards), (
+        u"a row with a pick in flight still takes a click")
+
+
+def test_the_windows_poll_notices_an_older_tray(qapp, tmp_path, monkeypatch):
+    u"""V1 on a running window: an older tray started after the window opened is
+    noticed on the next look. Only `make(old_tray=True)` had ever set it."""
+    from hato import runlock
+    from hato import watch as _watch
+    monkeypatch.setenv(u"HATO_CACHE", str(tmp_path))
+    window = make(running=False)
+    assert not window.state.old_tray, u"the control: no tray yet"
+    _watch.pid_file_path().parent.mkdir(parents=True, exist_ok=True)
+    stamp = runlock._process_start(os.getpid())
+    _watch.pid_file_path().write_text(u"%d %s" % (os.getpid(), stamp or u"-"), encoding="utf-8")
+    timer = window.follow_other_runs(every_ms=3600000)
+    timer.stop()
+    timer.timeout.emit()
+    assert window.state.old_tray and not window.state.watching, (
+        window.state.old_tray, window.state.watching)
+
+
+# ---------------------------------------------------------------------------
+# ⭐ D2 -- "runs automatically at 03:00" REGISTERS SOMETHING, AND SAYS SO
+#
+# 🚨 The switch read ON for days over no task at all: it was drawn from
+# `bool(cfg.schedule)` -- always true -- and turning it off sent `schedule=off`,
+# which the config refuses by name. Task Scheduler is now the only state
+# (`hato/schedule.py`); these hold the WINDOW to it. `schedule`'s functions are
+# faked here -- `tests/test_schedule.py` holds the module itself to Windows.
+# ---------------------------------------------------------------------------
+
+def _task(at=u"03:00", enabled=True, **over):
+    from hato import schedule
+    values = dict(at=at, enabled=enabled, command=u"x", arguments=u"",
+                  on_battery_ok=True, catches_up=True, daily=True, readable=True)
+    values.update(over)
+    return schedule.Task(**values)
+
+
+@pytest.fixture
+def daily(monkeypatch):
+    u"""A Task Scheduler in memory: `live["task"]` is what `read()` finds."""
+    from hato import schedule
+    live = {u"task": None, u"calls": [], u"refuse": None, u"note": u""}
+
+    def enable(at, argv=None, now=None):
+        live[u"calls"].append((u"enable", at))
+        if live[u"refuse"]:
+            raise schedule.ScheduleError(live[u"refuse"])
+        live[u"task"] = _task(at)
+        return live[u"task"]
+
+    def disable():
+        live[u"calls"].append((u"disable",))
+        had, live[u"task"] = live[u"task"], None
+        return had is not None
+
+    monkeypatch.setattr(schedule, u"supported", lambda: True)
+    monkeypatch.setattr(schedule, u"read", lambda: live[u"task"])
+    monkeypatch.setattr(schedule, u"enable", enable)
+    monkeypatch.setattr(schedule, u"disable", disable)
+    monkeypatch.setattr(schedule, u"note",
+                        lambda task, argv=None: live[u"note"] if task else u"")
+    return live
+
+
+def test_the_daily_switch_is_READ_FROM_TASK_SCHEDULER_never_the_config(
+        qapp, tmp_path, monkeypatch, daily):
+    u"""🚨 THE REGRESSION: a config with a time in it -- every config -- read ON."""
+    from hato import config as config_module
+    monkeypatch.setenv("HATO_CONFIG", str(tmp_path / "config.toml"))
+    config_module.save(config_module.with_changes(config_module.load(),
+                                                  schedule=u"05:30"))
+    fresh = gui_app.settings_from_disk()
+    assert fresh.schedule == u"05:30"
+    assert fresh.auto is False, u"no task exists, and the switch reads ON"
+
+    daily[u"task"] = _task(u"06:15")
+    fresh = gui_app.settings_from_disk()
+    assert fresh.auto is True
+    assert fresh.schedule == u"06:15", u"the header must say when Windows REALLY runs it"
+
+
+def test_the_switch_REGISTERS_and_REMOVES_the_task_and_never_sends_schedule_off(
+        qapp, daily):
+    window = make()
+    window.state.auto = False
+    window.render()
+    window.auto_switch.click()
+    assert daily[u"calls"] == [(u"enable", u"03:00")], daily[u"calls"]
+    assert window.state.auto is True and window.auto_switch.isChecked()
+
+    window.auto_switch.click()
+    assert daily[u"calls"][-1] == (u"disable",)
+    assert window.state.auto is False and not window.auto_switch.isChecked()
+    # ⛔ `schedule=off` is the value the config refuses by name
+    sent = [u" ".join(a) for a in window.spawned]
+    assert not any(u"schedule=off" in s for s in sent), sent
+
+
+def test_the_settings_switch_is_the_same_switch(qapp, daily):
+    u"""⛔ Two controls for one fact: the Settings one must drive the task too."""
+    window = make()
+    window.state.auto = False
+    window.show_tab(gui_app.TAB_SET)
+    card = window.panes[gui_app.TAB_SET].findChildren(gui_app.Switch)
+    assert card, u"no switch in Settings"
+    card[0].click()
+    assert daily[u"calls"] == [(u"enable", u"03:00")]
+
+
+def test_a_task_off_in_task_scheduler_reads_OFF_with_the_fix_beside_it(qapp, daily):
+    u"""⭐ A measured switch that reports two facts says which one is missing."""
+    daily[u"task"] = _task(enabled=False)
+    daily[u"note"] = (u"It is switched off in Task Scheduler — switching it on here "
+                      u"turns it back on.")
+    state = gui_app.read_schedule(gui_app.State())
+    assert state.auto is False and u"Task Scheduler" in state.auto_note
+    window = make(auto=state.auto, auto_note=state.auto_note)
+    window.show_tab(gui_app.TAB_SET)
+    shown = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SET]))
+    assert u"switched off in Task Scheduler" in shown
+    assert u"switched off in Task Scheduler" in window.auto_switch.toolTip()
+
+
+def test_a_REFUSAL_is_said_beside_the_switch_and_the_switch_reads_the_truth(qapp, daily):
+    daily[u"refuse"] = (u"Task Scheduler would not add hato's daily run "
+                        u"(Access is denied.).")
+    window = make()
+    window.state.auto = False
+    window.render()
+    window.auto_switch.click()
+    assert window.state.auto is False, u"it says ON over a task that was refused"
+    assert u"Access is denied" in window.state.schedule_said
+    window.show_tab(gui_app.TAB_SET)
+    assert u"Access is denied" in u" ".join(gui_app.texts(window.panes[gui_app.TAB_SET]))
+
+
+def test_a_new_time_is_GIVEN_TO_the_registered_task(qapp, daily):
+    u"""🚨 Without it the header says 04:30 while Windows starts hato at 03:00."""
+    daily[u"task"] = _task(u"03:00")
+    window = make(auto=True)
+    window.show_tab(gui_app.TAB_SET)
+    window.time_field.setText(u"04:30")
+    window._set_schedule()
+    assert (u"enable", u"04:30") in daily[u"calls"]
+    assert u"schedule=04:30" in u" ".join(window.spawned[0])
+    assert window.state.schedule == u"04:30" and window.autotime.text() == u"04:30"
+
+
+def test_a_new_time_with_the_daily_run_OFF_registers_nothing(qapp, daily):
+    window = make(auto=False)
+    window.show_tab(gui_app.TAB_SET)
+    window.time_field.setText(u"04:30")
+    window._set_schedule()
+    assert daily[u"calls"] == []
+    assert u"schedule=04:30" in u" ".join(window.spawned[0])
+
+
+def test_a_time_the_config_would_refuse_is_refused_IN_WORDS_and_put_back(qapp, daily):
+    u"""⛔ It used to go to `hato config --set`, be refused there, and nothing
+    said so -- the field went on showing what was typed."""
+    window = make(auto=True)
+    window.show_tab(gui_app.TAB_SET)
+    window.time_field.setText(u"3:00")
+    window._set_schedule()
+    assert window.spawned == [] and daily[u"calls"] == []
+    assert u"is not a time" in window.state.schedule_said
+    assert window.state.schedule == u"03:00"
+    window.show_tab(gui_app.TAB_SET)
+    assert window.time_field.text() == u"03:00"
+
+
+def test_where_windows_cannot_schedule_the_switch_VANISHES_and_says_what_to_do(qapp):
+    window = make(auto_supported=False)
+    lay_out(window)
+    for widget in (window.autolabel, window.autotime, window.auto_switch):
+        assert not widget.isVisible(), u"a switch that can do nothing is drawn"
+    window.show_tab(gui_app.TAB_SET)
+    shown = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SET]))
+    assert u"cron" in shown
+    assert getattr(window, u"time_field", None) is None, \
+        u"Settings draws a time for a run nothing can start"
+
+
+def test_the_switch_ASKS_WINDOWS_rather_than_trusting_itself(qapp, daily):
+    u"""⛔ The switch was drawn when the window opened; the task may have been
+    made since -- by hand, or by another window. Flipping a stale switch must do
+    what the person sees happen, and that is decided by what exists NOW."""
+    window = make(auto=False)
+    window.render()
+    daily[u"task"] = _task(u"03:00")          # registered after the window drew
+    window.auto_switch.click()
+    assert daily[u"calls"] == [(u"disable",)], daily[u"calls"]
+    assert window.state.auto is False
+
+
+def test_with_the_daily_run_OFF_nothing_claims_a_retry_WILL_run(qapp):
+    u"""The control arm of the one below: no tray, no daily run -- a retry only
+    becomes due, and no sentence may promise a run."""
+    window = make(auto=False, watching=False)
+    window.show_tab(gui_app.TAB_PICK)
+    shown = u" ".join(gui_app.texts(window.panes[gui_app.TAB_PICK]))
+    assert u"retry after" in shown or u"retry due" in shown, shown[:400]
+    assert u"retrying" not in shown
+
+
+def test_with_the_daily_run_ON_every_sentence_about_who_retries_says_so(qapp):
+    u"""⭐ D2 -- the tray was the only thing that ran hato on its own, and three
+    sentences said so. Once the daily run is registered, each names it."""
+    window = make(auto=True, watching=False)
+
+    def flat(pane):
+        # ⚠ `wrap()` breaks a tooltip onto lines wherever it likes
+        return u" ".join(u" ".join(gui_app.texts(window.panes[pane])).split())
+    window.show_tab(gui_app.TAB_PICK)
+    picks = flat(gui_app.TAB_PICK)
+    assert u"the daily run at 03:00 asks again" in picks
+    # ⭐ EACH SENTENCE ON ITS OWN -- the row's wait and the strip's are separate
+    # calls, and one that forgot the daily run would hide behind the other.
+    pane = window.panes[gui_app.TAB_PICK]
+    rows = [l.text() for l in pane.findChildren(QLabel) if u"tried" in l.text()]
+    strips = [l.text() for l in pane.findChildren(QLabel)
+              if l.text().startswith(u"— ") and u"retry" in l.text()]
+    assert rows and strips, (rows, strips)
+    assert all(u"retrying" in t for t in rows), rows
+    assert all(u"retrying" in t for t in strips), strips
+    window.show_tab(gui_app.TAB_SET)
+    assert u"the daily one at 03:00" in flat(gui_app.TAB_SET)
+
+
+def test_next_run_is_said_ONLY_while_a_daily_run_is_registered(qapp):
+    u"""🚨 LOOKED, 2026-09-23: the D2 shot showed *"next run in 4 hours"* beside a
+    switch that was OFF -- a fixture's literal in a field nothing real ever set.
+    It is derived now, and only from a task that exists."""
+    from datetime import timedelta
+    two_ahead = (NOW8 + timedelta(hours=2)).astimezone().strftime(u"%H:%M")
+    assert gui_run.next_run_text(two_ahead, NOW8) == u"next run in 2h"
+    assert gui_run.next_run_text(None, NOW8) == u""
+    for auto in (True, False):
+        window = make(auto=auto, schedule=two_ahead)
+        window.show_tab(gui_app.TAB_SET)
+        shown = u" ".join(gui_app.texts(window.panes[gui_app.TAB_SET]))
+        assert (u"next run in 2h" in shown) is auto, (auto, shown[:300])
+        # ⚠ AND THE MINUTE TICK KEEPS IT TRUE -- asked of a window with nothing
+        # else dated on it, or the rows' own retry dates would answer for it
+        bare = make(rows=[], auto=auto)
+        bare.state.waits, bare.state.remembered = {}, []
+        assert bare._anything_dated() is auto, auto
+
+
+def test_the_card_says_what_task_scheduler_HOLDS():
+    u"""🚨 It said *"Windows wakes hato at that time"* over no task at all."""
+    on = gui_run.daily_run_text(True, u"03:00", False)
+    assert u"Windows starts hato at 03:00 every day" in on
+    assert u"next on" in on, u"a run the computer sleeps through: when it happens instead"
+    off = gui_run.daily_run_text(False, u"03:00", False)
+    assert off.startswith(u"Off") and u"03:00" not in off
+    assert u"tray" in gui_run.daily_run_text(False, u"03:00", True)
+
+
+def test_with_the_daily_run_ON_a_retry_says_WHEN_even_without_the_tray():
+    u"""⭐ The frozen rule -- say when it resolves. The daily run keeps a retry at
+    the first run on or after its date. ⚠ Zone-proof: the daily time is derived
+    from the date in THIS machine's zone, which is the zone Task Scheduler uses."""
+    from datetime import timedelta
+    due = NOW8 + timedelta(hours=14)
+    row = {u"retry_after": due.isoformat()}
+    two_after = (due + timedelta(hours=2)).astimezone().strftime(u"%H:%M")
+    assert gui_run.retry_text(row, NOW8, False, two_after) == u"retrying in 16h"
+    assert gui_run.retry_text(row, NOW8, True, two_after) == u"retrying in 14h"
+    assert gui_run.retry_text(row, NOW8, False) == u"retry after 14h"
+    # a date already passed waits for the next daily run
+    past = {u"retry_after": (NOW8 - timedelta(hours=1)).isoformat()}
+    three_ahead = (NOW8 + timedelta(hours=3)).astimezone().strftime(u"%H:%M")
+    assert gui_run.retry_text(past, NOW8, False, three_ahead) == u"retrying in 3h"
+    assert gui_run.retry_text(past, NOW8, False) == u"retry due"
+    # ⚠ a date that falls EXACTLY on the daily time is that run's, not the next day's
+    on_the_dot = due.astimezone().strftime(u"%H:%M")
+    exact = {u"retry_after": due.replace(second=0, microsecond=0).isoformat()}
+    assert gui_run.retry_text(exact, NOW8, False, on_the_dot) == u"retrying in 14h"
+
+
+def test_the_WAIT_button_stops_saying_nothing_runs_it_once_the_daily_run_is_on(qapp):
+    u"""⛔ A21's sentence -- *"nothing runs it on its own"* -- is false once the
+    daily run is registered."""
+    window = make(auto=True, watching=False)
+    window.show_tab(gui_app.TAB_PICK)
+    # ⚠ WHITESPACE COLLAPSED: `wrap()` broke the phrase across lines, and the
+    # first version of this check -- looking for it whole -- let M8y-74 live.
+    tips = [u" ".join(b.toolTip().split()) for b in window.findChildren(QPushButton)
+            if b.text() == u"Wait for it"]
+    assert tips, u"the fixture shows no Wait button, so this proves nothing"
+    assert not any(u"nothing runs it on its own" in t for t in tips), tips

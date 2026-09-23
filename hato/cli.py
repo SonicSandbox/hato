@@ -44,6 +44,7 @@ COMMANDS = {
     "rank": "hato.commands.rank",
     "extract": "hato.commands.extract",
     "sync": "hato.commands.sync",
+    "problems": "hato.commands.problems",
 }
 
 #: The folder run (spec/RUNBOOK.md 4b + 5a).

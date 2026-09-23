@@ -192,6 +192,25 @@ def test_no_memory_is_not_a_broken_window(tmp_path):
     assert gui_run.load_last_run(path=wrong) == ([], {}, u"")
 
 
+def test_a_dry_runs_snapshot_is_no_memory(tmp_path):
+    u"""🚨 RUNBOOK 8a. A dry run is not a run. hato 1.0.1 still writes its plan
+    into this file, and PLANNED rows read as *"something went wrong"* on screen.
+
+    ⭐ The CONTROL is the same file with `dry_run` false, remembered in full --
+    without it, a loader that forgot everything would pass.
+    """
+    path = tmp_path / "last-run.json"
+    plan = video(outcome="PLANNED", output_path=None)
+    gui_run.save_last_run([plan], {"type": "run", "dry_run": True}, path=path)
+    assert gui_run.load_last_run(path=path) == ([], {}, u""), (
+        u"a dry run's PLAN was read back as the last run -- the window would "
+        u"paint every PLANNED row as 'something went wrong'")
+
+    gui_run.save_last_run([video()], {"type": "run", "dry_run": False}, path=path)
+    rows, summary, saved_at = gui_run.load_last_run(path=path)
+    assert rows == [video()] and summary.get("type") == "run" and saved_at
+
+
 def test_a_failed_save_leaves_the_previous_memory_whole(tmp_path, monkeypatch):
     u"""🚨 `open(path,'w')` truncates ON OPEN, so a raise mid-write would leave
     zero bytes -- and the next launch would read that as *no previous run*
@@ -282,8 +301,43 @@ def test_a_confident_row_with_nothing_written_is_not_called_added():
 
 
 def test_a_skipped_row_is_skipped_whatever_its_outcome_says():
-    assert gui_run.outcome_word(video(skip="present")) == gui_run.SKIPPED
-    assert gui_run.outcome_word(video(skip="no-track", outcome=None)) == gui_run.SKIPPED
+    assert gui_run.is_skipped(gui_run.outcome_word(video(skip="present")))
+    assert gui_run.is_skipped(
+        gui_run.outcome_word(video(skip="no-track", outcome=None)))
+
+
+def test_the_FIVE_skips_do_not_collapse_into_one_reassuring_word():
+    u"""🚨 Sonic, 2026-09-19, on the published 1.0.1: *"Katanai and tsuihou
+    don't have it even though it says its already subbed in the GUI."*
+
+    Both were true SKIPs and neither meant the video had its subtitle: one is
+    an Erai-raws [MultiSub] rip whose Japanese track is INSIDE the container,
+    the other downloaded 3 of 10 candidates, kept none, and is retrying
+    tomorrow. ⛔ `outcome_word` answered *"already had one"* for both.
+
+    ⚠ The engine always sent `skip`; only the window threw it away. The CLI has
+    distinguished all four since 4a."""
+    words = set()
+    for kind in (u"present", u"embedded", u"negative", u"no-track",
+                 u"blacklisted"):
+        word = gui_run.outcome_word(video(skip=kind, outcome=None))
+        assert gui_run.is_skipped(word), (kind, word)
+        words.add(word)
+    assert len(words) == 5, u"five skips rendered as %d word(s): %r" % (
+        len(words), sorted(words))
+
+    # ⛔ The two from the report, by name, and the exact claim each must NOT make
+    retrying = gui_run.outcome_word(video(skip=u"negative", outcome=None))
+    assert u"had one" not in retrying and u"alread" not in retrying, retrying
+    inside = gui_run.outcome_word(video(skip=u"embedded", outcome=None))
+    assert u"inside" in inside, inside
+
+
+def test_an_unknown_skip_still_renders_as_something():
+    u"""⚠ A skip kind this GUI has never heard of must not paint a blank row.
+    The engine can add one without the window being rebuilt."""
+    word = gui_run.outcome_word(video(skip=u"some-future-skip", outcome=None))
+    assert word and gui_run.is_skipped(word), word
 
 
 def test_nothing_on_jimaku_yet_is_not_a_failure():
@@ -346,15 +400,21 @@ def test_a_real_child_is_read_line_by_line(monkeypatch):
     assert [e.get("type") for e in events] == ["progress", "video", "run"]
 
 
-def test_exit_1_is_something_needing_a_pick_and_not_a_failure(monkeypatch):
-    u"""⛔ Only exit 2 means the command could not be run. Exit 1 is the whole
-    value proposition: hato fetched something and the timing did not hold."""
+def test_exit_1_is_a_run_that_STOPPED_and_a_pick_is_exit_0(monkeypatch):
+    u"""🚨 ADVERSARY 2026-09-22 A12. This check used to be called *"exit 1 is
+    something needing a pick"*, and it pinned the misreading: `hato` exits 0 for
+    a run with picks and 1 for a run cut short -- a 401, a server gone, a crash
+    -- which the window then painted as *done*."""
     done, _ = drive(monkeypatch, fake_cli(
         json.dumps(video(outcome="REFUSED", output_path=None)),
-        json.dumps({"type": "run"}), code=1))
-    assert done.code == 1
-    assert done.could_not_run is False
-    assert done.counts[gui_run.NEEDS_YOU] == 1
+        json.dumps({"type": "run"}), code=0))
+    assert (done.code, done.stopped, done.could_not_run) == (0, False, False)
+    assert done.counts[gui_run.NEEDS_YOU] == 1, u"a pick is the tool working, exit 0"
+    cut, _ = drive(monkeypatch, fake_cli(
+        json.dumps({"type": "run", "stopped": "jimaku rejected the key (401)"}),
+        code=1, stderr=["hato: the run stopped early: jimaku rejected the key (401)"]))
+    assert cut.stopped is True and cut.could_not_run is False
+    assert cut.said == u"the run stopped early: jimaku rejected the key (401)", cut.said
 
 
 def test_exit_2_is_the_one_that_means_it_could_not_run(monkeypatch):
@@ -389,3 +449,301 @@ def test_the_run_is_not_finished_while_its_last_lines_are_still_in_the_pipe(
         *([json.dumps(video())] * 40 + [json.dumps({"type": "run"})])))
     assert len(done.rows) == 40
     assert done.summary.get("type") == "run"
+
+
+# ---------------------------------------------------------------------------
+# ⭐ RUNBOOK 8e -- Needs you: one list, the honest wait, and a pick that is read
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone          # noqa: E402
+
+NOW = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)
+
+
+#: ⚠ FORWARD SLASHES in this block, on purpose: it was first written through a shell
+#: heredoc, which turned `\\` into `\` and `"C:\hato\cache\x..."` into a syntax error
+#: (LEDGER-HOT's heredoc trap, a sixth time). Windows reads either separator.
+def tried(name, rate, path="C:/hato/cache/x.ja.ass"):
+    return {"name": name, "outcome": "REFUSED", "reason": "the timing did not hold",
+            "bytes": 1000, "match_rate": rate, "path": path, "when": "2026-09-21"}
+
+
+def waiting_row(video="D:/A/ep12.mkv", with_files=True, due=NOW + timedelta(hours=13, minutes=20)):
+    return video_row(video=video, outcome="SKIPPED", skip="negative", output_path=None,
+                     retry_after=due.isoformat(),
+                     tried_before=[tried("a.ass", 0.70), tried("b.srt", 0.47)] if with_files else [])
+
+
+def video_row(**over):
+    row = video(**over)
+    row.setdefault("tried_before", [])
+    return row
+
+
+def test_the_pick_sends_force_only_when_asked():
+    u"""D6. The flag rides on the end, after --json; the pair stays the pair."""
+    plain = gui_run.argv_for_pair("D:/A/x.mkv", "D:/A/sub.ass")
+    forced = gui_run.argv_for_pair("D:/A/x.mkv", "D:/A/sub.ass", force=True)
+    assert "--force" not in plain and forced[-1] == "--force"
+    assert forced[:-1] == plain and plain[-1] == "--json"
+
+
+def test_a_pick_is_paired_only_when_the_answer_says_a_file_landed():
+    u"""🚨 D7. The window painted "paired" at the CLICK, over a child that had died
+    on a usage error. The verdict comes from the answer -- never from the click and
+    never from an exit code alone."""
+    assert gui_run.pick_verdict(0, {"written": True, "forced": False})[0] == gui_run.PAIRED
+    assert gui_run.pick_verdict(0, {"written": True, "forced": True})[0] == gui_run.FORCED
+    word, why, landed = gui_run.pick_verdict(1, {"written": False, "outcome": "REFUSED",
+                                                 "reason": "31% -- no"})
+    assert word == gui_run.PICK_REFUSED and why and landed is None
+    assert gui_run.pick_verdict(2, {})[0] == gui_run.PICK_FAILED, (
+        u"a usage error read as anything but a failure")
+    assert gui_run.pick_verdict(0, {})[0] == gui_run.PICK_FAILED, (
+        u"exit 0 with no answer was read as a success")
+
+
+def test_a_skip_that_is_waiting_on_files_is_a_row_a_person_can_pick_from():
+    u"""⭐ 4a. `skip: negative` is not "done": with files it is a PICK, without
+    them it is WAITING -- and a present or embedded subtitle needs nobody."""
+    assert gui_run.problem_kind(waiting_row()) == gui_run.PICK
+    assert gui_run.problem_kind(waiting_row(with_files=False)) == gui_run.WAITING
+    assert gui_run.problem_kind(video_row(skip="present")) is None
+    assert gui_run.problem_kind(video_row(outcome="REFUSED", output_path=None,
+                                          attempts=[tried("a.ass", 0.3)])) == gui_run.PICK
+    assert gui_run.problem_kind(video_row(outcome="NOT_FOUND")) == gui_run.WAITING
+    assert gui_run.problem_kind(video_row(outcome="ERROR")) == gui_run.TROUBLE
+    assert gui_run.problem_kind(video_row()) is None
+
+
+def test_a_refusal_with_nothing_tried_is_trouble_whose_reason_shows_never_a_pick():
+    u"""ADVERSARY 2026-09-22 A6. Two videos on one file, a name holding two
+    episodes, a name with no number: refused before any download. As a PICK the
+    row read *"0 tried · best —"* over nothing, and hid the one sentence that
+    says what to do."""
+    for reason in (u"this video and ep06.mp4 would be given the SAME subtitle file",
+                   u"the video holds episodes 1-2 -- Split the file",
+                   u"No episode number was read from the video"):
+        row = video_row(outcome="REFUSED", output_path=None, reason=reason)
+        assert gui_run.problem_kind(row) == gui_run.TROUBLE, reason
+
+
+def test_every_file_ever_tried_is_offered_once_best_first():
+    row = video_row(outcome="REFUSED", attempts=[tried("c.ass", 0.30), tried("a.ass", 0.72)],
+                    tried_before=[tried("a.ass", 0.70), tried("b.srt", None)])
+    names = [c["name"] for c in gui_run.candidates_of(row)]
+    assert names == ["a.ass", "c.ass", "b.srt"], (
+        u"a file offered twice, a stale copy preferred, or an unmeasured one first")
+    assert gui_run.candidates_of(row)[0]["match_rate"] == 0.72   # THIS run's copy won
+
+
+def test_needs_you_keeps_a_problem_the_last_run_never_looked_at():
+    u"""🚨 4a's FIRST CAUSE: `last-run.json` is a snapshot of one run, so a run over
+    another folder wiped the view. The memory keeps it."""
+    other = waiting_row(video="D:/B/ep03.mkv")
+    shown = gui_run.needs_you([video_row()], remembered=[other])
+    assert [r["video"] for r in shown] == ["D:/B/ep03.mkv"]
+
+
+def test_needs_you_drops_a_row_the_newer_memory_no_longer_lists():
+    u"""⭐ Settled since the snapshot -- a pick landed, a subtitle appeared. ⛔ But a
+    clash (a row the state DB never holds) is kept: its absence says nothing."""
+    settled = video_row(video="D:/A/ep05.mkv", outcome="REFUSED", output_path=None,
+                        attempts=[tried("x.ass", 0.3)])
+    clash = video_row(video="D:/A/ep06.mkv", outcome="REFUSED", output_path=None,
+                      reason="this video and ep06.mp4 would be given the SAME file")
+    shown = gui_run.needs_you([settled, clash], remembered=[])
+    assert [r["video"] for r in shown] == ["D:/A/ep06.mkv"]
+
+
+def test_a_row_a_run_streamed_after_the_memory_wins_and_nothing_is_dropped():
+    live = video_row(video="D:/A/ep05.mkv", outcome="REFUSED", output_path=None,
+                     attempts=[tried("new.ass", 0.4)])
+    stale = waiting_row(video="D:/A/ep05.mkv")
+    key = gui_run.problem_key(live)
+    assert gui_run.needs_you([live], remembered=[stale], live={key}) == [live]
+    assert gui_run.needs_you([live], remembered=[], live={key}) == [live]
+    assert gui_run.needs_you([live], remembered=[stale]) == [stale], (
+        u"the control: not streamed, the newer memory's copy is the one")
+
+
+# -- ADVERSARY 2026-09-22: which copy wins is decided per video -------------------------------
+
+def _refused(video, name="x.ass"):
+    return video_row(video=video, outcome="REFUSED", output_path=None,
+                     attempts=[tried(name, 0.3)], retry_after=NOW.isoformat())
+
+
+def test_a_look_again_on_one_row_makes_only_that_row_newer_than_the_memory():
+    u"""A4. One flag for the whole list: during a look-again on row Y, EVERY stale
+    snapshot row beat memory -- a row the person had just paired or blacklisted
+    came back asking, and the badge counted it."""
+    settled = _refused("D:/A/ep54.mkv")                  # memory: settled since
+    looked = _refused("D:/A/ep23.mkv", "fresh.ass")      # streamed by the look-again
+    remembered = waiting_row(video="D:/A/ep23.mkv")
+    shown = gui_run.needs_you([settled, looked], remembered=[remembered],
+                              live={gui_run.problem_key(looked)})
+    assert [r["video"] for r in shown] == ["D:/A/ep23.mkv"], (
+        u"a row memory settled came back because ANOTHER row was looked at again: %s"
+        % [r["video"] for r in shown])
+    assert shown[0] is looked, u"the look-again's own copy must win for its own video"
+
+
+def test_a_newer_row_that_is_no_problem_settles_the_remembered_one():
+    u"""A14. A run SETTLED a remembered problem -- and memory's stale copy went on
+    asking, because the run's rows were filtered to problems before the merge.
+    The footer said "0 added · 1 needs you" beside a Subtitles row saying added."""
+    remembered = waiting_row(video="D:/A/ep12.mkv")
+    done = video_row(video="D:/A/ep12.mkv")              # CONFIDENT, written
+    key = gui_run.problem_key(done)
+    assert gui_run.needs_you([done], remembered=[remembered], live={key}) == []
+    counts = gui_run.tally([done], [], done=())
+    assert counts[gui_run.ADDED] == 1 and counts[gui_run.NEEDS_YOU] == 0, counts
+
+
+def test_a_problem_memory_cannot_list_is_not_settled_by_its_silence():
+    u"""A26. A run over a folder not in Settings -- `hato D:\\Elsewhere` from a
+    terminal -- has refusals `hato problems` can never list, and the newer, silent
+    memory "settled" them."""
+    elsewhere = _refused("E:/Elsewhere/ep05.mkv")
+    inside = _refused("D:/A/ep07.mkv")
+
+    def in_scope(row):
+        return row["video"].startswith("D:/A/")
+
+    shown = gui_run.needs_you([elsewhere, inside], remembered=[], in_scope=in_scope)
+    assert [r["video"] for r in shown] == ["E:/Elsewhere/ep05.mkv"], (
+        u"the in-scope row is settled (memory would list it); the other cannot be")
+
+
+def test_a_cleared_memorys_silence_settles_nothing():
+    u"""A27. After *Clear hato's memory* the DB holds nothing, so `hato problems`
+    answers [] -- and every row on screen was dropped as "settled", though not
+    one of those episodes has a subtitle."""
+    row = _refused("D:/A/ep54.mkv")
+    assert gui_run.needs_you([row], remembered=[]) == [], u"the control"
+    assert gui_run.needs_you([row], remembered=[], trust_rows=True) == [row]
+
+
+def test_two_spellings_of_one_video_are_one_row_and_one_count():
+    u"""A7. The raw path and a normalised one were two identities: two rows under a
+    badge of one."""
+    upper = _refused("D:/Anime/Show/ep54.mkv")
+    lower = dict(upper, video="d:\\anime\\show\\ep54.mkv") if os.name == "nt" \
+        else dict(upper)
+    shown = gui_run.needs_you([upper, lower], remembered=None)
+    assert len(shown) == 1, [r["video"] for r in shown]
+    assert gui_run.tally([upper, lower], shown)[gui_run.NEEDS_YOU] == 1
+
+
+def test_a_pick_that_landed_is_counted_as_added():
+    u"""A15. A landed pick was counted nowhere, so the footer summed to less than
+    the rows on screen."""
+    row = _refused("D:/A/ep54.mkv")
+    key = gui_run.problem_key(row)
+    counts = gui_run.tally([row], [row], done=[key])
+    assert counts[gui_run.ADDED] == 1 and counts[gui_run.NEEDS_YOU] == 0, counts
+
+
+def test_before_the_memory_answers_the_run_rows_are_shown_as_they_are():
+    assert gui_run.needs_you([waiting_row()], remembered=None) == [waiting_row()]
+
+
+def test_the_wait_is_said_as_a_promise_only_when_something_will_keep_it():
+    u"""🚨 4b + D2. With the tray watching, "retrying in 14h" is a promise (it wakes
+    for it). Without it -- and with no daily run registered (`daily` not given
+    here; `test_gui_widgets` holds that case) -- nothing runs on its own, so the
+    sentence says when it becomes DUE. ⚠ Rounded UP: 13h20m is 14h."""
+    row = waiting_row()
+    assert gui_run.retry_text(row, NOW, watching=True) == u"retrying in 14h"
+    assert gui_run.retry_text(row, NOW, watching=False) == u"retry after 14h"
+    soon = waiting_row(due=NOW + timedelta(minutes=9, seconds=5))
+    assert gui_run.retry_text(soon, NOW, watching=True) == u"retrying in 10m"
+    late = waiting_row(due=NOW - timedelta(minutes=1))
+    assert gui_run.retry_text(late, NOW, watching=True) == u"retrying now"
+    assert gui_run.retry_text(late, NOW, watching=False) == u"retry due"
+    month = waiting_row(due=NOW + timedelta(days=29, hours=2))
+    assert gui_run.retry_text(month, NOW, watching=True) == u"retrying in 30 days"
+    assert gui_run.retry_text(video_row(), NOW, watching=True) == u""
+
+
+def test_a_subtitle_found_only_after_earlier_files_failed_says_so():
+    assert gui_run.found_on_retry(video_row(tried_before=[tried("a.ass", 0.7)]))
+    assert not gui_run.found_on_retry(video_row())
+    assert not gui_run.found_on_retry(video_row(output_path=None,
+                                                tried_before=[tried("a.ass", 0.7)]))
+
+
+def test_look_again_now_is_one_video_the_wait_skipped_and_its_folder_named():
+    argv = gui_run.argv_for_retry("D:/A/ep12.mkv", "D:/A", candidates=3)
+    assert argv[argv.index("--only") + 1] == os.path.abspath("D:/A/ep12.mkv")
+    assert "--retry-now" in argv and "--force" not in argv, (
+        u"look-again must skip the WAIT only -- never re-download a refused file")
+    assert argv[argv.index("--candidates") + 1] == "3"
+    assert argv[-1] == os.path.abspath("D:/A")
+
+
+def test_no_new_word_says_refused():
+    assert not [w for w in gui_run.interface_words() if "refus" in w.lower()]
+
+
+def test_probably_not_out_is_exactly_one_past_the_newest_on_offer():
+    u"""⭐ RUNBOOK 8f. ⛔ A gap of two is a MISSING episode, not a late one."""
+    assert gui_run.probably_not_out({"episode": 23, "newest_offered": 22})
+    assert not gui_run.probably_not_out({"episode": 22, "newest_offered": 22}), u"on offer"
+    assert not gui_run.probably_not_out({"episode": 24, "newest_offered": 22}), u"a gap"
+    assert not gui_run.probably_not_out({"episode": 23, "newest_offered": None})
+    assert not gui_run.probably_not_out({"episode": None, "newest_offered": 22})
+    assert not gui_run.probably_not_out({"episode": True, "newest_offered": 0}), (
+        u"a bool is not an episode number")
+    assert not gui_run.probably_not_out({"episode": [23, 24], "newest_offered": 22})
+
+
+def test_a_pick_the_person_waits_on_is_a_wait_for_exactly_its_date():
+    u"""⭐ HANDOFF 4c. Held as long as the retry it was chosen FOR -- a new date (a
+    run recorded another negative) or the date passing puts it back asking."""
+    row = waiting_row()
+    key = gui_run.problem_key(row)
+    waits = {key: row["retry_after"]}
+    kept, = gui_run.apply_waits([row], waits, NOW)
+    assert gui_run.problem_kind(kept) == gui_run.WAITING
+    assert gui_run.problem_kind(row) == gui_run.PICK, u"the row handed in was changed"
+    counted = gui_run.tally([], [kept])
+    assert counted[gui_run.NEEDS_YOU] == 0 and counted[gui_run.NOT_YET] == 1, counted
+    moved = dict(row, retry_after=(NOW + timedelta(days=2)).isoformat())
+    assert gui_run.problem_kind(gui_run.apply_waits([moved], waits, NOW)[0]) == gui_run.PICK
+    later = NOW + timedelta(days=1)
+    assert gui_run.problem_kind(gui_run.apply_waits([row], waits, later)[0]) == gui_run.PICK
+    assert gui_run.problem_kind(gui_run.apply_waits([row], {}, NOW)[0]) == gui_run.PICK
+    nothing = waiting_row(with_files=False)
+    assert gui_run.apply_waits([nothing], {gui_run.problem_key(nothing):
+                                           nothing["retry_after"]}, NOW)[0] == nothing, (
+        u"only a PICK can be waited on -- a wait is already one")
+
+
+def test_the_waits_survive_the_window_and_a_broken_file_is_none(tmp_path):
+    path = tmp_path / "window-waits.json"
+    assert gui_run.save_waits({"d:/a/ep12.mkv": "2026-09-23T01:42:04+00:00"}, path)
+    assert gui_run.load_waits(path) == {"d:/a/ep12.mkv": "2026-09-23T01:42:04+00:00"}
+    path.write_text("{not json", encoding="utf-8")
+    assert gui_run.load_waits(path) == {}
+    assert gui_run.load_waits(tmp_path / "absent.json") == {}
+    assert not [p for p in tmp_path.iterdir() if ".new-" in p.name], u"a temp was left"
+
+
+def test_clearing_counts_by_default_and_clears_only_with_yes():
+    u"""⭐ RUNBOOK 8g. ⛔ The dry count is what the card asks for, and it must
+    never be the call that deletes."""
+    dry = gui_run.argv_for_clear()
+    assert dry[-3:] == ["state", "--clear", "--json"] and "--yes" not in dry
+    assert gui_run.argv_for_clear(yes=True)[-1] == "--yes"
+    assert "--blacklist" not in gui_run.argv_for_clear(yes=True)
+    assert gui_run.argv_for_clear(yes=True, blacklist=True)[-2:] == ["--yes", "--blacklist"]
+
+
+def test_the_memory_is_counted_in_words_a_person_recognises():
+    said = gui_run.memory_summary({"cleared": {"videos": 1, "waiting": 0, "shows": 2,
+                                               "attempts": 3}})
+    assert said == u"1 video tried · 0 waiting to look again · 2 shows found on jimaku"
+    assert gui_run.memory_summary(None) == u"" and gui_run.memory_summary({}) == u""
+    assert "row" not in said and "table" not in said

@@ -480,11 +480,15 @@ class ResolutionCache(object):
     memory. Each says so, in one sentence, in `.notes`.
     """
 
-    def __init__(self, path=None):
+    def __init__(self, path=None, repair=True):
+        """`repair=False` -- for a VIEW (a dry `hato state --clear`): a corrupt file
+        is left exactly as it is for the next run to repair (ADVERSARY 2026-09-22
+        F2: the dry count moved it aside, then crashed on the None that followed)."""
         self.path = Path(path) if path is not None else paths.data_root() / FILENAME
         self.notes = []
         self.persistent = True
         self._memory = {}
+        self._repair = bool(repair)
 
     def __repr__(self):
         return "<hato ResolutionCache %s%s>" % (self.path, "" if self.persistent else " (in memory)")
@@ -537,6 +541,26 @@ class ResolutionCache(object):
             return dropped
         return dropped or bool(count)
 
+    def clear(self, dry_run=True):
+        """Forget every show this cache has found. -> how many (would have) gone.
+
+        ⭐ RUNBOOK 8g. ⛔ DRY BY DEFAULT. ⚠ Creates nothing: a store that does not
+        exist yet holds nothing to forget. Each show is found again on its next
+        run, for the few requests it cost the first time.
+        """
+        held = len(self._memory)
+        if not dry_run:
+            self._memory.clear()
+        if not self.persistent or not self.path.is_file():
+            return held
+        count = self._run(lambda conn: conn.execute(
+            "SELECT count(*) FROM resolutions").fetchone()[0], write=False)
+        if count is _UNAVAILABLE or count is None:
+            return held                     # ⚠ None: a repairing read set the file aside
+        if not dry_run:
+            self._run(lambda conn: conn.execute("DELETE FROM resolutions"), write=True)
+        return held + count
+
     # -- the file, and what happens when it goes wrong ---------------------------
 
     def _run(self, op, write):
@@ -569,6 +593,10 @@ class ResolutionCache(object):
                 return self._unavailable(
                     "The resolution cache at %s was still unreadable after starting fresh (%s), "
                     "so this run resolves in memory." % (self.path, problem))
+            if not self._repair:
+                return self._unavailable(
+                    "The resolution cache at %s is unreadable (%s). It was left exactly as it "
+                    "is for the next run to repair." % (self.path, problem))
             try:
                 aside = self._move_aside()
             except OSError as exc:
