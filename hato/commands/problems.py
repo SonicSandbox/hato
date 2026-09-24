@@ -34,16 +34,20 @@ import re
 import sys
 from datetime import datetime, timezone
 
-from hato import config, paths, present, problems, report, state
+from hato import config, formats, paths, present, problems, report, state
 from hato.cache import Cache
 
 EXIT_OK = 0
 EXIT_FAILED = 1
 
-#: The three groups of the plain list, in the order a person acts on them.
-PICK, WAIT, TROUBLE = u"pick", u"wait", u"trouble"
+#: The groups of the plain list, in the order a person acts on them.
+PICK, FORMAT, WAIT, TROUBLE = u"pick", u"format", u"wait", u"trouble"
 HEADINGS = (
     (PICK, u"needs a pick %s the timing did not hold for any file hato tried" % report.DASH),
+    # ⭐ 9a -- ON jimaku, in a format the settings do not take. ⛔ Never under
+    # *"not on jimaku yet"*, which is false for it (ADVERSARY 2026-09-23 #6).
+    (FORMAT, u"on jimaku, but only in a format your settings do not take %s "
+             u"`hato config --set format_fallback=true` takes it" % report.DASH),
     (WAIT, u"not on jimaku yet"),
     (TROUBLE, u"had a problem"),
 )
@@ -134,8 +138,8 @@ def next_due(rows, now):
 # ---------------------------------------------------------------------------
 
 def _group(row):
-    u"""-> PICK, WAIT or TROUBLE. ⚠ Anything unexpected is TROUBLE: a row in no
-    group would be counted in the header and shown nowhere.
+    u"""-> PICK, FORMAT, WAIT or TROUBLE. ⚠ Anything unexpected is TROUBLE: a row
+    in no group would be counted in the header and shown nowhere.
 
     ⚠ A refusal with NOTHING tried is not a pick -- there is no file to pick. A
     name with no episode number is refused before any download and its fix is a
@@ -147,7 +151,7 @@ def _group(row):
     if outcome == state.REFUSED:
         return PICK if row.get(u"tried_before") else TROUBLE
     if outcome == state.NOT_FOUND:
-        return WAIT
+        return FORMAT if formats.only_as(row.get(u"reason")) else WAIT
     return TROUBLE
 
 
@@ -202,7 +206,7 @@ def when(row, now):
 
 
 def plain(rows, now):
-    u"""-> [line]. The three groups, each line the episode, its file and when."""
+    u"""-> [line]. The groups, each line the episode, its file and when."""
     if not rows:
         return [u"Nothing needs you."]
     n = len(rows)
@@ -220,6 +224,10 @@ def plain(rows, now):
             if group == PICK:
                 count = len(row.get(u"tried_before") or ())
                 tried = u"%d file%s tried %s " % (count, u"" if count == 1 else u"s", report.DOT)
+            elif group == FORMAT:
+                # ⭐ WHICH format, or the line cannot be acted on.
+                tried = u"only as %s %s " % (formats.kinds_words(formats.only_as(row.get(u"reason"))),
+                                             report.DOT)
             line = u"  %s   %s   %slooks again %s" % (
                 report.pad(name, width), row.get(u"name") or u"", tried, when(row, now))
             if group == TROUBLE and _said(row.get(u"reason")):

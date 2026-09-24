@@ -275,11 +275,35 @@ archives   = false         # ⭐ OFF by default, ruled 2026-09-17 — unpacking 
                            #   author. Turn it on here, or per-run with --archives
 allow_ai   = false
 recurse    = true
+prefer_format   = "ass"    # ⭐ RUNBOOK 9a, RULED 2026-09-23 -- "ass" or "srt": tried first,
+                           #   and with the fallback off the ONLY kind downloaded
+format_fallback = false    # ⭐ OFF by default, ruled: an episode jimaku has only in the
+                           #   other kind waits, says so, and is looked for again a day later
 
 [log]
 path = ""                  # empty = %LOCALAPPDATA%\hato\hato.log
 keep = 10                  # rotate after N runs
 ```
+
+⚠ **`prefer_format` and `format_fallback` are written into this file only once they leave
+their defaults** (`config.NEWER_THAN_1_0_2`). An older hato refuses a key it has never heard
+of, so a file carrying them stops every run an older tray — or a daily task pointing at an
+old copy — starts. Untouched, the file stays one every earlier hato reads; changed, the
+window says the tray must be restarted.
+
+> ⚠ **AMENDED BY THE PASS, 2026-09-23 (`ADVERSARY-2026-09-23.md`):**
+> - **"An older tray" is ANY tray whose pid file lacks `formats`** — 1.0.2 writes `retries`
+>   too, and was taken for this build (9a-1). The note shows whenever the file CARRIES either
+>   key, whatever its value: an older hato refuses the key.
+> - The fallback's words are **"If there is no .ass, download .srt or another format"** — on,
+>   it takes `.vtt`, `.sup` and the rest after the other preference, as 1.0.2 did (9a-9).
+> - **A format wait is never "not on jimaku".** Mode A labels it `OTHER FORMAT`, counts it
+>   *"N only in the other format"*, and inside its wait prints *"on jimaku, but only in a
+>   format your settings do not take — `hato config --set format_fallback=true` takes it"*;
+>   `hato problems` gives it its own heading, with every format jimaku has on its line; Needs
+>   you keeps it a wait whatever was tried before it, and says the ones the settings refuse
+>   apart from the ones they take now (9a-5…9).
+> - *Download … instead* looks again only once the setting is WRITTEN (9a-11).
 
 ⚠ **The API key is NOT in this file.** It is read at runtime from
 `InfiniteVoid/keystore/hato-jimaku.txt`, or `$HATO_JIMAKU_KEY`. See `08-research.md`

@@ -516,6 +516,25 @@ def test_a_skip_that_is_waiting_on_files_is_a_row_a_person_can_pick_from():
     assert gui_run.problem_kind(video_row()) is None
 
 
+def test_a_format_wait_is_a_wait_whatever_was_tried_before_it():
+    u"""🚨 ADVERSARY 2026-09-23 #5 (9a). The upgrade path: 1.0.2 refused the `.srt`
+    files, the new default then recorded a FORMAT wait -- and with files tried
+    before it the row was a PICK, so Needs you showed *"2 tried · best 70%"* and
+    never the format or *Download .srt instead*. Both wire shapes -- the run's
+    NOT_FOUND and the skip inside the wait -- with their files; and the control,
+    a refusal wait with the same files, still a pick."""
+    from hato import formats
+    reason = formats.waiting_reason([u"srt"], u"ass", 2)
+    files = [tried("a.srt", 0.70), tried("b.srt", 0.47)]
+    for row in (waiting_row(), video_row(outcome="NOT_FOUND", output_path=None,
+                                         tried_before=files)):
+        row = dict(row, reason=reason)
+        assert gui_run.is_format_wait(row)
+        assert gui_run.problem_kind(row) == gui_run.WAITING, (row["outcome"], row["skip"])
+    assert gui_run.problem_kind(waiting_row()) == gui_run.PICK, u"the control"
+    assert not gui_run.is_format_wait(waiting_row())
+
+
 def test_a_refusal_with_nothing_tried_is_trouble_whose_reason_shows_never_a_pick():
     u"""ADVERSARY 2026-09-22 A6. Two videos on one file, a name holding two
     episodes, a name with no number: refused before any download. As a PICK the

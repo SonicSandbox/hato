@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 import tsubasa
 
-from hato import episodes, names, rank, tokens
+from hato import archives, episodes, names, rank, tokens
 from hato.commands import align as align_command
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -675,11 +675,30 @@ def test_a_skipped_file_and_an_archive_are_offered_to_no_video(tmp_path, season)
 FILM = u"Kimi no Na wa (2016).mkv"
 
 
-def test_a_movie_entry_offers_every_file_to_the_film(tmp_path):
+def test_a_movie_entry_offers_every_SUBTITLE_to_the_film(tmp_path):
+    u"""🚨 Every SUBTITLE, as the episode path always said -- not every file. The
+    recorded entry's real `.sup.7z` was offered to the film, downloaded unopened,
+    handed to tsubasa as a subtitle and recorded as a 0% timing refusal
+    (ADVERSARY 2026-09-23 #10). It is named in a note instead, with the flag."""
     videos = stubs(tmp_path / "v", [FILM])
     a = episodes.align(MOVIE_FILES, videos, workdir=tmp_path / "w", movie=True)
-    assert offered(a, videos[0]) == sorted(f["name"] for f in MOVIE_FILES)
+    packs = [f["name"] for f in MOVIE_FILES if archives.is_archive(f["name"])]
+    assert packs, u"the recorded movie entry is expected to carry an archive"
+    assert offered(a, videos[0]) == sorted(f["name"] for f in MOVIE_FILES
+                                           if f["name"] not in packs)
     assert {(c.quality, c.offset) for c in a.per_video[str(videos[0].path)]} == {("movie", None)}
+    assert any(packs[0] in n and u"--archives" in n for n in a.notes), a.notes
+
+
+def test_a_movie_entry_offering_only_an_archive_offers_the_film_nothing(tmp_path):
+    u"""⛔ An archive is never "the other format" for a film (#10): with nothing
+    but the `.7z`, the film is NOT offered it, and the reason says why."""
+    videos = stubs(tmp_path / "v", [FILM])
+    only = [f for f in MOVIE_FILES if archives.is_archive(f["name"])]
+    a = episodes.align(only, videos, workdir=tmp_path / "w", movie=True)
+    assert offered(a, videos[0]) == []
+    said = a.not_found[str(videos[0].path)]
+    assert u"no subtitle file" in said and u"archive" in said, said
 
 
 def test_without_the_movie_flag_a_film_is_refused_not_guessed(tmp_path):

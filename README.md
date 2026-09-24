@@ -79,7 +79,7 @@ Nothing to install. Python is already inside it.
 ```bash
 git clone https://github.com/SonicSandbox/hato
 cd hato
-pip install "tsubasa-sync[parsing]>=0.1.6" requests
+pip install "tsubasa-sync[parsing]>=0.1.8" requests
 ```
 
 Python 3.10 or newer. On 3.10 also `pip install "tomli>=1.1"` — 3.11 has it built in.
@@ -146,6 +146,7 @@ cleanly, the episode goes to **Needs you** instead of being written badly.
 | **Run every day** | A Windows scheduled task at a time you pick: hato starts, sweeps and exits. A day the computer sleeps through runs when it is next on |
 | **Watch for new videos** | Sits in the tray and runs a minute after something appears |
 | **Start with Windows** | hato is already watching when you sit down |
+| **Subtitle format** | `.ass` or `.srt` first. The other kind only if you tick the box — it starts off, so an episode jimaku has only in the other kind waits in **Needs you**, one click from taking it |
 
 > **A note about airing shows.** For a season still going out, the subtitle is
 > published hours to days *after* the episode. Watching works best on finished shows;
@@ -167,7 +168,10 @@ video** plays it.
 
 ## It won't do the same work twice
 
-- A video that already has a Japanese subtitle is **skipped before any request**.
+- A video that already has a Japanese subtitle is **skipped before any request** —
+  `.ja`, `.jpn`, `.Japanese` and `.jp` all count.
+- A subtitle named exactly like the video, with no language in its name, is **read**:
+  clearly Japanese text counts as already there. If hato can't tell, it fetches.
 - A video whose container already carries a Japanese text track needs nothing.
 - A show that resolves cleanly is **remembered**, and later runs reuse it.
 - An episode jimaku does not have yet is retried tomorrow, not every run.

@@ -40,7 +40,7 @@ import pytest
 
 import tsubasa
 
-from hato import cache, config, keep, paths, pipeline, present, problems, report, state
+from hato import cache, config, formats, keep, paths, pipeline, present, problems, report, state
 from hato.commands import problems as problems_cmd
 
 T0 = datetime(2026, 9, 22, 3, 0, 0, tzinfo=timezone.utc)
@@ -678,9 +678,12 @@ def test_a_broken_config_exits_1_with_its_own_message(tmp_path, monkeypatch, cap
         with pytest.raises(config.ConfigError) as said:
             config.load()
     elif broken == "a language tsubasa cannot read":
-        config_file.write_text('lang = "jp"\n', encoding="utf-8")
+        # ⚠ `zz`, NOT `jp`: tsubasa reads `jp` as Japanese from 0.1.8 (RUNBOOK 9c),
+        # and hato's CI installs whichever tsubasa PyPI has. An example that is no
+        # language in ANY version keeps this check about the refusal, not the engine.
+        config_file.write_text('lang = "zz"\n', encoding="utf-8")
         with pytest.raises(present.LanguageUnknown) as said:
-            present.language("jp")
+            present.language("zz")
     else:
         monkeypatch.setenv("HATO_CACHE", "relative-data")
         with pytest.raises(paths.PathError) as said:
@@ -851,3 +854,56 @@ def test_a_trouble_reason_carrying_the_engine_word_is_said_in_plain_words(librar
     text = capsys.readouterr().out
     assert video.name in text, "the control: the trouble row is listed:\n%s" % text
     assert re.search(r"(?i)refus", text) is None and "the timing did not hold" in text, text
+
+
+# -- ADVERSARY 2026-09-23 (9a) --------------------------------------------------------------
+
+def format_wait(lab, video, kinds=("srt",)):
+    """The soft negative a FORMAT wait records (9a): jimaku has the episode, only in
+    kinds the settings do not take -- `formats.waiting_reason`'s own sentence, as
+    `pipeline._not_found` records it."""
+    retry = lab.db.record_not_found(
+        video_hash=cache.video_hash(video), video_path=str(video), lang="ja", kind="soft",
+        jimaku_entry=ENTRY, reason=formats.waiting_reason(list(kinds), "ass", 3))
+    lab.clock.advance(minutes=1)
+    return retry
+
+
+def test_a_format_wait_is_a_wait_even_with_files_tried_before_it(lab):
+    """🚨 #5 -- the upgrade path: 1.0.2 tried the `.srt` files and timing refused
+    them, then the new default recorded a FORMAT wait. With files tried before it
+    the row came back REFUSED -- a pick, *"the timing did not hold"* -- and the
+    format, and the button that takes it, never showed. Two arms: the format
+    wait is NOT_FOUND with its files still attached; a refusal wait (the
+    control) is still a pick."""
+    waits = lab.video("Sousou no Frieren S2 - 01.mkv")
+    refuse(lab, waits, "[Other] Sousou no Frieren - 29 (WEB 1080p).srt", 0.4)
+    format_wait(lab, waits)
+    picks = a_problem(lab, "Sousou no Frieren S2 - 02.mkv")
+    rows = dict((row["name"], row) for row in lab.rows())
+    row = rows[waits.name]
+    assert row["outcome"] == "NOT_FOUND", (
+        "a format wait with files tried before it came back %r" % row["outcome"])
+    assert formats.only_as(row["reason"]) == ("srt",), row["reason"]
+    assert [t["name"] for t in row["tried_before"]] == [
+        "[Other] Sousou no Frieren - 29 (WEB 1080p).srt"], row["tried_before"]
+    assert rows[picks.name]["outcome"] == "REFUSED", "the control: a refusal wait is a pick"
+
+
+def test_hato_problems_files_a_format_wait_under_its_own_heading(library, capsys):
+    """🚨 #6 -- *"not on jimaku yet"* was the heading over an episode jimaku HAS,
+    in the other format. Its own heading, every format on its line -- and an
+    episode really not on jimaku (the control) still under the old one."""
+    video = library.video("Sousou no Frieren S2 - 01.mkv")
+    format_wait(library, video, kinds=("vtt", "srt"))
+    missing = library.video("Sousou no Frieren S2 - 24.mkv")
+    not_yet(library, missing)
+    library.close()
+    assert problems_cmd.run(_parse([]), now=T0) == 0
+    text = capsys.readouterr().out
+    found = sections(text)
+    other = section(found, "on jimaku, but only in a format your settings do not take")
+    assert len(other) == 1 and video.name in other[0], text
+    assert "only as .srt or .vtt" in other[0], other[0]
+    waiting = section(found, "not on jimaku yet")
+    assert len(waiting) == 1 and missing.name in waiting[0], text

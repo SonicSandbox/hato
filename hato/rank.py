@@ -11,12 +11,19 @@ FILTERS first -- a filter is not a rank, and nothing below can rescue a file it 
     tagged non-Japanese   timing cannot tell a Chinese subtitle from a Japanese
                           one (orchestrator ruling 5; measured: 1 of 233,877 names)
     a duplicate name      the same file offered twice is tried once
+    not the preferred     ⭐ RUNBOOK 9a, RULED 2026-09-23 -- with the fallback OFF
+      format              only the preferred kind is ever downloaded. Kept apart
+                          in `Ranking.other_format` too, because an episode whose
+                          EVERY file is the other kind is on jimaku, and must never
+                          be told it is not (`hato/formats.py`)
 
 THE KEY, each part compared only when every part above it is equal:
-    1 format      ⭐ .ass FIRST -- RULED 2026-09-17, above everything, "even if it
-                  has chinese" -- then .ssa, then .srt, then the rest, and inside
-                  "the rest" BY EXTENSION. ⚠ The extension is part of the key and
-                  not decoration: without it a .vtt and a .sup shared one rank and
+    1 format      ⭐ the PREFERRED family first -- `.ass` (with `.ssa`) unless the
+                  person chose `.srt` (9a). With `.ass` preferred this is the
+                  2026-09-17 ruling, above everything, "even if it has chinese":
+                  .ass, then .ssa, then .srt, then the rest, and inside "the rest"
+                  BY EXTENSION. ⚠ The extension is part of the key and not
+                  decoration: without it a .vtt and a .sup shared one rank and
                   were ordered by SIZE, which part 6 says never happens.
     2 language    Japanese only, then untagged, then Japanese plus another language
     3 fit         range, overlap, literal, guess (hato/episodes.py QUALITIES)
@@ -38,10 +45,11 @@ THE KEY, each part compared only when every part above it is equal:
 """
 import functools
 
-from hato import tokens
+from hato import formats, tokens
 from hato.episodes import QUALITIES
 
-FORMAT_ORDER = ("ass", "ssa", "srt")
+#: The order with `.ass` preferred -- 1.0.2's, and `rank()`'s default.
+FORMAT_ORDER = formats.order(formats.DEFAULT_PREFERENCE)
 #: ⚠ "unknown" sits between: 60 of entry 11446's 120 files carry no language tag
 #: at all (NanakoRaws, shincaps -- broadcast captions), and on jimaku an untagged
 #: file is far likelier Japanese-only than one tagged with a second language.
@@ -84,13 +92,15 @@ class Ranked(object):
 
 
 class Ranking(object):
-    """`ordered` best first; `excluded` [(Candidate, reason)] in input order."""
+    """`ordered` best first; `excluded` [(Candidate, reason)] in input order;
+    `other_format` the excluded ones whose only fault was their FORMAT (9a)."""
 
-    __slots__ = ("ordered", "excluded")
+    __slots__ = ("ordered", "excluded", "other_format")
 
     def __init__(self):
         self.ordered = []
         self.excluded = []
+        self.other_format = []
 
 
 @functools.lru_cache(maxsize=8192)
@@ -100,7 +110,7 @@ def _facts(name):
             tokens.version(name), tokens.is_ai(name))
 
 
-def _format_rank(fmt):
+def _format_rank(fmt, order=FORMAT_ORDER):
     """⚠ THE TAIL BUCKET CARRIES ITS EXTENSION. `.vtt` and `.sup` are both
     "everything else", and returning one number for both made them EQUAL on
     part 1 -- so two different formats fell through to part 7 and were ordered
@@ -108,9 +118,9 @@ def _format_rank(fmt):
     2026-09-17; the capture holds only `.ass` and `.srt`, so no check on it
     could ever have seen it. The extension is a stable, meaningless tie-break
     -- exactly what a bucket with no ruled order should have."""
-    if fmt in FORMAT_ORDER:
-        return (FORMAT_ORDER.index(fmt), u"")
-    return (len(FORMAT_ORDER), fmt or u"")
+    if fmt in order:
+        return (order.index(fmt), u"")
+    return (len(order), fmt or u"")
 
 
 def _language_rank(language):
@@ -120,11 +130,18 @@ def _language_rank(language):
     return LANGUAGE_ORDER.index(language) if language in LANGUAGE_ORDER else len(LANGUAGE_ORDER)
 
 
-def rank(candidates, *, allow_ai=False, seen_groups=frozenset()):
-    """-> Ranking. `candidates`: hato.episodes.Candidate for ONE video."""
+def rank(candidates, *, allow_ai=False, seen_groups=frozenset(),
+         prefer=formats.DEFAULT_PREFERENCE, fallback=True):
+    """-> Ranking. `candidates`: hato.episodes.Candidate for ONE video.
+
+    `prefer` / `fallback` -- the person's format settings (9a). ⚠ The defaults
+    here are 1.0.2's behaviour, every format ranked and none dropped; the RUN
+    passes `config.toml`'s, whose fallback default is OFF.
+    """
     ranking = Ranking()
     seen_names = set()
     kept = []
+    order = formats.order(prefer)
     for cand in candidates:
         name = cand.file["name"]
         fmt, language, version, ai = _facts(name)
@@ -142,6 +159,15 @@ def rank(candidates, *, allow_ai=False, seen_groups=frozenset()):
             ranking.excluded.append((cand, u"A duplicate: the same file is already a candidate."))
             continue
         seen_names.add(name)
+        if not formats.accepts(fmt, prefer, fallback):
+            # ⭐ 9a -- AFTER the filters above, so a file that is AI or foreign is
+            # never counted as "only in the other format": it would not have
+            # been taken in any format.
+            ranking.excluded.append((cand, u"Not .%s -- you prefer .%s, and \"%s\" is off "
+                                           u"in Settings." % (prefer, prefer,
+                                                              formats.fallback_words(prefer))))
+            ranking.other_format.append(cand)
+            continue
         size = cand.file.get("size")
         key = (# 🚨 A GUESS NEVER OUTRANKS A KNOWN NUMBER, whatever its format.
                # MEASURED 2026-09-17, the moment `position` landed: a by-position
@@ -152,7 +178,7 @@ def rank(candidates, *, allow_ai=False, seen_groups=frozenset()):
                # those below. It was never about preferring a guessed episode to a
                # known one: which episode a file IS outranks what format it is in.
                1 if cand.quality in ("guess", "position") else 0,
-               _format_rank(fmt),
+               _format_rank(fmt, order),
                _language_rank(language),
                QUALITIES.index(cand.quality),
                # ⚠ Coverage says how clean a PARTIAL fit is. ⛔ NOT for a `range`
@@ -181,16 +207,16 @@ def rank(candidates, *, allow_ai=False, seen_groups=frozenset()):
         if ai:
             r.reasons.append(u"AI-generated, and allowed by --allow-ai.")
         if i > 0:
-            r.reasons.append(u"Below #%d: %s" % (i, _why(kept[i - 1], r)))
+            r.reasons.append(u"Below #%d: %s" % (i, _why(kept[i - 1], r, prefer)))
         if i + 1 < len(kept):
-            r.reasons.append(u"Above #%d: %s" % (i + 2, _why(r, kept[i + 1])))
+            r.reasons.append(u"Above #%d: %s" % (i + 2, _why(r, kept[i + 1], prefer)))
         if len(kept) == 1:
             r.reasons.append(u"The only candidate.")
     ranking.ordered = kept
     return ranking
 
 
-def _why(upper, lower):
+def _why(upper, lower, prefer=formats.DEFAULT_PREFERENCE):
     """The sentence for the FIRST key part where `upper` beats `lower`."""
     part = next((i for i, (a, b) in enumerate(zip(upper.key, lower.key)) if a != b), len(_KEY_PARTS) - 1)
     uc, lc = upper.candidate, lower.candidate
@@ -205,6 +231,8 @@ def _why(upper, lower):
         if ufmt not in FORMAT_ORDER and lfmt not in FORMAT_ORDER:
             return (u".%s is tried before .%s -- neither is .ass, .ssa or .srt, so nothing "
                     u"ranks them and the extension decides. ⛔ Never their size." % (ufmt, lfmt))
+        if prefer != formats.DEFAULT_PREFERENCE:
+            return u".%s is tried before .%s -- you prefer .%s (Settings)." % (ufmt, lfmt, prefer)
         return u".%s is tried before .%s (RULED 2026-09-17: .ass above every other format)." % (ufmt, lfmt)
     if what == "language":
         return u"%s is tried before %s, within .%s." % (_LANGUAGE_WORDS[ulang], _LANGUAGE_WORDS[llang], ufmt)

@@ -111,9 +111,13 @@ before release (`tsubasa/spec/05-interface.md` §*For code built on tsubasa*):
 | ⭐ **A video's subtitle tracks** — is one Japanese text, and is there any at all | 🔨 **tsubasa's public track reader, being added by tsubasa's builder 2026-09-17.** Its name was not known when this was written — read `tsubasa.__all__`. ⛔ Never `tsubasa.container` |
 | Is the install whole? | `tsubasa.self_check()` — run it in hato's own startup or `--doctor` |
 
-✅ **The floor is `tsubasa-sync>=0.1.6`** — verified against the index 2026-09-18:
-0.1.0–0.1.6 published, latest 0.1.6, only 0.1.0 yanked. 0.1.3 added `embedded_subs`; 0.1.5
-added the English display-name reader hato's present-check relies on.
+⭐ **The floor is `tsubasa-sync>=0.1.8` — RAISED 2026-09-23 (RUNBOOK 9c), AND THIS TIME IT
+IS A CAPABILITY:** 0.1.8 is the first release reading `.jp.` (Japan's country code where a
+language goes) as Japanese, and the present-check relies on it — on 0.1.7 a user's
+`.jp.srt` read as no language and hato fetched beside it. `tests/test_packaging.py` refuses
+a requirement admitting 0.1.7, and `test_existing` finds a `.jp.` sidecar by name. ⚠ The
+history below is kept: 0.1.3 added `embedded_subs`; 0.1.5 added the English display-name
+reader; 0.1.6 was a policy floor (below).
 
 🚨 **RAISED FROM 0.1.5 TO 0.1.6 BY SONIC, 2026-09-18, AND IT IS A POLICY RATHER THAN A
 CAPABILITY.** The two numbers mean different things and the distinction is worth keeping:
@@ -127,7 +131,9 @@ for that is not present. ⛔ **The cost, stated so it is not rediscovered:** eve
 tsubasa release drifts this line, and a floor pinned at latest refuses an install for a
 version that would in fact work. `tests/test_packaging.py` asserts the number and keeps the
 reason 0.1.5 mattered beneath it, so raising the floor did not delete why a floor exists
-(`06-edge-cases.md` §6). ⛔ **Nothing in hato's release waits on tsubasa any more.**
+(`06-edge-cases.md` §6). ⚠ **CI installs the engine from the index, so a floor raise
+releases tsubasa FIRST** — ✅ tsubasa 0.1.8 went to PyPI 2026-09-23 and was verified from
+the published bytes before hato 1.0.3's sync was pushed.
 
 ### Development imports the vault checkout
 
@@ -216,8 +222,8 @@ handles that; hato inherits it and must not defeat it** by pinning the accel ext
 | | |
 | --- | --- |
 | **v1.0.0** | 2026-09-19. Six real defects found by using it; see the 1.0.1 notes |
-| ⭐ **v1.0.1** | `hato-1.0.1-windows-x64.zip` — **tag `3114321`, every gate green**: `tests` 13/13, `release` 2/2 (stamp gate included), suite 27/1616, smoke 20/20 against the copy unpacked outside the repo, and the **published asset downloaded and hash-verified** against the local artifact |
-| ⭐ **v1.0.2** | `hato-1.0.2-windows-x64.zip`, 2026-09-23 — Layer 8, its adversarial pass, and D2 (the daily run registers a real task). Stamp `sha256:a5bf7e16…`; local zip `sha256 6dc4d797…72615`, 70,650,768 bytes; suite 29 suites / 1,982 checks; smoke **29/29** against the copy unpacked outside the repo; mutation gate 766/766 + M8y 83/83. Tag, CI jobs and the published hash: ⏳ |
+| ⭐ **v1.0.1** | `hato-1.0.1-windows-x64.zip` — **tag `3114321`, every gate green**: `tests` 12/12 *(recorded as 13/13 until 2026-09-23; the run has 12 jobs)*, `release` 2/2 (stamp gate included), suite 27/1616, smoke 20/20 against the copy unpacked outside the repo, and the **published asset downloaded and hash-verified** against the local artifact |
+| ⭐ **v1.0.2** | `hato-1.0.2-windows-x64.zip`, 2026-09-23 — Layer 8, its adversarial pass, and D2 (the daily run registers a real task). Stamp `sha256:a5bf7e16…`; local zip `sha256 6dc4d797…72615`, 70,650,768 bytes; suite 29 suites / 1,982 checks; smoke **29/29** against the copy unpacked outside the repo; mutation gate 766/766 + M8y 83/83. ⭐ **Tag `6a2cf25`, every gate green:** `tests` 12/12 jobs, `release` 2/2, and the **published asset downloaded and hash-verified** against the local artifact. ⚠ Its first push (`559f5ce`) was red on 11 of 12 jobs and was never tagged — `LEDGER.md` §harness. The full mutation gate over the released tree: **849/849**. |
 
 🚨 **THE RELEASE SEQUENCE IS IN `LEDGER.md` §delivery, as *"THE RELEASE SEQUENCE THAT
 ACTUALLY HOLDS"*.** It is one list and it lives in one place; do not restate it here.

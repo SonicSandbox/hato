@@ -27,17 +27,53 @@ is a far weaker fact than *"this video has its Japanese subtitle"*, and in a rea
 library one show's episode 1 would stop hato ever fetching episode 1 of every
 other show, silently and for good.
 
-⭐ SO: PRESENT means the canonical sidecar, BY NAME, and nothing else -- a file
-**in the target directory** whose stem equals the video's basename, whose
-language resolves to the wanted one, and which is **not forced**
-(`06-edge-cases.md` §6: *a forced sub is not a full sub*). That is the one form
-Plex, Jellyfin and Emby all load. ⛔ Nothing is opened.
+⭐ SO: PRESENT means the canonical sidecar, BY NAME -- a file **in the target
+directory** whose stem equals the video's basename, whose language resolves to
+the wanted one, and which is **not forced** (`06-edge-cases.md` §6: *a forced sub
+is not a full sub*). That is the one form Plex, Jellyfin and Emby all load, and
+⛔ it is found without opening anything. The one exception is question 1c below:
+a file named for the video whose name gives NO language is read.
 
 ⚠ THE ASYMMETRY THAT DECIDES EVERY CLOSE CALL. A false *present* is a permanent,
 silent never-fetch. A false *absent* is one unmetered download and a visible
 duplicate that is never overwritten (tsubasa's explicit path supersedes nothing).
 So an un-renamed `[Group] Show - 04 [JPN].ja.ass` does **not** count as present,
 and the fetched copy is written beside it.
+
+===========================================================================
+⭐ QUESTION 1c -- A SUBTITLE NAMED FOR THE VIDEO THAT SAYS NO LANGUAGE (9b)
+===========================================================================
+
+A second user of 1.0.2, 2026-09-23: *"It also got subtitles for stuff that already
+had subtitles. Even though the subs were named after the video, was made
+specifically for that video, and had perfect sync already."* `Show - 01.srt`
+names no language, so by name alone it is `und` -- and hato fetched beside it.
+
+⭐ SO THAT ONE FILE IS READ, and only it: no Japanese-NAMED sidecar was found, the
+name is the video's exact stem with nothing after it, and the extension is a text
+subtitle. Sonic ruled the shape: *"needs to not report falsely ... errs on the side
+of 'download' than not, but does check."* So it counts as present only on strong
+evidence, measured on 163 real Japanese subtitles against the nearest wrong
+answers (RUNBOOK 9b):
+
+    at least MIN_LINES dialogue lines             real: 290 or more
+    kana in at least MIN_LINE_SHARE of them        real: 0.65 or more · English
+                                                   with a Japanese song: 0.13
+    kana at least MIN_KANA_SHARE of kana + kanji   real: 0.68 or more · the same
+                                                   lines with Chinese beside
+                                                   them: 0.45
+
+⛔ Anything short of that -- undecodable, too short, mixed, a signs-only file, or
+too big to read WHOLE (`READ_LIMIT`: part of a file is a sample, and a sample
+lied) -- is ABSENT, which is exactly what it was before this read existed. ⛔ Only for
+Japanese: any other wanted language is never read. ⚠ Full-width kana only: a
+Chinese file in Big5 decodes as Shift-JIS into HALF-width katakana, and counting
+those would call it Japanese.
+
+⚠ Why not tsubasa's `naming.normalize.script_of`: it answers CJK-or-Latin for a
+TITLE -- kana and kanji alike, half-width katakana included -- so it cannot tell
+Chinese from Japanese, and it is not public (`LEDGER-HOT.md`: public names only).
+This reads no language from a NAME, so the one-parser rule is not at stake.
 
 ===========================================================================
 🚨 QUESTION 1b -- UNDER `--out` IT IS THE MIRRORED DIRECTORY, NOT THE VIDEO'S
@@ -72,20 +108,18 @@ takes the folder, and `hato/keep.py` computes it for both sides at once.
                 (06 §6: not a text subtitle; tsubasa times against it happily).
 
 ===========================================================================
-🚨 A MEASURED SPEC DEFECT THIS MODULE CANNOT FIX, AND MUST NOT
+⭐ THE LANGUAGE IN A NAME IS tsubasa's TO READ, NEVER THIS MODULE'S
 ===========================================================================
 
-`06-edge-cases.md` §6 says `<video>.Japanese.srt` is recognised -- *"Jellyfin and
-Emby both document it"*. Measured here on tsubasa 0.1.4, in three casings:
-`parse_subtitle_name("Show - 01.Japanese.srt").lang` is **`und`**, and the stem
-comes back as `Show - 01.Japanese`. So such a sidecar reads as ABSENT and hato
-fetches beside it.
-
-⛔ hato does not fix it: the language reader lives in tsubasa and a second one
-here would drift (`LEDGER-HOT.md`). It is recorded in `spec/06-edge-cases.md`,
-and it lands on the SAFE side of the asymmetry above -- a duplicate, never a
-silent never-fetch.
+`<video>.Japanese.srt` read `und` on tsubasa 0.1.4 and was recorded here as a
+defect hato must not fix itself -- a second reader would drift (`LEDGER-HOT.md`).
+✅ tsubasa 0.1.5 learned the English display names, and
+`test_existing.py::test_the_jellyfin_display_name_is_read_as_japanese` has held
+it since 2026-09-17. ⚠ This note said "defect" until 2026-09-23, and it was
+repeated as current from here rather than measured. The 9b read above is about
+the TEXT of a file whose name says nothing; it reads no language from a name.
 """
+import codecs
 import os
 import re
 
@@ -93,6 +127,30 @@ import tsubasa
 
 #: What tsubasa answers for a name with no readable language.
 UND = u"und"
+
+#: ⭐ 9b -- the untagged sidecar that may be READ. Text subtitles only: a `.sub`,
+#: `.sup` or `.idx` is an image or a binary index, and has no text to read.
+TEXT_FORMATS = frozenset((u"srt", u"ass", u"ssa", u"vtt"))
+#: How much of it is read -- and ⛔ A FILE BIGGER THAN THIS IS NOT JUDGED AT ALL.
+#: 🚨 Part of a file is a SAMPLE, and a sample can lie: at 2 MB a 4.5 MB
+#: `[CHS, JPN]` .ass read as Japanese from its first part -- its karaoke -- and
+#: not Japanese whole (ADVERSARY 2026-09-23, 9b). Measured over 25,153 real
+#: subtitles: 65 pass 2 MB (embedded fonts, mostly: a 2.4 MB .ass whose [Fonts]
+#: came before its [Events] was never read at all), the largest 20.7 MB, ONE
+#: past 16 -- which is fetched over, the direction ruled.
+READ_LIMIT = 16 * 1024 * 1024
+#: ⭐ THE THREE THRESHOLDS, each measured (module docstring, question 1c).
+MIN_LINES = 100
+MIN_LINE_SHARE = 0.4
+MIN_KANA_SHARE = 0.55
+#: ⛔ FULL-WIDTH kana and the long-vowel mark only -- see the module docstring on
+#: Big5. `・` (U+30FB) is left out: Chinese text uses it as a name separator.
+_KANA = re.compile(u"[\u3041-\u3096\u30a1-\u30fa\u30fc]")
+_HAN = re.compile(u"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_ASS_TAG = re.compile(r"\{[^}]*\}")
+_HTML_TAG = re.compile(r"<[^>]*>")
+#: An `.ass` event in drawing mode is a vector shape, and its text is coordinates.
+_DRAWING = re.compile(r"\{[^}]*\\p[1-9]")
 
 #: `read_tracks().kind`. ⚠ Five, and 5a prints a different line for each.
 UNREADABLE = u"unreadable"
@@ -117,14 +175,17 @@ class LanguageUnknown(ValueError):
 
 
 class Found(object):
-    u"""The subtitle that is already there. `path` · `name` · `flags`."""
+    u"""The subtitle that is already there. `path` · `name` · `flags` ·
+    `by_text` -- True when its NAME said no language and its text was read (9b),
+    so whatever reports it can say which of the two answered."""
 
-    __slots__ = ("path", "name", "flags")
+    __slots__ = ("path", "name", "flags", "by_text")
 
-    def __init__(self, path, name, flags):
+    def __init__(self, path, name, flags, by_text=False):
         self.path = path
         self.name = name
         self.flags = tuple(flags)
+        self.by_text = by_text
 
     def __repr__(self):
         return "<Found %s>" % self.name
@@ -206,7 +267,9 @@ class Presence(object):
     def find(self, video, folder=None):
         u"""Is the wanted language already beside (or mirrored for) `video`?
 
-        -> `Found`, or None. ⛔ Opens nothing: names only.
+        -> `Found`, or None. ⛔ A NAMED sidecar is found without opening
+        anything. Only when none is there is one UNTAGGED file with the video's
+        exact name read (9b, the module docstring's question 1c).
 
         `folder`
             🚨 the TARGET directory -- the video's own, or `--out`'s mirror of
@@ -215,18 +278,39 @@ class Presence(object):
         video = os.fspath(video)
         folder = os.fspath(folder) if folder is not None else os.path.dirname(video)
         stem = os.path.splitext(os.path.basename(video))[0]
+        untagged = []
         for name in self._names(folder):
             side = _read(name)
-            if side is None or side.lang != self.lang:
+            if side is None:
                 continue
-            if side.stem != stem:
-                continue
-            if u"forced" in side.flags:
-                # 06 §6: a forced sub is not a full sub. ⚠ The fetched file is
-                # `<stem>.ja.<ext>` and this one `<stem>.ja.forced.<ext>`, so
-                # they are different names and neither disturbs the other.
-                continue
-            return Found(os.path.join(folder, name), name, side.flags)
+            # ⭐ NAMED EXACTLY FOR THE VIDEO IS UNTAGGED, whatever the name parses
+            # to. `Show.S01E01.JP.srt` beside `Show.S01E01.JP.mkv` is the video's
+            # own name plus an extension -- but once tsubasa read `.jp` (9c) it
+            # parsed as a JAPANESE tag on the stem `Show.S01E01`: not the video's
+            # named sidecar, not untagged, and fetched over (ADVERSARY 2026-09-23,
+            # 9b x 9c). ⚠ No language is read here -- only whether the name IS
+            # the video's name; tsubasa still reads every tag (`LEDGER-HOT.md`).
+            exact = os.path.splitext(name)[0] == stem
+            if not exact:
+                if side.stem != stem:
+                    continue
+                if side.lang == self.lang:
+                    if u"forced" in side.flags:
+                        # 06 §6: a forced sub is not a full sub. ⚠ The fetched file is
+                        # `<stem>.ja.<ext>` and this one `<stem>.ja.forced.<ext>`, so
+                        # they are different names and neither disturbs the other.
+                        continue
+                    return Found(os.path.join(folder, name), name, side.flags)
+            # ⚠ `not side.flags`: a flag with no language to its left does not
+            # parse as a flag, so this is the plain `<stem>.<ext>` (or `.und.`).
+            if (exact or (side.lang == UND and not side.flags)) and side.ext in TEXT_FORMATS:
+                untagged.append(name)
+        if self.lang != u"ja":
+            return None                    # ⛔ only Japanese text is ever judged
+        for name in sorted(untagged):
+            path = os.path.join(folder, name)
+            if reads_as_japanese(path):
+                return Found(path, name, (), by_text=True)
         return None
 
     def forget(self, folder):
@@ -269,6 +353,96 @@ def _read(name):
         return tsubasa.parse_subtitle_name(name)
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# ⭐ question 1c -- does an untagged subtitle's TEXT say Japanese? (9b)
+# ---------------------------------------------------------------------------
+
+def reads_as_japanese(path):
+    u"""Is this subtitle file, beyond reasonable doubt, Japanese dialogue? -> bool
+
+    ⭐ FALSE IS THE SAFE ANSWER and every doubt returns it: the caller then
+    fetches, exactly as hato did before this existed. True needs all three
+    measured thresholds (the module docstring, question 1c).
+
+    ⚠ Reads at most `READ_LIMIT` bytes and writes nothing -- and a file bigger
+    than that is a doubt: part of a file is judged never (see `READ_LIMIT`).
+    """
+    try:
+        with open(os.fspath(path), "rb") as handle:
+            data = handle.read(READ_LIMIT + 1)
+    except OSError:
+        return False
+    truncated = len(data) > READ_LIMIT
+    if truncated:
+        return False
+    text = _decode(data)
+    if text is None:
+        return False
+    lines = _dialogue(text, os.path.splitext(os.fspath(path))[1][1:].lower())
+    if len(lines) < MIN_LINES:
+        return False
+    with_kana = sum(1 for line in lines if _KANA.search(line))
+    kana = sum(len(_KANA.findall(line)) for line in lines)
+    han = sum(len(_HAN.findall(line)) for line in lines)
+    return (with_kana >= MIN_LINE_SHARE * len(lines)
+            and kana >= MIN_KANA_SHARE * (kana + han))
+
+
+def _decode(data):
+    u"""The text, or None when no encoding reads it strictly.
+
+    ⭐ A byte-order mark decides first; then UTF-8, then Shift-JIS (cp932), the
+    two a Japanese subtitle is actually found in. ⛔ Never `errors="replace"`:
+    a guessed decoding is how a Chinese file would come to look Japanese.
+    ⚠ Always a WHOLE file now -- a part is never judged -- so no character can
+    arrive cut in two.
+    """
+    if data.startswith(codecs.BOM_UTF8):
+        candidates = (u"utf-8-sig",)
+    elif data.startswith(codecs.BOM_UTF16_LE) or data.startswith(codecs.BOM_UTF16_BE):
+        candidates = (u"utf-16",)
+    else:
+        candidates = (u"utf-8", u"cp932")
+    for encoding in candidates:
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def _dialogue(text, ext):
+    u"""The lines a person would read, tags and timings stripped. -> [text]
+
+    `.ass`/`.ssa`: the text field of each `Dialogue:` event, drawings skipped.
+    Anything else: every line that is not blank, a cue number, a timing or a
+    WebVTT header.
+    """
+    out = []
+    if ext in (u"ass", u"ssa"):
+        for raw in text.splitlines():
+            if not raw[:9].lower().startswith(u"dialogue:"):
+                continue
+            parts = raw.split(u",", 9)
+            if len(parts) < 10 or _DRAWING.search(parts[9]):
+                continue
+            line = _ASS_TAG.sub(u"", parts[9])
+            line = line.replace(u"\\N", u" ").replace(u"\\n", u" ").replace(u"\\h", u" ")
+            if line.strip():
+                out.append(line.strip())
+        return out
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.isdigit() or u"-->" in line:
+            continue
+        if line.upper().startswith((u"WEBVTT", u"NOTE", u"STYLE", u"REGION")):
+            continue
+        line = _ASS_TAG.sub(u"", _HTML_TAG.sub(u"", line)).strip()
+        if line:
+            out.append(line)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -320,5 +494,6 @@ def read_tracks(video, lang, reader=None):
 
 
 __all__ = ["UND", "UNREADABLE", "EMBEDDED", "NO_TRACK", "NO_USABLE", "FETCH",
-           "LanguageUnknown", "Found", "Tracks", "language", "Presence",
-           "read_tracks"]
+           "TEXT_FORMATS", "READ_LIMIT", "MIN_LINES", "MIN_LINE_SHARE",
+           "MIN_KANA_SHARE", "LanguageUnknown", "Found", "Tracks", "language",
+           "Presence", "reads_as_japanese", "read_tracks"]

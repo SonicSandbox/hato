@@ -282,6 +282,16 @@ Ranking, in order:
 2. ⭐ **`.ass` over every other format — RULED 2026-09-17.** Sonic: *"prioritize .ass above
    all else. even if it has chinese, i'd prefer .ass subs over srt."* **A `[CHS, JPN]` `.ass`
    outranks a `[JPN]` `.srt`.** After `.ass`: `.ssa`, then `.srt`, then everything else
+   ⭐ **AMENDED 2026-09-23 (RUNBOOK 9a): the PERSON'S preferred format first** — `.ass` (with
+   `.ssa`) by default, or `.srt`. And ⛔ **with `format_fallback` OFF, the default, nothing
+   but the preferred kind is downloaded**: a filter, not a rank. Sonic: *"even if you prefer
+   one, if it isn't checked, then it won't download the other kind."* An episode offered
+   only in the other kind is ON jimaku and must be said to be — `hato/formats.py`.
+   ⚠ **And a filter reaches every decision that reads the list** (ADVERSARY 2026-09-23,
+   9a-2): *"was this video offered anything"* means offered in a format the settings TAKE
+   for the escalation past a wrong entry and for the archive pass (`Run._takes`) — ⛔ but
+   not for whether a LOW CONFIDENCE entry is evidence against itself, where the other
+   format is evidence FOR it
 3. ⭐ **Single-language over multi-language, within a format.** Measured, across two
    independent groups: `…[CHS, JPN].ass` (104,571 B) and `…[JPN].ass` (49,646 B) are the
    same episode. **The dual-language file is roughly double the size and interleaves

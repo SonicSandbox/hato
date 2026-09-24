@@ -630,8 +630,8 @@ def test_the_engine_is_tsubasa_sync_and_never_the_unrelated_tsubasa():
     u"""`tsubasa` on PyPI is an unrelated AI-personas framework. Declared as
     written in the spec's first draft, hato would have installed somebody
     else's package and failed on its first `import tsubasa` -- or worse, not
-    failed. The floor is 0.1.5: the first release carrying the English
-    display-name reader the present-check relies on."""
+    failed. The floor is 0.1.8: the first release reading `.jp.` as Japanese,
+    which the present-check relies on (RUNBOOK 9c)."""
     cfg = _pyproject()
     reqs = _requirements(cfg)
 
@@ -641,21 +641,19 @@ def test_the_engine_is_tsubasa_sync_and_never_the_unrelated_tsubasa():
         % (len(engine), [str(r) for r, _ in reqs]))
     req = engine[0]
 
-    # 🚨 THE FLOOR IS 0.1.6, RULED BY SONIC 2026-09-18, AND IT IS A POLICY
-    # RATHER THAN A CAPABILITY. 0.1.5 is the oldest release that WORKS -- the
-    # first carrying the English display-name reader the present-check relies
-    # on -- and 0.1.6 is the latest. hato calls nothing 0.1.6 introduced.
-    # ⚠ So this pair of assertions is deliberately asymmetric: the lower bound
-    # is checked as a NUMBER Sonic set, and the reason 0.1.5 mattered is kept
-    # below it so raising the floor did not delete why the floor exists.
-    assert req.specifier.contains(u"0.1.6", prereleases=True), (
-        u"the engine requirement is %r, which does not admit 0.1.6 -- the floor "
-        u"was raised to the engine's current release on 2026-09-18" % str(req))
+    # 🚨 THE FLOOR IS 0.1.8 (RUNBOOK 9c, 2026-09-23), AND IT IS A CAPABILITY:
+    # the first release reading `.jp.` as Japanese, which the present-check now
+    # relies on (`test_existing`'s `.jp` check). 0.1.7 would read a user's
+    # `.jp.srt` as no language and fetch beside it. ⚠ The reasons the older
+    # floors mattered are kept below, so raising it did not delete them.
+    assert req.specifier.contains(u"0.1.8", prereleases=True), (
+        u"the engine requirement is %r, which does not admit 0.1.8" % str(req))
+    assert not req.specifier.contains(u"0.1.7", prereleases=True), (
+        u"the engine requirement is %r, which still admits 0.1.7 -- it reads "
+        u"`.jp.` as no language, so hato would fetch beside a Japanese `.jp.srt` "
+        u"(RUNBOOK 9c); see pyproject.toml's comment before lowering it" % str(req))
     assert not req.specifier.contains(u"0.1.5", prereleases=True), (
-        u"the engine requirement is %r, which still admits 0.1.5. That version "
-        u"does work (it carries the display-name reader), but the floor was "
-        u"raised to 0.1.6 deliberately -- see pyproject.toml's comment before "
-        u"lowering it back" % str(req))
+        u"the engine requirement is %r, which still admits 0.1.5" % str(req))
     assert not req.specifier.contains(u"0.1.4", prereleases=True), (
         u"the engine requirement is %r, which still admits 0.1.4 -- 0.1.4 "
         u"predates the display-name reader and cannot satisfy the present-check"

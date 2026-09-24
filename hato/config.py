@@ -30,7 +30,7 @@ import re
 import sys
 from pathlib import Path
 
-from hato import paths
+from hato import formats, paths
 
 if sys.version_info >= (3, 11):
     import tomllib as _toml
@@ -95,7 +95,23 @@ SCHEMA = {
     # assume. ⛔ A COPY, never a move: the file beside the video is the one the
     # player loads and hato's own output stays exactly where tsubasa put it.
     "surasura_dir": (str, ""),
+    # ⭐ RUNBOOK 9a, RULED BY SONIC 2026-09-23 -- `hato/formats.py` says it in full.
+    # Which format is tried, and whether the OTHER one is taken when the preferred
+    # one is not on jimaku. ⚠ OFF BY DEFAULT, ruled: *"if prefer .ass, and there is
+    # an srt but the toggle is off, it won't download"*.
+    "prefer_format": (str, formats.DEFAULT_PREFERENCE),
+    "format_fallback": (bool, False),
 }
+
+#: 🚨 KEYS AN OLDER hato HAS NEVER HEARD OF -- written only once set away from
+#: their default. An unknown key is REFUSED by name (rule 2 above), in every
+#: version, so a config.toml carrying `prefer_format` is one a 1.0.2 tray, or a
+#: daily task still pointing at an old copy, cannot read -- and every run it
+#: starts dies on it. `dumps()` writes every OTHER key so a changed default
+#: cannot move an old install; a key an old install never had has no old
+#: default to protect. ⭐ Leave the setting alone and the file stays readable by
+#: every earlier hato; change it and the window says the tray must be restarted.
+NEWER_THAN_1_0_2 = ("prefer_format", "format_fallback")
 
 #: ⚠ `schedule` is HH:MM, 24-hour. A free string here would be written happily
 #: and refused later by whatever registers the task -- somewhere the person is
@@ -203,7 +219,8 @@ class Config(object):
 
     __slots__ = ("folders", "skip_folders", "lang", "out", "subs_dir",
                  "candidates", "archives", "allow_ai", "recurse", "skip_embedded",
-                 "watch", "schedule", "surasura_dir", "log_path", "log_keep",
+                 "watch", "schedule", "surasura_dir", "prefer_format",
+                 "format_fallback", "log_path", "log_keep",
                  "path", "path_source", "file_exists", "_set")
 
     def origin(self, name):
@@ -230,6 +247,8 @@ class Config(object):
             "allow_ai": self.allow_ai, "recurse": self.recurse,
             "watch": self.watch, "schedule": self.schedule,
             "surasura_dir": self.surasura_dir,
+            "prefer_format": self.prefer_format,
+            "format_fallback": self.format_fallback,
             "log": {"path": self.log_path, "path_resolved": str(self.log_path_resolved),
                     "keep": self.log_keep},
             "data_root": str(paths.data_root()),
@@ -340,6 +359,14 @@ def parse(text, path=None):
             "whatever registers the run cannot read would be accepted here and "
             "refused somewhere nobody is looking." % (where, schedule))
     cfg.schedule = schedule
+    prefer = values["prefer_format"]
+    if prefer not in formats.PREFERENCES:
+        raise ConfigError(
+            "%s: prefer_format = %r must be one of %s -- the two formats hato "
+            "chooses between (spec/RUNBOOK.md 9a)."
+            % (where, prefer, " or ".join("'%s'" % p for p in formats.PREFERENCES)))
+    cfg.prefer_format = prefer
+    cfg.format_fallback = values["format_fallback"]
     cfg.log_path = _absolute(log_values["path"], "log.path")
     cfg.log_keep = log_values["keep"]
     cfg._set = frozenset(set_names)
@@ -487,6 +514,8 @@ def _writable(cfg):
         "watch": cfg.watch,
         "schedule": cfg.schedule,
         "surasura_dir": cfg.surasura_dir,
+        "prefer_format": cfg.prefer_format,
+        "format_fallback": cfg.format_fallback,
     }
 
 
@@ -497,6 +526,8 @@ def dumps(cfg):
     every setting is a file a person can read to learn what is in force -- the
     same argument `hato config --show` already makes -- and it means a default
     that CHANGES between versions cannot silently change an existing install.
+    ⚠ Except `NEWER_THAN_1_0_2` at its default: an older hato refuses a key it
+    has never heard of, and would stop reading this file.
     """
     values = _writable(cfg)
     missing = set(SCHEMA) - set(values)
@@ -507,6 +538,8 @@ def dumps(cfg):
             "carry every key in SCHEMA." % ", ".join(sorted(missing)))
     out = [_WRITTEN_HEADER]
     for name in SCHEMA:
+        if name in NEWER_THAN_1_0_2 and values[name] == SCHEMA[name][1]:
+            continue                       # ⚠ see NEWER_THAN_1_0_2
         out.append(u"%s = %s" % (name, _toml_value(values[name])))
     out.append(u"")
     out.append(u"[log]")

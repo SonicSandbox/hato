@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 import tsubasa
 
-from hato import episodes, rank, tokens
+from hato import episodes, formats, rank, tokens
 from hato.commands import rank as rank_command
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,6 +101,107 @@ def test_an_ai_file_is_excluded_unless_allowed_even_as_ass(marker):
     assert [(c.name, u"AI-generated" in why) for c, why in kept.excluded] == [(ai.name, True)]
     allowed = rank.rank([ai, plain], allow_ai=True)
     assert order(allowed) == [ai.name, plain.name] and allowed.excluded == []
+
+
+# ---------------------------------------------------------------------------
+# ⭐ 9a -- the person's format, RULED 2026-09-23
+# ---------------------------------------------------------------------------
+# *"i want setting that asks for preference between the two, but OFF by default
+# is download if the other type doesn't exist ... if prefer .ass, and there is an
+# srt but the toggle is off, it won't download"*
+
+def test_with_srt_preferred_an_srt_goes_before_an_ass():
+    u"""The preference turns part 1 around -- and ONLY part 1: the ass family keeps
+    its own order behind it, and the rest stays last."""
+    ass = candidate(u"[Zeta] Show - 03 [JPN].ass", size=90000, quality="range")
+    ssa = candidate(u"[Mid] Show - 03 [JPN].ssa", size=50000, quality="range")
+    srt = candidate(u"[Alpha] Show - 03 [JPN].srt", size=10000, quality="literal")
+    rest = candidate(u"[Beta] Show - 03 [JPN].vtt", size=90000)
+    ranked = rank.rank([ass, rest, ssa, srt], prefer=u"srt", fallback=True)
+    assert order(ranked) == [srt.name, ass.name, ssa.name, rest.name]
+    assert u"you prefer .srt" in ranked.ordered[0].reasons[-1], ranked.ordered[0].reasons
+
+
+def test_with_the_fallback_off_the_other_kind_is_never_downloaded():
+    u"""⛔ Not ranked last -- NOT TRIED. And kept apart as `other_format`, so the
+    run can say the episode IS on jimaku rather than that it is not."""
+    ass = candidate(u"[Zeta] Show - 03 [JPN].ass", size=20000, quality="literal")
+    srt = candidate(u"[Alpha] Show - 03 [JPN].srt", size=90000, quality="range")
+    kept = rank.rank([srt, ass], prefer=u"ass", fallback=False)
+    assert order(kept) == [ass.name]
+    assert kept.other_format == [srt]
+    (dropped, why), = kept.excluded
+    assert dropped is srt and u"If there is no .ass, download .srt" in why, why
+
+    kept = rank.rank([srt, ass], prefer=u"srt", fallback=False)
+    assert order(kept) == [srt.name] and kept.other_format == [ass]
+
+
+def test_ssa_is_the_ass_family_and_vtt_is_neither():
+    ssa = candidate(u"[Zeta] Show - 03 [JPN].ssa", size=20000, quality="literal")
+    vtt = candidate(u"[Alpha] Show - 03 [JPN].vtt", size=90000, quality="range")
+    srt = candidate(u"[Mid] Show - 03 [JPN].srt", size=50000, quality="range")
+    kept = rank.rank([vtt, ssa, srt], prefer=u"ass", fallback=False)
+    assert order(kept) == [ssa.name] and kept.other_format == [vtt, srt]
+    kept = rank.rank([vtt, ssa, srt], prefer=u"srt", fallback=False)
+    assert order(kept) == [srt.name] and kept.other_format == [vtt, ssa]
+
+
+def test_an_ai_or_foreign_file_is_never_counted_as_the_other_format():
+    u"""⚠ The format filter runs AFTER the others: a Whisper `.srt` or a Chinese
+    one would not be taken in ANY format, and counting it as *"only in the other
+    format"* would tell the person the fallback would get them something."""
+    ai = candidate(u"[Alpha] Show - 03 [JPN] [whisperai].srt", size=90000)
+    foreign = candidate(u"[Mid] Show - 03 [CHS].srt", size=50000)
+    kept = rank.rank([ai, foreign], prefer=u"ass", fallback=False)
+    assert order(kept) == [] and kept.other_format == []
+    assert len(kept.excluded) == 2
+
+
+def test_rank_on_its_own_is_1_0_2s_every_format_ranked():
+    u"""The library default ranks everything, as 1.0.2 did -- the RUN is what
+    passes the person's settings, whose fallback default is off (test_pipeline)."""
+    ass = candidate(u"[Zeta] Show - 03 [JPN].ass", size=20000, quality="literal")
+    srt = candidate(u"[Alpha] Show - 03 [JPN].srt", size=90000, quality="range")
+    ranked = rank.rank([srt, ass])
+    assert order(ranked) == [ass.name, srt.name] and ranked.other_format == []
+
+
+def test_a_wait_names_every_kind_jimaku_has_and_reads_back_whole():
+    u"""⭐ EVERY kind, sorted -- not the commonest. *"only as .vtt"* over two `.srt`
+    and three `.vtt` was false, and a person who then chose `.srt` was never let
+    out of the wait (ADVERSARY 2026-09-23 #4). `only_as` reads every shape
+    `waiting_reason` writes, and the one-kind reason recorded before this."""
+    for kinds in ([u"srt"], [u"vtt", u"srt"], [u"sup", u"vtt", u"srt"]):
+        reason = formats.waiting_reason(kinds, u"ass", 5)
+        assert formats.only_as(reason) == tuple(sorted(kinds)), reason
+    assert formats.waiting_reason([u"vtt", u"srt"], u"ass", 5).startswith(
+        u"only as .srt or .vtt on jimaku")
+    assert formats.waiting_reason([u"sup", u"vtt", u"srt"], u"ass", 5).startswith(
+        u"only as .srt, .sup or .vtt on jimaku")
+    assert formats.only_as(u"only as .srt on jimaku -- you prefer .ass, and \"If there "
+                           u"is no .ass, download .srt\" is off in Settings (3 files)") == (u"srt",)
+    assert formats.only_as(u"jimaku entry 11446 has no file for this episode") is None
+    # ⚠ one kind given BARE is one kind, not its letters (the shot script did it)
+    assert formats.only_as(formats.waiting_reason(u"srt", u"ass", 1)) == (u"srt",)
+    assert formats.accepts_any(u"srt", u"srt", False)
+    # ⭐ and the question a wait is ended by -- ANY of its kinds
+    assert formats.accepts_any((u"srt", u"vtt"), u"srt", False)
+    assert not formats.accepts_any((u"srt", u"vtt"), u"ass", False)
+    assert formats.accepts_any((u"vtt",), u"ass", True)
+    assert not formats.accepts_any((), u"ass", True)
+
+
+def test_the_fallback_says_it_takes_more_than_the_other_preference():
+    u"""⚠ ON, the fallback takes `.vtt`, `.sup` and the rest after the other
+    preference -- 1.0.2's order. *"If there is no .ass, download .srt"* promised
+    less than that, on the box and on the button that ticks it (ADVERSARY
+    2026-09-23 #9)."""
+    vtt = candidate(u"[Alpha] Show - 03 [JPN].vtt", size=90000, quality="range")
+    assert order(rank.rank([vtt], prefer=u"ass", fallback=True)) == [vtt.name]
+    for prefer, other in ((u"ass", u"srt"), (u"srt", u"ass")):
+        assert formats.fallback_words(prefer) == (
+            u"If there is no .%s, download .%s or another format" % (prefer, other))
 
 
 # ---------------------------------------------------------------------------

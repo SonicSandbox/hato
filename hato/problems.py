@@ -65,13 +65,14 @@ on disk now, or `path: null` when it is gone -- and a gone one is still listed.
 The outcome is the latest row's, with ONE translation. A NOT_FOUND that follows
 tried files is the soft negative `_all_refused` records once every file it
 downloaded was refused, so that episode is a pick waiting for its retry:
-REFUSED. With nothing tried, it stays NOT_FOUND.
+REFUSED. With nothing tried, it stays NOT_FOUND. ⚠ Except a FORMAT wait (9a),
+which stays NOT_FOUND whatever was tried before it.
 """
 import os
 
 import tsubasa
 
-from hato import cache as _cache, episodes, keep, paths, pipeline, present, report, state
+from hato import cache as _cache, episodes, formats, keep, paths, pipeline, present, report, state
 
 #: `source` on every row this module makes. ⭐ A run's rows and these are merged
 #: into one list (RUNBOOK 8e); this is how a consumer tells them apart.
@@ -202,6 +203,13 @@ def _outcome(latest, candidates):
     rename (ADVERSARY 2026-09-22 F20). Told apart by hato's OWN sentence.
     """
     if latest.outcome == state.NOT_FOUND:
+        if formats.only_as(latest.reason):
+            # ⭐ 9a -- A FORMAT WAIT IS A WAIT, whatever was tried before it. With
+            # files refused in an earlier run it read as a pick -- *"the timing did
+            # not hold"* -- and the format, and the button that takes it, were
+            # never mentioned (ADVERSARY 2026-09-23 #5). The tried files still
+            # travel as `tried_before`.
+            return state.NOT_FOUND
         if candidates:
             return state.REFUSED
         return state.REFUSED if latest.reason == episodes.NO_EPISODE else state.NOT_FOUND

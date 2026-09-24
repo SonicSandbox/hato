@@ -574,7 +574,10 @@ def problem_kind(row):
     if row.get(u"waiting_by_choice"):
         return WAITING
     skip = row.get(u"skip")
-    has = bool(candidates_of(row))
+    # ⭐ 9a -- A FORMAT WAIT IS A WAIT, whatever was tried before it: files
+    # refused in an earlier run made it a pick, and the format line -- and its
+    # *Download .srt instead* -- never showed (ADVERSARY 2026-09-23 #5).
+    has = bool(candidates_of(row)) and not is_format_wait(row)
     if skip == u"negative":
         return PICK if has else WAITING
     if skip:
@@ -592,6 +595,14 @@ def problem_kind(row):
     if outcome == ERROR:
         return TROUBLE
     return None
+
+
+def is_format_wait(row):
+    u"""⭐ 9a -- is this row waiting because jimaku has it only in a format the
+    person's settings do not take? -> bool. ONE reader of the sentence
+    (`formats.only_as`), for the classifier and the painter alike."""
+    from hato import formats
+    return bool(formats.only_as(row.get(u"reason")))
 
 
 def problem_key(row):
@@ -1190,7 +1201,8 @@ __all__ = ["ADDED", "NEEDS_YOU", "NOT_YET", "FAILED", "SKIPPED",
            "memory_summary", "save_waits", "waits_path",
            "argv_for_pair", "argv_for_problems", "argv_for_retry",
            "candidates_of", "child_env", "cli_argv", "counts", "found_on_retry",
-           "interface_words", "last_run_stamp", "load_last_run", "match_percent",
+           "interface_words", "is_format_wait", "last_run_stamp", "load_last_run",
+           "match_percent",
            "needs_you", "no_console_kwargs", "outcome_word", "parse_answer",
            "pick_verdict", "probably_not_out", "problem_key", "problem_kind",
            "retry_due", "retry_text",

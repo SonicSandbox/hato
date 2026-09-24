@@ -260,13 +260,26 @@ def _ranges(numbers):
 # -- the movie path -----------------------------------------------------------
 
 def _align_movie(result, files, by_name):
-    """06-edge-cases.md §3: skip episode matching entirely -- every file on the
-    entry is a candidate for the one video."""
-    offered, skipped = [], []
+    """06-edge-cases.md §3: skip episode matching entirely -- every SUBTITLE on
+    the entry is a candidate for the one video.
+
+    🚨 SUBTITLES ONLY, as the episode path has always said (`kind != "subtitle"`).
+    Every non-skipped file was offered here, so a film jimaku has only as a
+    `.sup.7z` downloaded the archive unopened, handed it to tsubasa as a
+    subtitle (*"no reader recognised this file"*), recorded it as a timing
+    refusal at 0% and dropped the show's cached entry -- and 9a then called the
+    archive *"the other format"*, with a button to download it (ADVERSARY
+    2026-09-23 #10). An archive is `_archives_pass`'s to open, and it now can:
+    the film is no longer "offered" something it cannot use.
+    """
+    offered, skipped, not_subtitles = [], [], []
     for f in files:
         info = by_name[f["name"]]
         if info.skipped:
             skipped.append(f["name"])
+            continue
+        if info.kind != "subtitle":
+            not_subtitles.append(f["name"])
             continue
         offered.append((f, info, tokens.release_group(f["name"])))
     counts = collections.Counter(group for _f, _i, group in offered)
@@ -277,7 +290,10 @@ def _align_movie(result, files, by_name):
         result.groups.append(summary)
     for video in result.videos:
         if not offered:
-            result.not_found[str(video.path)] = u"The movie entry offers no file to try."
+            result.not_found[str(video.path)] = (
+                u"The movie entry offers no subtitle file to try%s."
+                % (u" -- only %d archive(s) or other file(s), named in a note"
+                   % len(not_subtitles) if not_subtitles else u""))
             continue
         result.per_video[str(video.path)] = [
             Candidate(f, info, group, None, "movie", 1.0,
@@ -288,6 +304,12 @@ def _align_movie(result, files, by_name):
         result.notes.append(
             u"A movie entry was offered %d videos; every file is a candidate for each, "
             u"and only the timing verdict can tell them apart." % len(result.videos))
+    if not_subtitles:
+        # ⚠ The episode path's sentence, word for word (`_finish`): one fact, one
+        # way of saying it.
+        result.notes.append(u"%d file(s) are archives or otherwise not subtitles; hato does not "
+                            u"open them unless --archives is on: %s"
+                            % (len(not_subtitles), _listed(not_subtitles)))
     if skipped:
         result.notes.append(u"%d file(s) tsubasa skips were left out: %s"
                             % (len(skipped), _listed(skipped)))

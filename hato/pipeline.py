@@ -79,8 +79,8 @@ from collections import OrderedDict
 
 import tsubasa
 
-from hato import archives, cache as _cache, client as _client, episodes, keep, \
-    paths, port, present, rank, tokens
+from hato import archives, cache as _cache, client as _client, episodes, formats, \
+    keep, paths, port, present, rank, tokens
 from hato.cache import Cache
 from hato.resolution import Resolved, cache_key, identify
 
@@ -155,7 +155,8 @@ class Settings(object):
     __slots__ = ("folders", "skip_folders", "lang", "out", "subs_dir",
                  "candidates", "archives",
                  "allow_ai", "recurse", "force", "dry_run", "skip_embedded",
-                 "surasura_dir", "retry_now", "only")
+                 "surasura_dir", "retry_now", "only", "prefer_format",
+                 "format_fallback")
 
     def __init__(self, folders, lang=u"ja", out=None, subs_dir=None, candidates=3,
                  # ⚠ `archives=False`, matching `config.py`'s schema. It was True
@@ -171,7 +172,9 @@ class Settings(object):
                  # ON against the ruling and only the CLI road obeyed it.
                  # ⛔ Never mutated: the line below copies it into a tuple.
                  dry_run=False, skip_embedded=True, skip_folders=[],
-                 surasura_dir="", retry_now=False, only=()):
+                 surasura_dir="", retry_now=False, only=(),
+                 # ⭐ 9a -- `config.py`'s defaults, as the guard above requires.
+                 prefer_format=formats.DEFAULT_PREFERENCE, format_fallback=False):
         self.folders = tuple(os.path.abspath(os.fspath(f)) for f in folders)
         # ⭐ RUNBOOK 7e. Subtrees carved OUT of `folders` -- Sonic: *"someone
         # might say 'desktop' and then not want a certain folder checked on
@@ -209,6 +212,13 @@ class Settings(object):
         # named videos inside the folders it was given.
         self.retry_now = bool(retry_now)
         self.only = tuple(os.path.abspath(os.fspath(v)) for v in (only or ()))
+        # ⭐ RUNBOOK 9a (`hato/formats.py`). ⛔ With the fallback OFF -- the
+        # default, ruled -- nothing but the preferred kind is ever downloaded.
+        if prefer_format not in formats.PREFERENCES:
+            raise ValueError(u"prefer_format must be one of %s, got %r"
+                             % (u", ".join(formats.PREFERENCES), prefer_format))
+        self.prefer_format = prefer_format
+        self.format_fallback = bool(format_fallback)
 
     @classmethod
     def from_config(cls, cfg, **given):
@@ -241,7 +251,9 @@ class Settings(object):
                    skip_embedded=pick("skip_embedded", cfg.skip_embedded),
                    surasura_dir=pick("surasura_dir", cfg.surasura_dir),
                    retry_now=bool(given.get("retry_now")),
-                   only=given.get("only") or ())
+                   only=given.get("only") or (),
+                   prefer_format=pick("prefer_format", cfg.prefer_format),
+                   format_fallback=pick("format_fallback", cfg.format_fallback))
 
     def __repr__(self):
         return "<Settings %d folder(s), lang=%s%s%s>" % (
@@ -815,6 +827,11 @@ class _Run(object):
                 refused += 1
             if result.outcome == CONFIDENT:
                 confident += 1
+            # ⚠ ANY FILE, IN ANY FORMAT -- deliberately not `_takes` (9a). This
+            # count decides whether a LOW CONFIDENCE entry is evidence against
+            # itself, and an entry holding your episodes in the other format is
+            # evidence FOR itself: dropping it would re-identify, for a metered
+            # call a day, a show whose entry is right (ADVERSARY 2026-09-23 #2).
             if str(video.path) in alignment.per_video:
                 offered += 1
         # ⭐ THE SECOND ESCALATION, measured on a real library 2026-09-17. The first
@@ -950,8 +967,14 @@ class _Run(object):
             # RUNBOOK 1b's ruling: the present-skip path never hashes just to
             # write a row that changes no decision. That is what makes a quiet
             # re-run cost "N stats and one DB read" and not N x 128 KiB.
-            return VideoResult(video, SKIPPED, u"subtitle already present (%s)" % found.name,
-                               skip=PRESENT, output_path=str(found.path))
+            # ⭐ 9b -- WHICH OF THE TWO ANSWERED is said, because only one of them
+            # is a guess about a file the person made: its name gives no language
+            # and its text was read.
+            said = (u"subtitle already present (%s -- its name gives no language; "
+                    u"its text is Japanese)" % found.name if found.by_text
+                    else u"subtitle already present (%s)" % found.name)
+            return VideoResult(video, SKIPPED, said, skip=PRESENT,
+                               output_path=str(found.path))
 
         try:
             video_hash = self._hash(path)
@@ -1037,6 +1060,19 @@ class _Run(object):
         skip = self.db.skip_reason(video_hash, self.lang,
                                    force=self.s.force or self.s.retry_now)
         if skip is not None and skip.kind == "negative":
+            # ⭐ 9a -- A WAIT FOR ONE KIND ENDS WHEN THE PERSON TAKES THE OTHER.
+            # It was recorded because every file was the other format; turning
+            # the fallback on (or changing the preference) is the person saying
+            # *take it* -- and a switch that still answered "tomorrow" would read
+            # as a setting that did nothing. ⛔ Only that wait: any other
+            # negative stands exactly as before.
+            # ⚠ ANY of the kinds it waits in -- an episode on jimaku as `.srt` and
+            # `.vtt` is taken by choosing `.srt` (ADVERSARY 2026-09-23 #4).
+            waited_for = formats.only_as(skip.reason)
+            if waited_for and formats.accepts_any(waited_for, self.s.prefer_format,
+                                                  self.s.format_fallback):
+                skip = None
+        if skip is not None and skip.kind == "negative":
             # 🚨 RUNBOOK 8d -- THE SECOND CAUSE OF 4a. This line decided correctly
             # and said nothing useful: a reason and a date, and none of the files
             # that were refused yesterday. So a run inside the retry window turned
@@ -1066,7 +1102,15 @@ class _Run(object):
             # ⭐ THE DISK WON: the DB says synced and the present-check above
             # says the file is gone. Re-syncing from the kept original costs
             # ZERO network (`02-data-model.md` §Canonicity).
-            return self._resync(video, root, video_hash, synced)
+            # 🚨 9a -- ONLY IN A FORMAT THE PERSON STILL TAKES. Measured: `.ass`
+            # written, the person chose `.srt` and deleted it, and the next run
+            # re-timed the kept `.ass` straight back -- after which the present-
+            # check answered *already there* for good, and the `.srt` they asked
+            # for was never fetched (ADVERSARY 2026-09-23 #3). Otherwise it falls
+            # through to an ordinary fetch; the kept original stays kept.
+            kept_as = tokens.subtitle_format(os.path.basename(synced.kept_path))
+            if formats.accepts(kept_as, self.s.prefer_format, self.s.format_fallback):
+                return self._resync(video, root, video_hash, synced)
         return None
 
     def _resync(self, video, root, video_hash, row):
@@ -1169,22 +1213,25 @@ class _Run(object):
         return alignment
 
     def _archive_note(self, show, files):
-        u"""⚠ A RECORDED DEFECT, not a silent gap (`spec/RUNBOOK.md` 4b).
+        u"""⭐ An archive this run did not open is NAMED, never silent.
 
-        `06-edge-cases.md` §5 and `config.archives` both say an entry offering
-        only a `.zip`/`.7z`/`.rar` is downloaded and unpacked -- and `RUNBOOK 3c`
-        built the extractor, with a zip-slip guard and caps. But the read rule
-        this step implements verbatim has NO step that opens one, and 4b's row
-        does not name it. Rather than invent the shape, every archive on the
-        entry is named in a note and 5a shows it.
+        ⛔ ONLY WHILE ARCHIVES ARE OFF. With them on, `_archives_pass` says what it
+        did with every archive it opened, and one it did not need is not news.
+        It used to be said either way -- *"were NOT opened"* printed over the
+        archive the same run had just opened, and it still called opening one
+        *"a step the spec does not have"* long after RUNBOOK 4d built it
+        (ADVERSARY 2026-09-23). ⚠ The window has no archives switch, so the
+        sentence names the config key and the flag, not a setting.
         """
+        if self.s.archives:
+            return
         found = [f["name"] for f in files if archives.is_archive(f.get("name") or u"")]
         if not found:
             return
         show.notes.append(
-            u"%d archive(s) on this entry were NOT opened: %s. Unpacking them into the "
-            u"candidate list is a step the spec does not have (recorded against "
-            u"RUNBOOK 4b); `hato extract` unpacks one by hand, and `hato sync` pairs it."
+            u"%d archive(s) on this entry were NOT opened: %s. hato opens one only when "
+            u"`archives = true` is in config.toml, or with --archives; `hato extract` "
+            u"unpacks one by hand, and `hato sync` pairs it."
             % (len(found), u", ".join(sorted(found)[:3])
                + (u", …" if len(found) > 3 else u"")))
 
@@ -1213,12 +1260,20 @@ class _Run(object):
         ⭐ When one works, the resolution cache is REPOINTED at it, so the next run
         goes straight there for zero extra calls -- otherwise every run would pay
         this again, which is the *"constant redundant operations"* failure.
+
+        🚨 9a -- *"offered a file"* means one the person's FORMAT settings take
+        (`_takes`). With the fallback off, a wrong season's entry offering only
+        `.srt` counted as an offer: nothing was escalated, the wait described the
+        wrong season's files, and the wrong entry stayed cached -- two days later
+        it was still the one listed (ADVERSARY 2026-09-23 #2a).
         """
-        if any(str(v.path) in alignment.per_video for v, _r in needing):
+        if any(self._takes(alignment, v) for v, _r in needing):
             return alignment, files
         if (show.resolved is None or show.resolved.movie
                 or not show.resolved.low_confidence or not show.alternates):
             return alignment, files
+        # Said in the note when it is the FORMAT that sent the run elsewhere.
+        other_kind = any(str(v.path) in alignment.per_video for v, _r in needing)
 
         before = self.client.metered
         try:
@@ -1230,7 +1285,7 @@ class _Run(object):
                 except (_client.EntryNotFound,) + _SHOW_FAILURES:
                     continue
                 trial = self._align(show, other, [v for v, _r in show.videos])
-                if not any(str(v.path) in trial.per_video for v, _r in needing):
+                if not any(self._takes(trial, v) for v, _r in needing):
                     continue
                 was = show.resolved
                 # ⚠ `cand.source`, not a word of my own: `Resolved` validates the
@@ -1243,15 +1298,32 @@ class _Run(object):
                 self.resolutions.put(cache_key(show.title, show.season, show.year),
                                      show.resolved)
                 show.notes.append(
-                    u"Entry %d (%s) held nothing for any video here, so the next entry the "
-                    u"search scored was tried: %d (%s), which does. That is what this show "
-                    u"is now remembered as."
-                    % (was.entry_id, was.entry_name, cand.id, cand.name))
+                    u"Entry %d (%s) held nothing for any video here%s, so the next entry "
+                    u"the search scored was tried: %d (%s), which does. That is what this "
+                    u"show is now remembered as."
+                    % (was.entry_id, was.entry_name,
+                       u" in a format your settings take" if other_kind else u"",
+                       cand.id, cand.name))
                 show.files_listed = len(other)
                 return trial, other
         finally:
             show.api_calls += self.client.metered - before
         return alignment, files
+
+    def _takes(self, alignment, video):
+        u"""⭐ 9a -- does `alignment` offer `video` a file the person's FORMAT
+        settings would take? -> bool
+
+        🚨 NOT *"is it in `per_video`"*, which is what the escalation and the
+        archive pass asked: with the fallback off an entry offering only the
+        other format answered *yes* to both, so the run stopped at a wrong
+        season's entry, and an archive holding the preferred kind was never
+        opened (ADVERSARY 2026-09-23 #2). ⚠ Format only -- the rank's other
+        filters are not this question's.
+        """
+        return any(formats.accepts(tokens.subtitle_format(c.file["name"]),
+                                   self.s.prefer_format, self.s.format_fallback)
+                   for c in alignment.per_video.get(str(video.path)) or ())
 
     def _archives_pass(self, show, needing, alignment, files):
         u"""⭐ OPT-IN (`--archives`, off by default): open a batch archive. -> (alignment, files)
@@ -1273,20 +1345,33 @@ class _Run(object):
         """
         if not self.s.archives:
             return alignment, files
-        wanted = [v for v, _r in needing if str(v.path) not in alignment.per_video]
+        # ⭐ 9a -- WANTED MEANS NOTHING THE PERSON'S FORMAT SETTINGS TAKE. A video the
+        # plain files offer only in the OTHER format was left out, so an archive
+        # holding the preferred kind was never opened (ADVERSARY 2026-09-23 #2b).
+        wanted = [v for v, _r in needing if not self._takes(alignment, v)]
         if not wanted:
             return alignment, files
         packs = [f for f in files if archives.is_archive(f.get("name") or u"")]
         for pack in packs[:ARCHIVES_PER_SHOW]:
             name = pack.get("name") or u"archive"
-            try:
-                blob = self.cache.store(self.download(pack), _cache.safe_name(name))
-            except _STOPPERS as exc:
-                raise _Stop(str(exc))
-            except (_client.JimakuError, OSError) as exc:
-                show.notes.append(u"%s could not be downloaded, so it was not opened: %s"
-                                  % (name, exc))
-                continue
+            # ⭐ ONE ALREADY IN THE WORKING CACHE IS NOT DOWNLOADED AGAIN. A video
+            # an archive cannot serve comes back at every retry -- a day, for a
+            # wait -- and each retry fetched the whole archive again to learn the
+            # same thing: measured 1, 2, 3, 4 downloads over four days (ADVERSARY
+            # 2026-09-23 #2c; the same was true of 1.0.2 for an episode the archive
+            # lacks). ⚠ `find_named` needs the SIZE jimaku lists to agree too: a
+            # re-upload that changes it is downloaded, and a stale copy offers only
+            # candidates the timing verdict still judges.
+            blob = self.cache.find_named(_cache.safe_name(name), pack.get("size"))
+            if blob is None:
+                try:
+                    blob = self.cache.store(self.download(pack), _cache.safe_name(name))
+                except _STOPPERS as exc:
+                    raise _Stop(str(exc))
+                except (_client.JimakuError, OSError) as exc:
+                    show.notes.append(u"%s could not be downloaded, so it was not opened: %s"
+                                      % (name, exc))
+                    continue
             try:
                 with self.cache.workdir(name) as scratch:
                     found = archives.extract(blob, os.path.join(str(scratch), u"out"))
@@ -1305,13 +1390,18 @@ class _Run(object):
                 continue
             trial = self._align(show, list(files) + members,
                                 [v for v, _r in show.videos])
-            if not any(str(v.path) in trial.per_video for v in wanted):
+            # ⚠ A MEMBER must land -- `local` marks one. A wanted video can now be
+            # one the plain files reach in the other format, and `trial` holds those
+            # plain files too, so "is it in `per_video`" is true of it whatever the
+            # archive held.
+            if not any(c.file.get("local") for v in wanted
+                       for c in trial.per_video.get(str(v.path)) or ()):
                 show.notes.append(u"%s was opened (%d subtitle(s) inside) and none of them "
                                   u"lands on a video here." % (name, len(members)))
                 continue
-            show.notes.append(u"%s was opened because plain files served nothing: %d "
-                              u"subtitle(s) inside, and they are candidates like any other "
-                              u"-- the timing verdict still decides."
+            show.notes.append(u"%s was opened because the plain files offered nothing your "
+                              u"settings take: %d subtitle(s) inside, and they are candidates "
+                              u"like any other -- the timing verdict still decides."
                               % (name, len(members)))
             return trial, list(files) + members
         return alignment, files
@@ -1449,10 +1539,24 @@ class _Run(object):
 
         offered = alignment.per_video.get(path) or []
         ranking = rank.rank(offered, allow_ai=self.s.allow_ai,
-                            seen_groups=frozenset(seen_groups))
+                            seen_groups=frozenset(seen_groups),
+                            prefer=self.s.prefer_format,
+                            fallback=self.s.format_fallback)
         ranked = [r.candidate for r in ranking.ordered]
         if not ranked:
-            if ranking.excluded:
+            # ⭐ 9a -- IT IS ON JIMAKU, in the other kind, and the person asked for
+            # theirs only. ⛔ Never *"not on jimaku yet"*, which is false. A wait all
+            # the same -- their kind may yet be uploaded -- and `formats.only_as()`
+            # reads this reason back: the gate looks past the wait once the settings
+            # would take ANY of these kinds. ⚠ Every kind, not the commonest: *"only
+            # as .vtt"* over two `.srt` and three `.vtt` was false, and choosing `.srt`
+            # never ended it (ADVERSARY 2026-09-23 #4).
+            kinds = sorted(set(kind for kind in (tokens.subtitle_format(c.file["name"])
+                                                 for c in ranking.other_format) if kind))
+            if kinds:
+                reason = formats.waiting_reason(kinds, self.s.prefer_format,
+                                                len(ranking.other_format))
+            elif ranking.excluded:
                 reason = (u"every one of the %d file(s) the entry offers for this episode "
                           u"was filtered out: %s"
                           % (len(ranking.excluded),
@@ -1628,7 +1732,26 @@ class _Run(object):
         Without that row a video whose every candidate has been refused re-lists
         the entry on every run to learn nothing new -- one metered call per run,
         for good (`03-permissions.md`, ruled at build time).
+
+        🚨 A DOWNLOAD THAT FAILED WAS NEVER TIMED (ADVERSARY 2026-09-23, beside 9a).
+        Every candidate failing to download read *"N candidates fetched and
+        retimed, none held"* and was recorded *"all refused by timing"* -- two
+        false sentences, and a day of quiet for files nobody had looked at. Now
+        that is an ERROR with NO wait, the ruling a failed WRITE already has
+        (`LEDGER-HOT.md`): an error is not a verdict (`state.refused`), so the next
+        run simply tries again. Some failed and some timed: a refusal still, and
+        each half counted as what it was.
         """
+        failed = [a for a in attempts if a.outcome == ERROR]
+        if attempts and len(failed) == len(attempts):
+            return VideoResult(
+                video, ERROR,
+                u"%d candidate%s could not be downloaded, so none was timed: %s"
+                % (len(failed), u"" if len(failed) == 1 else u"s",
+                   _sentence(failed[0].reason)),
+                jimaku_entry=entry, attempts=attempts, candidates_offered=offered,
+                bytes_downloaded=downloaded, tried_before=tried_before)
+        timed = tried - len(failed)
         if already:
             reason = (u"all %d candidate%s for this episode have already been fetched and "
                       u"refused by timing -- none was downloaded again. `--force` re-tries "
@@ -1636,8 +1759,9 @@ class _Run(object):
                       % (tried, u"" if tried == 1 else u"s"))
         else:
             best = _best(attempts)
-            reason = (u"%d candidate%s fetched and retimed, none held%s. %s"
-                      % (tried, u"" if tried == 1 else u"s", _measured(attempts),
+            reason = (u"%d candidate%s fetched and retimed, none held%s.%s %s"
+                      % (timed, u"" if timed == 1 else u"s", _measured(attempts),
+                         u" %d more could not be downloaded." % len(failed) if failed else u"",
                          u"Try `--candidates %d` to reach more of the %d offered, or pair one "
                          u"by hand with `hato sync`." % (tried + 2, offered) if offered > tried
                          else u"Pair one by hand with `hato sync <video> <subtitle>`."))
@@ -1649,7 +1773,9 @@ class _Run(object):
                 video_hash=video_hash, video_path=str(video.path), lang=self.lang,
                 kind="soft", jimaku_entry=entry, newest_offered=newest_offered,
                 reason=(u"%d of %d candidate(s) tried, all refused by timing"
-                        % (tried, offered)))
+                        % (tried, offered) if not failed else
+                        u"%d of %d candidate(s) tried: %d refused by timing, %d could not "
+                        u"be downloaded" % (tried, offered, timed, len(failed))))
             reason = u"%s Nothing new will be listed for it before %s." % (
                 reason, retry.strftime(u"%Y-%m-%d"))
         best = _best(attempts)

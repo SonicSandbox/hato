@@ -16,6 +16,10 @@ numbering the season differently is offered too.
 ⚠ Ranking chooses who is tried first. The timing verdict decides who is right.
 --files is required until RUNBOOK 2c wires the live path; nothing here makes a
 network call.
+
+⚠ EVERY FORMAT IS RANKED HERE, `.ass` first -- 1.0.2's order. The person's own
+format settings (`prefer_format`, `format_fallback`, RUNBOOK 9a) are applied by
+the RUN, which drops the other kind unless the fallback is on.
 """
 import os
 import sys

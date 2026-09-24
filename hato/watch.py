@@ -1227,7 +1227,12 @@ def watching_pid():
 #: that read "a tray is running" as "retrying in 14h" promised what nothing
 #: would do -- after every upgrade, and a running tray is not replaced by
 #: turning watching on (ADVERSARY 2026-09-22 V1).
-CAPABILITIES = (u"retries",)
+#: `formats` -- 9a. The runs this tray starts READ `prefer_format` and
+#: `format_fallback`; an older one's refuse a config.toml carrying either.
+#: 🚨 A NEW BUILD NEEDS A NEW TOKEN: 1.0.2 already wrote `retries`, so a window
+#: asking only for that took a 1.0.2 tray for a current one, and said nothing
+#: while every run it started died on `prefer_format` (ADVERSARY 2026-09-23 #1).
+CAPABILITIES = (u"retries", u"formats")
 
 
 def watching_capabilities():

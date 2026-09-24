@@ -178,6 +178,27 @@ def test_the_candidates_refusal_says_what_it_costs(tmp_path, text, value):
                         .split("must be at least 1, ")[-1])
 
 
+def test_the_format_settings_default_to_ass_and_nothing_else(tmp_path):
+    u"""⭐ RUNBOOK 9a, RULED 2026-09-23: `.ass` stays the preference (the 09-17
+    ruling), and the other kind is NOT downloaded unless the person turns it on --
+    *"if prefer .ass, and there is an srt but the toggle is off, it won't
+    download"*."""
+    cfg = config.load(tmp_path / "absent.toml")
+    assert (cfg.prefer_format, cfg.format_fallback) == ("ass", False)
+    cfg = config.load(write(tmp_path, 'prefer_format = "srt"\nformat_fallback = true\n'))
+    assert (cfg.prefer_format, cfg.format_fallback) == ("srt", True)
+    assert cfg.origin("prefer_format") == "config.toml"
+
+
+@pytest.mark.parametrize("value", ["SRT", "vtt", "ssa", ""])
+def test_a_format_hato_does_not_offer_as_a_preference_is_refused(tmp_path, value):
+    u"""Two choices, spelled exactly. ⚠ `ssa` too: it is part of the .ass family,
+    never a preference of its own."""
+    with pytest.raises(config.ConfigError) as err:
+        config.load(write(tmp_path, 'prefer_format = "%s"\n' % value))
+    assert "prefer_format" in str(err.value) and "'ass' or 'srt'" in str(err.value)
+
+
 def test_a_notepad_BOM_does_not_break_the_file(tmp_path):
     p = tmp_path / "config.toml"
     p.write_bytes(b"\xef\xbb\xbf" + b"candidates = 4\n")

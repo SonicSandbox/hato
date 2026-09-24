@@ -1696,6 +1696,22 @@ def test_the_pid_file_says_this_tray_keeps_promises_and_an_older_one_does_not(
         u"an older tray's pid file must read as keeping nothing")
 
 
+def test_this_tray_says_its_runs_read_the_format_settings_and_1_0_2s_does_not(
+        tmp_path, monkeypatch):
+    u"""🚨 ADVERSARY 2026-09-23 #1 (9a). 1.0.2 already wrote `retries`, so a window
+    asking only for that took a 1.0.2 tray for this build -- and said nothing
+    while every run it started died on `prefer_format`. This build writes
+    `formats`; 1.0.2's exact line (`<pid> <stamp> retries`) does not carry it."""
+    from hato import runlock
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path))
+    watch.write_pid_file()
+    assert u"formats" in watch.watching_capabilities(), watch.watching_capabilities()
+    stamp = runlock._process_start(os.getpid())
+    watch.pid_file_path().write_text(u"%d %s retries" % (os.getpid(), stamp or u"-"),
+                                     encoding="utf-8")
+    assert watch.watching_capabilities() == frozenset([u"retries"])
+
+
 def test_a_dates_file_the_tray_cannot_use_is_said_in_the_log(tmp_path, monkeypatch):
     u"""R8, the wiring: `main` hands the dates file's reader the tray's own
     complaint, so a file holding something else is SAID -- once."""

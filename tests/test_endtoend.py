@@ -520,6 +520,36 @@ def test_json_is_ndjson_that_parses_one_object_per_video(tmp_path, monkeypatch, 
     assert u"\x1b[" not in out
 
 
+def test_an_untagged_japanese_subtitle_is_said_and_nothing_is_fetched(tmp_path, monkeypatch,
+                                                                      capsys):
+    u"""⭐ 9b THROUGH THE REAL ENTRY POINT, two arms. A second user: *"It also got
+    subtitles for stuff that already had subtitles. Even though the subs were
+    named after the video."* `frieren S2 - 01.srt` beside `frieren S2 - 01.mkv`:
+
+      Japanese inside  -> skipped, ZERO downloads, and the reason says the NAME
+                          gave no language and the TEXT did
+      English inside   -> fetched, exactly as 1.0.2 did -- the arm that proves
+                          the first one is not every untagged file skipped
+    """
+    sys.path.insert(0, str(ROOT / "tests"))
+    import _subtitles as subs
+
+    for arm, pool in ((u"japanese", subs.JA), (u"english", subs.EN)):
+        lab = Lab(tmp_path / arm, names=[u"frieren S2 - 01.mkv"]).install(monkeypatch)
+        (lab.media / u"frieren S2 - 01.srt").write_bytes(
+            subs.srt(subs.lines(pool, 300)).encode("utf-8"))
+        code, out, err = lab.cli(capsys, "--json")
+        video, = [json.loads(line) for line in out.splitlines()
+                  if line.strip() and json.loads(line)["type"] == "video"]
+        if arm == u"japanese":
+            assert video["skip"] == pipeline.PRESENT, video
+            assert u"frieren S2 - 01.srt" in video["reason"], video["reason"]
+            assert u"its name gives no language; its text is Japanese" in video["reason"]
+            assert lab.downloads == [], lab.downloads
+        else:
+            assert video["skip"] is None and lab.downloads, (video, lab.downloads)
+
+
 def test_every_run_leaves_a_trace_the_window_can_read(tmp_path, monkeypatch,
                                                       capsys):
     u"""🚨 SONIC, 2026-09-18: *"once it runs automatically (from the tray or
@@ -1554,7 +1584,9 @@ def test_a_relative_out_or_subs_dir_is_refused_not_resolved_against_the_cwd(
 
 
 @pytest.mark.parametrize("tag, why", [
-    (u"jp", u"tsubasa reads it as `und`, which matches every untagged subtitle"),
+    # ⚠ `zz` since 2026-09-23 -- this row was `jp`, which tsubasa reads as
+    # Japanese from 0.1.8 (RUNBOOK 9c). No language in any version.
+    (u"zz", u"tsubasa reads it as `und`, which matches every untagged subtitle"),
     (u"jap", u"not a language code and never was"),
     (u"ja-JP", u"correct BCP 47 and broken on Jellyfin"),
     (u"japanese", u"not a 2- or 3-letter code"),
@@ -1648,13 +1680,17 @@ def _stable(text, lab):
     return text.rstrip()
 
 
+#: \u26a0 "8 offered" SINCE RUNBOOK 9a (2026-09-23), and it was 13: 5 of episode 3's
+#: thirteen are `.srt`, which the ruled default -- `.ass` preferred, the other kind
+#: never -- no longer offers. Measured whole (a line diff of the full render, not
+#: pytest's elided one): that number is the ONLY change.
 SNAPSHOT_RUN = u"""\
   Sousou no Frieren 2nd Season  S2
   \u21b3 parsed "frieren" \u2192 jimaku entry 11446
                                                               2 API calls \u00b7 120 files listed
 
   \u2717  03   REFUSED     1 candidate fetched and retimed, none held (31% match). Try
-                      `--candidates 3` to reach more of the 13 offered, or pair one by hand
+                      `--candidates 3` to reach more of the 8 offered, or pair one by hand
                       with `hato sync`. Best attempt: [NanakoRaws] Sousou no Frieren S2 - 03
                       (NTV 1080p HEVC AAC).ass: 31% match -- the timing does not hold.
                       Nothing new will be listed for it before <DATE>.

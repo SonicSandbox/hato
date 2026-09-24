@@ -4769,3 +4769,397 @@ def test_the_WAIT_button_stops_saying_nothing_runs_it_once_the_daily_run_is_on(q
             if b.text() == u"Wait for it"]
     assert tips, u"the fixture shows no Wait button, so this proves nothing"
     assert not any(u"nothing runs it on its own" in t for t in tips), tips
+
+
+# ===========================================================================
+# ⭐ 9a -- the person's format, RULED 2026-09-23
+# ===========================================================================
+# *"i want setting that asks for preference between the two, but OFF by default
+# is download if the other type doesn't exist."* And the frozen rule: a decision
+# made on the person's behalf needs a surface -- here, that the episode IS on
+# jimaku, in the other format, one click from taking it.
+
+def only_other(episode=12, video=None, kind=u"srt", prefer=u"ass", files=False):
+    u"""What `hato problems` says about an episode waiting for its format -- the
+    DB's own reason, which `formats.waiting_reason` wrote and `only_as` reads
+    back (the WIRE's shape, never a convenient one: LEDGER-HOT). `kind` one
+    format or several."""
+    from hato import formats
+    row = remembered(episode, files=files, video=video)
+    kinds = [kind] if isinstance(kind, str) else list(kind)
+    row[u"reason"] = formats.waiting_reason(kinds, prefer, 3)
+    # ⚠ NOT_FOUND even with files tried before it: `problems._outcome`'s 9a rule,
+    # the wire as `hato problems` now sends it (ADVERSARY 2026-09-23 #5).
+    row[u"outcome"] = u"NOT_FOUND"
+    return row
+
+
+def _box_beside(pane, words):
+    u"""The painted Check whose own row says `words`."""
+    for box in pane.findChildren(gui_app.Check):
+        if any(words in l.text() for l in box.parent().findChildren(QLabel)):
+            return box
+    return None
+
+
+def _flat(pane):
+    return u" ".join(u" ".join(gui_app.texts(pane)).split())
+
+
+def test_the_format_card_shows_the_preference_and_the_fallback_OFF(qapp):
+    u"""The defaults, ruled: `.ass`, and the other kind never."""
+    window = make()
+    window.show_tab(gui_app.TAB_SET)
+    pane = window.panes[gui_app.TAB_SET]
+    said = _flat(pane)
+    assert u"SUBTITLE FORMAT" in said
+    assert u"If there is no .ass, download .srt" in said and u"off: waits for .ass" in said
+    radios = pane.findChildren(gui_app.Radio)
+    assert [r.isChecked() for r in radios] == [True, False], u"the .ass radio is not the chosen one"
+    box = _box_beside(pane, u"If there is no .ass")
+    assert box is not None and not box.isChecked()
+
+
+def test_choosing_srt_saves_it_and_the_fallback_names_the_other_way_round(qapp):
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    window.panes[gui_app.TAB_SET].findChildren(gui_app.Radio)[1].click()
+    assert window.state.prefer_format == u"srt"
+    sent = [u" ".join(a) for a in window.spawned]
+    assert any(u"prefer_format=srt" in s for s in sent), sent
+    assert u"If there is no .srt, download .ass" in _flat(window.panes[gui_app.TAB_SET])
+    # ⚠ The chosen one again changes nothing, and sends nothing.
+    before = len(window.spawned)
+    window.panes[gui_app.TAB_SET].findChildren(gui_app.Radio)[1].click()
+    assert len(window.spawned) == before
+
+
+def test_the_fallback_box_saves_true_and_then_false(qapp):
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    _box_beside(window.panes[gui_app.TAB_SET], u"If there is no .ass").click()
+    assert window.state.format_fallback is True
+    _box_beside(window.panes[gui_app.TAB_SET], u"If there is no .ass").click()
+    assert window.state.format_fallback is False
+    sent = [u" ".join(a) for a in window.spawned]
+    assert [s for s in sent if u"format_fallback=" in s] == [
+        s for s in sent if u"format_fallback=true" in s or u"format_fallback=false" in s]
+    assert u"format_fallback=true" in sent[0] and u"format_fallback=false" in sent[1], sent
+
+
+def test_an_episode_only_in_the_other_format_is_never_said_not_to_be_on_jimaku(qapp, tmp_path):
+    u"""⛔ *"not on jimaku yet"* would be false of it: it IS there, as .srt. Two
+    arms -- and the control, an episode jimaku really lacks, still says it."""
+    window = remembering([], [only_other(video=_on_disk(tmp_path, u"ep12.mkv"))])
+    window.show_tab(gui_app.TAB_PICK)
+    said = _flat(window.panes[gui_app.TAB_PICK])
+    assert u"only on jimaku as .srt" in said and u"you prefer .ass" in said, said
+    assert u"not on jimaku yet" not in said and u"Nothing needs you" not in said, said
+    # ⭐ SAY WHEN IT RESOLVES -- LOOKED, 2026-09-23: the first shot of this line
+    # said everything but when hato looks again, where its neighbour did.
+    assert u"retry after" in said or u"retrying in" in said, said
+    assert buttons_called(window, u"Download .srt instead")
+
+    plain = remembering([], [remembered(files=False, video=_on_disk(tmp_path, u"ep13.mkv"))])
+    plain.show_tab(gui_app.TAB_PICK)
+    said = _flat(plain.panes[gui_app.TAB_PICK])
+    assert u"not on jimaku yet" in said and u"only on jimaku" not in said, said
+
+
+def test_download_instead_turns_the_fallback_on_and_looks_now(qapp, monkeypatch, tmp_path):
+    u"""⭐ ONE CLICK AWAY, and it IS the setting: the same checkbox Settings shows,
+    then a look-again, so it happens in seconds and not at the next run.
+
+    🚨 AND THE LOOK WAITS FOR THE WRITE (ADVERSARY 2026-09-23 #11): a run reads
+    config.toml as it starts. Three arms -- nothing runs while the write is in
+    flight; a write that exits 0 starts the look; one that failed starts nothing
+    and puts the checkbox back."""
+    started = {}
+    monkeypatch.setattr(gui_run, u"Runner",
+                        lambda **kw: started.update(argv=kw.get(u"argv")) or _NullRunner())
+    video = _on_disk(tmp_path, u"ep12.mkv")
+    window = remembering([], [only_other(video=video)])
+    waiting = []
+    window._read = lambda argv, done: waiting.append((argv, done)) or u"in flight"
+    window.show_tab(gui_app.TAB_PICK)
+    buttons_called(window, u"Download .srt instead")[0].click()
+    assert window.state.format_fallback is True
+    (argv, done), = waiting
+    assert u"format_fallback=true" in u" ".join(argv), argv
+    assert not started, u"the look-again started before config.toml was written: %r" % started
+
+    done(gui_run.Run(0, [], {}, [], u""), [])                            # written
+    argv = started.get(u"argv") or []
+    assert u"--retry-now" in argv and argv[argv.index(u"--only") + 1] == os.path.abspath(video)
+
+    started.clear()
+    del waiting[:]
+    window = remembering([], [only_other(video=video)])
+    window._read = lambda argv, done: waiting.append((argv, done)) or u"in flight"
+    window.show_tab(gui_app.TAB_PICK)
+    buttons_called(window, u"Download .srt instead")[0].click()
+    assert window.state.format_fallback is True, u"the control: the click ticked it"
+    (_argv, done), = waiting
+    assert done(gui_run.Run(1, [], {}, [u"hato: no"], u""), []) is None   # refused
+    assert not started, u"a write that FAILED still looked again: %r" % started
+    assert window.state.format_fallback is False, u"the box still says what was never saved"
+    assert u"could not be saved" in window.state.live, window.state.live
+
+
+def test_once_the_settings_take_that_format_the_line_says_so(qapp, tmp_path):
+    u"""⚠ The wait ends at the next run once the fallback is on (the gate looks
+    past it). Saying *"you prefer .ass"* then would be yesterday's reason -- and
+    ⛔ not *"now"* either: LOOKED, *"your settings take it now"* read as a fetch
+    already happening."""
+    window = remembering([], [only_other(video=_on_disk(tmp_path, u"ep12.mkv"))],
+                         format_fallback=True)
+    window.show_tab(gui_app.TAB_PICK)
+    said = _flat(window.panes[gui_app.TAB_PICK])
+    assert u"allowed by your settings now" in said and u"you prefer" not in said, said
+    # ⭐ WHEN, truly: the gate looks past this wait at the NEXT run -- ⛔ not the
+    # retry date the row still carries, which it no longer waits for.
+    assert u"fetched at hato's next run" in said, said
+    assert u"retry after" not in said and u"retrying in" not in said, said
+    assert buttons_called(window, u"Look again now")
+    assert not buttons_called(window, u"Download .srt instead")
+
+
+def _long_waits(tmp_path):
+    u"""Four of each waiting line, with real long titles from Sonic's library."""
+    other = [dict(only_other(n, video=_on_disk(tmp_path, u"s%02d.mkv" % n)),
+                  title=u"Tensei shitara Slime Datta Ken", season=4) for n in (93, 94, 95, 96)]
+    missing = [dict(remembered(n, files=False, video=_on_disk(tmp_path, u"i%02d.mkv" % n)),
+                    title=u"Mairimashita! Iruma-kun", season=4) for n in (21, 22, 23, 24)]
+    return other + missing
+
+
+def test_a_long_list_of_names_never_pushes_a_strips_button_off_the_window(qapp, tmp_path):
+    u"""🚨 LOOKED, 2026-09-23: four real titles ran the new line past the window --
+    its button cut at the edge, its info dot gone -- and the older *"not on jimaku
+    yet"* line was one title from the same. Both are `Flowing` now. Measured at a
+    narrow width, where both must wrap."""
+    window = remembering([], _long_waits(tmp_path))
+    window.show_tab(gui_app.TAB_PICK)
+    # ⚠ 900 px: narrow enough that the ~1,900 px list MUST wrap, with room for a
+    # wider font's lead and button than this machine's (CI runs Linux and macOS).
+    lay_out(window, width=900)
+    for text in (u"Download .srt instead", u"Look again now"):
+        button, = buttons_called(window, text)
+        right = button.mapTo(window, button.rect().topRight()).x()
+        assert 0 < right <= window.width(), (text, right, window.width())
+
+
+def test_a_long_list_of_names_flows_across_the_room_it_has(qapp, tmp_path):
+    u"""⚠ AND NOT A NARROW COLUMN -- LOOKED, the same hour: a plain wrapped QLabel
+    is sized to a heuristic ~80-character column, and four names became five lines
+    beside a screen of empty space. Given room for the whole list, the list is
+    ONE line.
+
+    ⚠ MEASURED IN A WINDOW WIDE ENOUGH FOR THE SUITE'S FONT. Offscreen, the
+    fallback font draws this text 1,936 px wide where the real one is ~1,200 --
+    a line COUNT at the ordinary width measured the font, not the layout (it read
+    4.4 lines where the real window shows 2)."""
+    window = remembering([], _long_waits(tmp_path))
+    window.show_tab(gui_app.TAB_PICK)
+    # ⚠ 5,000 px, not "wide enough here": CI's Linux and macOS jobs lay this out
+    # in fonts wider than Windows' offscreen fallback, which already needs 1,936.
+    lay_out(window, width=5000)
+    flowing = [w for w in window.panes[gui_app.TAB_PICK].findChildren(gui_app.Flowing)
+               if u"Slime" in w.text()]
+    assert flowing, u"the strip's list is not a Flowing label"
+    label_ = flowing[0]
+    margins = label_.contentsMargins()
+    lines = ((label_.height() - margins.top() - margins.bottom())
+             / float(label_.fontMetrics().lineSpacing()))
+    assert lines < 1.5, (u"with room for all of it, the list took %.1f lines "
+                         u"(%d px wide of a %d px window)"
+                         % (lines, label_.width(), window.width()))
+
+
+def test_the_format_settings_are_read_back_when_the_window_opens(qapp, tmp_path, monkeypatch):
+    u"""⛔ The window READS its settings on open (`settings_from_disk`) -- the round
+    trip nobody wrote once before (Sonic, 2026-09-18: *"i don't think my settings
+    are being saved"*). Both new ones, from a real file."""
+    config = tmp_path / u"config.toml"
+    config.write_text(u"prefer_format = 'srt'\nformat_fallback = true\n", encoding="utf-8")
+    monkeypatch.setenv(u"HATO_CONFIG", str(config))
+    state = gui_app.settings_from_disk()
+    assert (state.prefer_format, state.format_fallback) == (u"srt", True)
+
+
+def test_an_older_tray_is_told_it_cannot_read_a_changed_format_setting(qapp):
+    u"""🚨 `config.NEWER_THAN_1_0_2`: an older hato refuses a key it has never heard
+    of, so once the format settings leave their defaults every run an old tray
+    starts stops at config.toml. Two arms: changed -> said, with the fix;
+    untouched -> nothing, because the file is still one it can read."""
+    window = make(old_tray=True, prefer_format=u"srt")
+    window.show_tab(gui_app.TAB_SET)
+    assert u"cannot read this setting" in _flat(window.panes[gui_app.TAB_SET])
+    window = make(old_tray=True)
+    window.show_tab(gui_app.TAB_SET)
+    assert u"cannot read this setting" not in _flat(window.panes[gui_app.TAB_SET])
+
+
+# ---------------------------------------------------------------------------
+# ⭐ 9a's adversarial pass, 2026-09-23 -- `ADVERSARY-2026-09-23.md`
+# ---------------------------------------------------------------------------
+
+def _tray_says(capabilities):
+    u"""A REAL pid file in the suite's HATO_CACHE, for THIS live process -- the
+    line a tray writes, `<pid> <stamp> <capabilities>` -- never a flag set on the
+    state (the check that let #1 through injected `old_tray=True`)."""
+    from hato import runlock
+    from hato import watch as _watch
+    _watch.pid_file_path().parent.mkdir(parents=True, exist_ok=True)
+    stamp = runlock._process_start(os.getpid())
+    _watch.pid_file_path().write_text(
+        (u"%d %s %s" % (os.getpid(), stamp or u"-", capabilities)).strip(), encoding="utf-8")
+
+
+def test_a_1_0_2_tray_is_told_it_cannot_read_a_changed_format_setting(
+        qapp, tmp_path, monkeypatch):
+    u"""🚨 #1 -- 1.0.2 already writes `retries`, so it was taken for this build:
+    no note, while every run it started died on `prefer_format`. The second user,
+    who asked for `.srt`, is on 1.0.2. Two arms through the window's own poll:
+    1.0.2's exact line -> said, with the fix; this build's line -> nothing."""
+    monkeypatch.setenv(u"HATO_CACHE", str(tmp_path))
+    for line, said in ((u"retries", True), (u"retries,formats", False)):
+        _tray_says(line)
+        window = make(running=False, prefer_format=u"srt")
+        timer = window.follow_other_runs(every_ms=3600000)
+        timer.stop()
+        timer.timeout.emit()
+        assert window.state.old_tray is False, u"1.0.2 keeps retries -- it is not V1's tray"
+        assert window.state.tray_reads_formats is (not said), (line, window.state.tray_reads_formats)
+        window.show_tab(gui_app.TAB_SET)
+        text = _flat(window.panes[gui_app.TAB_SET])
+        assert (u"cannot read this setting" in text) is said, (line, text)
+        if said:
+            assert buttons_called(window, u"Restart the tray"), u"said, but not the fix"
+
+
+def test_a_format_key_in_the_file_is_said_even_at_its_default(qapp):
+    u"""🚨 #1 -- an older hato refuses the KEY, whatever its value: a hand-written
+    `prefer_format = 'ass'` stopped 1.0.2's runs as surely as `'srt'`, and the note
+    keyed on the VALUE. Two arms: the key in the file -> said; not -> nothing."""
+    for in_file in (True, False):
+        window = make(tray_reads_formats=False, format_keys_in_file=in_file)
+        window.show_tab(gui_app.TAB_SET)
+        assert (u"cannot read this setting" in _flat(window.panes[gui_app.TAB_SET])) is in_file
+
+
+def test_restarting_the_tray_takes_the_format_note_away_at_once(qapp, monkeypatch):
+    u"""After *Restart the tray* the tray is this build's, so the note goes now --
+    not at the next look. ⛔ Both halves faked, as V1's check does: a real stop
+    would signal whatever pid the file names."""
+    window = make(running=False, tray_reads_formats=False, prefer_format=u"srt")
+    window.show_tab(gui_app.TAB_SET)
+    assert u"cannot read this setting" in _flat(window.panes[gui_app.TAB_SET]), u"the control"
+    calls = []
+    monkeypatch.setattr(window, u"stop_watcher", lambda: calls.append(u"stop"))
+    monkeypatch.setattr(window, u"start_watcher", lambda: calls.append(u"start"))
+    restart, = buttons_called(window, u"Restart the tray")
+    restart.click()
+    assert calls == [u"stop", u"start"]
+    window.show_tab(gui_app.TAB_SET)
+    assert u"cannot read this setting" not in _flat(window.panes[gui_app.TAB_SET])
+
+
+def test_going_back_to_the_defaults_in_the_window_takes_the_format_note_away(qapp):
+    u"""The window's writer keeps the format keys in config.toml only away from
+    their defaults (`config.dumps`), so once it has rewritten the file the VALUES
+    say what is in it: a key the file held when the window opened must not keep
+    the note up after the person set both back. Both roads -- the radio, the box."""
+    window = make(running=False, tray_reads_formats=False, format_keys_in_file=True,
+                  prefer_format=u"srt")
+    window.show_tab(gui_app.TAB_SET)
+    assert u"cannot read this setting" in _flat(window.panes[gui_app.TAB_SET]), u"the control"
+    window.panes[gui_app.TAB_SET].findChildren(gui_app.Radio)[0].click()     # back to .ass
+    window.show_tab(gui_app.TAB_SET)
+    assert u"cannot read this setting" not in _flat(window.panes[gui_app.TAB_SET])
+
+    window = make(running=False, tray_reads_formats=False, format_keys_in_file=True)
+    for _on_then_off in range(2):
+        window.show_tab(gui_app.TAB_SET)
+        _box_beside(window.panes[gui_app.TAB_SET], u"If there is no .ass").click()
+    window.show_tab(gui_app.TAB_SET)
+    assert window.state.format_fallback is False
+    assert u"cannot read this setting" not in _flat(window.panes[gui_app.TAB_SET])
+
+
+def test_whether_the_file_carries_a_format_key_is_read_back_on_open(qapp, tmp_path, monkeypatch):
+    u"""The round trip behind the note above: a real file, both arms."""
+    config = tmp_path / u"config.toml"
+    monkeypatch.setenv(u"HATO_CONFIG", str(config))
+    for text, carries in ((u"prefer_format = 'ass'\n", True), (u"recurse = true\n", False)):
+        config.write_text(text, encoding="utf-8")
+        assert gui_app.settings_from_disk().format_keys_in_file is carries, text
+
+
+def _quiet_tips(window):
+    u"""{a quiet line's lead: its info dot's tooltip}, as PAINTED on the Subtitles
+    tab -- whitespace collapsed (a wrapped tooltip hides the phrase)."""
+    out = {}
+    for strip in window.panes[gui_app.TAB_SUBS].findChildren(gui_app.Styled):
+        leads = [w.text() for w in strip.findChildren(QLabel) if w.text()]
+        tips = [w.toolTip() for w in strip.findChildren(QWidget) if w.toolTip()]
+        if leads and tips:
+            out[leads[0]] = u" ".join(tips[0].split())
+    return out
+
+
+def test_a_quiet_wait_never_claims_a_download_that_did_not_happen(qapp):
+    u"""🚨 #8 -- *"waiting to retry"* carried one tooltip for every wait: *"hato
+    downloaded subtitles for this and none of them lined up"* -- over a FORMAT
+    wait, where nothing was downloaded. Three rows, three shows, each line's own
+    tooltip: the format wait says the format; the row with tried files (the
+    control) keeps the old sentence; a row with none claims nothing."""
+    from hato import formats
+    files = [{u"name": u"[G] Show - 04 [JPN].ass", u"outcome": u"REFUSED",
+              u"reason": u"the timing did not hold", u"bytes": 1000, u"match_rate": 0.4,
+              u"path": u"C:\\hato\\cache\\a.ja.ass", u"when": u"2026-09-21T00:00:00+00:00"}]
+    rows = [dict(retrying(4, title=u"Format Show"),
+                 reason=formats.waiting_reason([u"srt"], u"ass", 3)),
+            dict(retrying(5, title=u"Tried Show"), tried_before=files),
+            dict(retrying(6, title=u"Bare Show"),
+                 reason=u"jimaku entry 1 has no file for this episode")]
+    window = make(rows=rows)
+    window.show_tab(gui_app.TAB_SUBS)
+    tips = _quiet_tips(window)
+    by_show = dict((show, [t for lead, t in tips.items() if lead.startswith(show)])
+                   for show in (u"Format Show", u"Tried Show", u"Bare Show"))
+    assert all(len(t) == 1 for t in by_show.values()), tips
+    fmt, tried_tip, bare = (by_show[s][0] for s in (u"Format Show", u"Tried Show", u"Bare Show"))
+    downloaded = u"downloaded subtitles for this"
+    assert u"only in a format your settings do not take" in fmt and downloaded not in fmt, fmt
+    assert downloaded in tried_tip, u"the control: %r" % tried_tip
+    assert downloaded not in bare and u"Needs you says why" in bare, bare
+
+
+def test_a_format_wait_with_files_tried_before_it_is_still_the_format_line(qapp, tmp_path):
+    u"""🚨 #5 in the window -- with files refused in an earlier run it was painted
+    as a pick (*"2 tried · best 70%"*), never the format or its button."""
+    window = remembering([], [only_other(video=_on_disk(tmp_path, u"ep12.mkv"), files=True)])
+    window.show_tab(gui_app.TAB_PICK)
+    said = _flat(window.panes[gui_app.TAB_PICK])
+    assert u"only on jimaku as .srt" in said and buttons_called(window, u"Download .srt instead")
+    assert u"tried · best" not in said and u"Click one to use it" not in said, said
+
+
+def test_a_blocked_and_a_taken_format_wait_are_two_lines_never_one(qapp, tmp_path):
+    u"""🚨 #9 -- `.srt` preferred, one episode waiting as `.ass` (blocked) and one
+    recorded as `.srt`-only before the switch (taken now). One line said the
+    blocked sentence of both -- *"you prefer .srt"* over an episode that IS
+    `.srt` -- and its button offered *Download .ass or .srt instead*."""
+    rows = [only_other(12, video=_on_disk(tmp_path, u"ep12.mkv"), kind=u"ass", prefer=u"srt"),
+            only_other(13, video=_on_disk(tmp_path, u"ep13.mkv"), kind=u"srt", prefer=u"ass")]
+    window = remembering([], rows, prefer_format=u"srt")
+    window.show_tab(gui_app.TAB_PICK)
+    said = _flat(window.panes[gui_app.TAB_PICK])
+    assert u"1 episode is only on jimaku as .ass" in said, said
+    assert u"1 episode is on jimaku as .srt" in said and u"allowed by your settings now" in said, said
+    assert buttons_called(window, u"Download .ass instead")
+    offered = [b.text() for b in window.findChildren(QPushButton) if b.text().startswith(u"Download")]
+    assert offered == [u"Download .ass instead"], (u"a button offered the chosen kind", offered)
+    tip = u" ".join(buttons_called(window, u"Download .ass instead")[0].toolTip().split())
+    assert u"download .ass or another format" in tip, (u"#9b: the words under-describe it", tip)

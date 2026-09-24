@@ -72,8 +72,9 @@ import json
 import os
 import re
 import unicodedata
+from collections import OrderedDict
 
-from hato import pipeline, port
+from hato import formats, pipeline, port
 
 #: The line width the ruled mocks sit inside. ⚠ A caller with a real terminal
 #: passes its own; a log file always gets this one, so a log is comparable
@@ -107,6 +108,10 @@ DASH = u"—"             # —
 ELLIPSIS = u"…"         # …
 SUB = u"⤷"              # ⤷
 
+#: ⭐ 9a -- the kind `_kind` gives a format wait, skipped or not. A report kind,
+#: never an engine one: the engine calls it NOT_FOUND, then a NEGATIVE skip.
+FORMAT_WAIT = u"format"
+
 #: skip kind -> (marker, the sentence). ⚠ The sentence is per KIND, not per
 #: video: the rows are collapsed onto one line and a per-video reason could not
 #: be shown on it. The per-video reason is in `--json` and `--verbose`.
@@ -121,6 +126,11 @@ SKIPS = (
      + u" `hato blacklist --remove` puts it back"),
     (pipeline.NEGATIVE, u"⊖", u"asked for recently and not there yet " + DASH
      + u" `--force` asks again now"),
+    # ⭐ 9a -- a wait the NEGATIVE sentence would describe falsely twice over: it
+    # IS there, and `--force` asks again only to be told the same (ADVERSARY
+    # 2026-09-23 #7). Not an engine kind -- `_kind` sorts it out of NEGATIVE.
+    (FORMAT_WAIT, u"⊖", u"on jimaku, but only in a format your settings do not take "
+     + DASH + u" `hato config --set format_fallback=true` takes it"),
 )
 SKIP_MARK = dict((kind, mark) for kind, mark, _s in SKIPS)
 SKIP_SENTENCE = dict((kind, sentence) for kind, _m, sentence in SKIPS)
@@ -129,6 +139,42 @@ SKIP_SENTENCE = dict((kind, sentence) for kind, _m, sentence in SKIPS)
 PROBLEM_LABEL = {pipeline.NOT_FOUND: u"NOT FOUND",
                  pipeline.REFUSED: u"REFUSED",
                  pipeline.ERROR: u"ERROR"}
+#: ⭐ 9a -- the label of a NOT_FOUND that IS on jimaku, in the other format.
+OTHER_FORMAT_LABEL = u"OTHER FORMAT"
+
+
+def is_format_wait(result):
+    u"""⭐ 9a -- a row waiting because jimaku has it only in a format the settings
+    do not take: NOT_FOUND on the run that found it, a NEGATIVE skip after.
+    ONE reader of the sentence, `formats.only_as`. -> bool"""
+    return ((result.outcome == pipeline.NOT_FOUND
+             or (result.outcome == pipeline.SKIPPED and result.skip == pipeline.NEGATIVE))
+            and formats.only_as(result.reason) is not None)
+
+
+def _kind(result):
+    u"""The summary's key for a row: its skip or its outcome -- and a format wait,
+    either way, its own (9a). ⚠ `RunReport.counts()` is left alone; `api.py`
+    and the `--json` stream read it as the ENGINE'S counts."""
+    if is_format_wait(result):
+        return FORMAT_WAIT
+    return result.skip if result.outcome == pipeline.SKIPPED else result.outcome
+
+
+def _counts(report):
+    u"""kind -> how many, with format waits split out. ⭐ The ONE split both
+    summary lines use -- the plan had its own and Mode A had none, so a run
+    printed *"1 not found"* for an episode the plan called *"only in the other
+    format"* (ADVERSARY 2026-09-23 #7)."""
+    out = OrderedDict()
+    for r in report.results:
+        key = _kind(r)
+        out[key] = out.get(key, 0) + 1
+    return out
+
+
+def problem_label(result):
+    return OTHER_FORMAT_LABEL if is_format_wait(result) else PROBLEM_LABEL[result.outcome]
 
 #: ⭐ The summary line's vocabulary and ORDER, taken from the ruled mock:
 #: *17 fetched · 3 skipped · 2 can't sync yet · 1 not found · 1 refused*.
@@ -138,6 +184,7 @@ SUMMARY = (
     (pipeline.PRESENT, u"skipped", u"skipped"),
     (pipeline.NO_TRACK, u"can't sync yet", u"can't sync yet"),
     (pipeline.NOT_FOUND, u"not found", u"not found"),
+    (FORMAT_WAIT, u"only in the other format", u"only in the other format"),
     (pipeline.REFUSED, u"refused", u"refused"),
     (pipeline.ERROR, u"error", u"errors"),
     (pipeline.BLACKLISTED, u"blacklisted", u"blacklisted"),
@@ -412,8 +459,7 @@ def _sort_key(result):
 
 
 def _label_width(results):
-    present = set(r.outcome for r in results)
-    widths = [cells(PROBLEM_LABEL[o]) for o in present if o in PROBLEM_LABEL]
+    widths = [cells(problem_label(r)) for r in results if r.outcome in PROBLEM_LABEL]
     return max(widths) if widths else 0
 
 
@@ -421,7 +467,7 @@ def _problem_rows(results, width, show_col, verbose):
     out, label_w = [], _label_width(results)
     for r in sorted(results, key=_sort_key):
         head = u"  %s  %s%s   %s   " % (PROBLEM, pad(show_col(r), 0),
-                                        pad(episode(r), 2), pad(PROBLEM_LABEL[r.outcome], label_w))
+                                        pad(episode(r), 2), pad(problem_label(r), label_w))
         indent = u" " * cells(head)
         reason = r.reason or u""
         if r.outcome == pipeline.NOT_FOUND:
@@ -449,7 +495,7 @@ def _skip_groups(results, show_col):
     """
     groups, order = {}, []
     for r in results:
-        key = (r.skip, show_col(r))
+        key = (_kind(r), show_col(r))
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -465,7 +511,7 @@ def _skip_rows(results, width, show_col):
         for key in [k for k in order if k[0] == kind]:
             rows, label = groups[key], key[1]
             line = sentence
-            if kind == pipeline.NEGATIVE:
+            if kind in (pipeline.NEGATIVE, FORMAT_WAIT):
                 dates = sorted(r.retry_after for r in rows if r.retry_after is not None)
                 if dates:
                     line = u"%s (the first is due %s)" % (line,
@@ -614,7 +660,7 @@ def _plural(n, word, many=None):
 
 def counts_line(report):
     u"""*17 fetched · 3 skipped · 2 can't sync yet · 1 not found · 1 refused*"""
-    counts = report.counts()
+    counts = _counts(report)
     parts = []
     for key, one, many in SUMMARY:
         n = counts.pop(key, 0)
@@ -841,7 +887,10 @@ def render_plan(report, width=DEFAULT_WIDTH, verbose=False):
         out.extend(_show_notes(show, width, first=u"       %s " % WARN,
                                rest=u"         ", verbose=verbose))
 
-    counts = report.counts()
+    # ⭐ 9a -- an episode offered only in the OTHER format IS on jimaku, so it is
+    # never counted as "not on jimaku" -- and it is `_counts`' split, the one
+    # Mode A's summary uses too, not a second copy of it.
+    counts = _counts(report)
     uncertain = sum(1 for show in report.shows
                     if show.resolved is not None and show.resolved.low_confidence
                     for r in show.results if r.outcome == pipeline.PLANNED)
@@ -853,6 +902,7 @@ def render_plan(report, width=DEFAULT_WIDTH, verbose=False):
                       (pipeline.BLACKLISTED, u"blacklisted"),
                       (pipeline.EMBEDDED, u"already embedded"),
                       (pipeline.NOT_FOUND, u"not on jimaku"),
+                      (FORMAT_WAIT, u"only in the other format"),
                       (pipeline.REFUSED, u"refused"),
                       (pipeline.ERROR, u"unreadable")):
         n = counts.pop(key, 0)

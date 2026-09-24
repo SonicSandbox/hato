@@ -129,10 +129,20 @@ LAYER 8 — NEEDS YOU PERSISTS, AND EVERY WAIT SAYS SO. Added 2026-09-22 (HANDOF
   ├── 8h  ✅ The retry actually happens             (the tray wakes at the due time)
   ├── 8j  ✅ Try harder · 8k ✅ network drive → D8, a defect in the RELEASED bytes
   ├── S01 · S02 ✅ the tray's two deferred silent losses (ADVERSARY-2026-09-18)
+  ├── 8y  ✅ D2 — the 03:00 switch registers a REAL task (hato/schedule.py)
   └── 8z  ✅ THE ADVERSARIAL PASS — run and CLOSED: ADVERSARY-2026-09-22.md
            79 reproduced + 11 suspected + 32 wrong-reason checks → every row
            fixed (naming its check AND its mutant) / dropped / deferred.
-           ⛔ Still UNRELEASED — 1.0.2 is Sonic's call
+           ✅ RELEASED — all of Layer 8 is in v1.0.2, 2026-09-23 (Step 6)
+
+LAYER 9 — WHICH FORMAT, AND WHAT COUNTS AS ALREADY THERE. Added 2026-09-23
+  ├── 9a  ✅ Prefer .ass or .srt; the other kind only if asked        M9a 25/25
+  ├── 9b  ✅ An untagged subtitle named for the video is read first   M9b 16/16
+  ├── 9c  ✅ tsubasa 0.1.8 RELEASED 2026-09-23: `.jp` reads as Japanese  M9c 2/2
+  └── 9z  ✅ THE ADVERSARIAL PASS — ADVERSARY-2026-09-23.md: 22 fixed · 5 dropped ·
+           2 deferred; m9za 48 + m9zb 3 + 14 re-aimed, all killed. Closed on 9a;
+           ⚠ PARTIAL on 9b + 9c (that agent was stopped before it reported)
+           ▶ Layer 9 ships as hato 1.0.3 (Sonic's "Your leans, go", 2026-09-23)
 
 LAYER 6 — release
 ```
@@ -1465,9 +1475,119 @@ it.** 7e built the time field and the config value; nothing owned the task. It s
 
 ---
 
-## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.1`, 2026-09-19. ⛔ NO PyPI, RULED
+## ⭐ LAYER 9 — WHICH FORMAT, AND WHAT COUNTS AS ALREADY THERE. Added 2026-09-23
 
-> ⭐ **`v1.0.1` IS LIVE AND EVERY GATE IS GREEN** — `tests` 13/13, `release` 2/2 with the
+> **From a second user's report on 1.0.2**, ruled by Sonic the same day: *"it gets .ass
+> instead of .srt subs, .srt would be preferred if possible"* · *"It also got subtitles for
+> stuff that already had subtitles. Even though the subs were named after the video, was
+> made specifically for that video, and had perfect sync already."*
+>
+> ⭐ **MEASURED BEFORE ANY CODE** — tsubasa 0.1.7 (what 1.0.2 bundles), through
+> `parse_subtitle_name` AND `scan(...).unpaired(lang="ja")`, each name beside `Show - 01.mkv`:
+>
+> | Name | Read as |
+> | --- | --- |
+> | `.ja` · `.jpn` · `.ja-JP` · `.ja[cc]` · `.Japanese` / `.japanese` / `.JAPANESE` | Japanese → **skipped** |
+> | `.srt` / `.ass` with no language · `.jp` · `.JP` · `.jap` · `.und` · `.en` | not Japanese → **fetched beside it** |
+>
+> 🚨 **PART 1 DRIFT, recorded:** `06-edge-cases.md` §6 and `present.py`'s docstring still
+> called `.Japanese.` a tsubasa defect. tsubasa 0.1.5 fixed it, and
+> `test_existing.py::test_the_jellyfin_display_name_is_read_as_japanese` has asserted the
+> fix since 2026-09-17. ⚠ It was repeated to Sonic as current on 2026-09-23 — from the
+> spec note, not a measurement — and corrected the same hour.
+
+### Step 9a — Prefer .ass or .srt; the other kind only if asked
+
+**surfaces:** `data` `logic` `ui`
+**Ruling (Sonic, 2026-09-23, verbatim):** *"i want setting that asks for preference between
+the two, but OFF by default is download if the other type doesn't exist. In other words,
+even if you prefer one, if it isn't checked, then it won't download the other kind. ie if
+prefer .ass, and there is an srt but the toggle is off, it won't download"*
+
+| | |
+| --- | --- |
+| **Build** | `config.py`: `prefer_format` (`ass` \| `srt`, default `ass`) and `format_fallback` (default `false`); anything else refused on both roads · `rank.py`: the preferred kind first (`.ass` means `.ass` and `.ssa`); with the fallback OFF every other kind is FILTERED, with a reason naming the setting; ON, the old order follows · `pipeline.py`: an episode whose every file is the other kind is NOT_FOUND with its OWN reason and word — ⛔ never *"not on jimaku yet"*, which would be false — and the usual 1-day retry, since the preferred kind may yet be uploaded · the window: a *Subtitle format* card (a painted radio pair + a Check) |
+| ⚠ **Upgrade** | An older hato REFUSES a key it does not know, and Sonic's own 1.0.1 tray is running: every run it starts would die on `prefer_format`. ⭐ **Keys newer than 1.0.2 are written only once set away from their default** — the rule *every key written* exists so a CHANGED default cannot move an old install, and a key an old install never had has no old default to protect |
+| **Expected** | ⭐ With the defaults an episode offered ONLY as `.srt` is **not downloaded**, and says so — ruled. This changes Sonic's own hato too |
+| ✅ **Proof, 2026-09-23** | `hato/formats.py` (stdlib only; the window imports it) · config 4 checks · rank 5 · pipeline 7, among them the switch taking effect at the NEXT run (two arms, the same hour) and no other wait ending · window 10 · **M9a 25/25, first run**; 3 older mutants re-aimed (M3b-01/02, M8zt-49). ⚠ The run suite's `Lab` now says `format_fallback=True` out loud: three checks about other things (the cap, a film, an archive) went red when the default landed. ⚠ Mode A's snapshot moved *"13 offered"* → *"8 offered"* — the full render diffed line by line, that the ONLY change. ⭐ **LOOKED (L9-01…05)**, and looking caught three: the new Needs-you line said everything but WHEN; *"your settings take it now"* read as a fetch in progress; and **four real titles pushed the line's own button off the window** — the older *"not on jimaku yet"* line one title from the same. The mock draws both as a wrapping paragraph; both are `Flowing` now, with a geometry check each |
+
+### Step 9b — A subtitle named for the video, with no language, is read first
+
+**surfaces:** `logic`
+**Ruling (Sonic, 2026-09-23):** *"yes, but needs to not report falsely. I don't want this to
+be a big issue or feature, just a quick one that errs on the side of 'download' than not,
+but does check"*
+
+| | |
+| --- | --- |
+| **Build** | `present.Presence.find`: when no Japanese-NAMED sidecar is there, an UNTAGGED one with the video's exact stem and a text-subtitle extension is READ (bounded) — Japanese only on strong evidence, then *present* and the skip names the file and says its text is what said so · ⭐ anything uncertain (undecodable, short, mixed, not text) → **fetch, exactly as before** · only for Japanese: any other wanted language is never read |
+| **Test** | synthetic fixtures only — ⛔ never a jimaku body (`scan-content`): Japanese `.srt`/`.ass` in UTF-8, UTF-8-BOM, UTF-16 and cp932 · English · Chinese · Chinese+Japanese in one file · English with a Japanese song · too short · binary · a Japanese `.nfo` (not a subtitle) |
+| **Measured** | ✅ Over **163 real Japanese subtitles** (copies of Sonic's kept originals and download cache, read-only): at least **290** dialogue lines · kana in at least **0.65** of the lines · kana at least **0.68** of kana + kanji. The nearest wrong answers: Chinese + Japanese in one file **0.45** kana · English with a Japanese song **0.13** of lines · Chinese **0** · Chinese in GBK does not decode, and Big5 decodes as Shift-JIS into HALF-width katakana. ⭐ Set at **100 lines · 0.40 · 0.55**, a margin each side |
+| ✅ **Proof, 2026-09-23** | `present.reads_as_japanese` · 14 checks in `test_existing.py` §2b + one two-arm end-to-end (`test_endtoend.py`: Japanese inside → skipped, zero downloads, the reason says so; English inside → fetched) · **M9b 16/16** — ⚠ two survived the first run, both CHECK gaps: the folder is listed alphabetically, so the named file won before the untagged one was ever seen (both orders now), and a threshold check whose arms were computed FROM the constant moved with it (an absolute 60-line arm now) |
+
+### Step 9c — tsubasa reads `.jp` as Japanese
+
+**surfaces:** `logic` — **in tsubasa**, where the name reader lives (`LEDGER-HOT.md`: never a
+second parser here)
+
+| | |
+| --- | --- |
+| **Build** | tsubasa `sidecar.py`: `jp` → `ja`, whole token, case-folded like every other tag · its checks and mutant there · ⭐ measured against tsubasa's filename corpus before it lands (*"widen this only with a measurement"*) — `hato/tokens.py` already counts `jp` **18,228** times among the jimaku corpus's tokens |
+| ⛔ **Then** | tsubasa 0.1.8 is an **IRREVERSIBLE** publish — Sonic's go · after it, hato's floor → `>=0.1.8` and a present-check for `.jp` |
+| ✅ **Proof, 2026-09-23** | `tsubasa/sidecar.py` `_COUNTRY_AS_LANGUAGE = {"jp": "ja"}`. ⭐ **Measured before it landed** over the corpus's dev slice (the sealed slice never read): **271 of 17,790** real filenames move, every one `und` → `ja`, every one ending `.jp.<ext>` (248 `jp` · 22 `JP` · 1 `Jp`) — and **nothing else moves**. 3 checks in tsubasa's `test_sidecar.py` (every casing and shape, the slot, the position rule, the corpus measurement pinned) · both mutants killed in a scratch copy (`PYTHONDONTWRITEBYTECODE=1`) |
+| ✅ **Released, 2026-09-23** | ⭐ **tsubasa `v0.1.8`** = `5be457c`: CI 16/16, release 4/4, verified from the PUBLISHED bytes — PyPI install outside any checkout, and the downloaded zip (`SHA256SUMS` OK, smoke 44/0/0 on real media); two-arm against 0.1.7 on a real episode from the INSTALLED packages. **hato's half:** the floor `tsubasa-sync[parsing]>=0.1.8` (`test_packaging` refuses 0.1.7) · `test_existing` `test_the_country_code_jp_is_read_as_japanese_by_name` · `mutants/m9c.mjs` **2/2** — M9c-01 breaks `jp` at tsubasa's SOURCE in the scratch copy (a patch after import never reached it — `LEDGER.md` §harness) |
+
+### Step 9z — THE ADVERSARIAL PASS: RUN 2026-09-23 · closed on 9a, PARTIAL on 9b + 9c
+
+Two fresh agents, split by surface: **9a** — the format setting (config, ranking, the run,
+the window, an older hato reading the file) · **9b + 9c** — the untagged read and
+tsubasa's `.jp.`. ⛔ Nothing was edited while they ran: the fixes were built in a private
+copy (`%TEMP%\hato-s8\dev9`) and ported with a digest check that the vault had not moved.
+
+⚠ **9b + 9c's agent was STOPPED before it reported** (an interrupt), and is not resumed
+without Sonic's word. Its 24 probes on disk were triaged instead, every finding reproduced
+before it was fixed — so that half of the pass is **PARTIAL, and says so**.
+
+▶ **`ADVERSARY-2026-09-23.md` is the register: 22 fixed · 5 dropped · 2 deferred**, every
+`fixed` row naming its check and its mutants. `m9za` **48** · `m9zb` **3** · **14** older
+mutants re-aimed (M9a ×9, M3a ×2, M9b ×3) — **every one killed**.
+
+🚨 **The worst, both at SEAMS:** a **1.0.2 tray** was taken for this build — it already
+writes `retries` — so Settings said nothing while every run it started died on the new keys
+(9a-1: a new capability token, `formats`); and **a part of a large file was judged** — a
+4.5 MB `[CHS, JPN]` .ass read Japanese from its karaoke: a false *"already there"*, the one
+answer Sonic's ruling forbids (9b-1: never judge a part; read 16 MB).
+
+**Also:** *"offered"* meant any file, in any format, to the escalation and the archive pass
+(9a-2) · a re-sync wrote a format the person had stopped taking (9a-3) · a wait named only
+its commonest kind (9a-4) · five surfaces called a format wait *"not on jimaku"*, *"not
+found"*, a pick, or a download (9a-5…8) · one Needs-you line for refused and taken rows
+(9a-9) · a film's `.7z` offered as its subtitle (9a-10) · the look-again racing the write
+(9a-11) · a failed download called a timing refusal (9a-b2) · 9c turning a `.JP`-named
+video's own `.JP.srt` into a tagged file (9b-3).
+
+**Proof, as run:** the full runner over the vault **29 suites / 2,054 checks GREEN**, exit 0
+(`%TEMP%\hato-s8\d3\full-run-12.log`) · ⭐ **every Layer 9 mutant over the vault's own tree:
+94/94 killed** (M9za 48 · M9zb 3 · M9a 25 · M9b 16 · M3a-16/19; 8m 57s, `EXIT=0`,
+`mut-vault-9.log`) ·
+six screens re-shot and LOOKED (`L9-01…06`, the sixth new: refused and taken kinds on two
+lines).
+
+---
+
+## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.2`, 2026-09-23 (`v1.0.1`, 2026-09-19). ⛔ NO PyPI, RULED
+
+> ⭐ **`v1.0.2` IS LIVE AND EVERY GATE IS GREEN** — Layer 8, its adversarial pass and D2.
+> Tag `6a2cf25`: `tests` **12/12 jobs**, `release` **2/2**, suite 29 suites / 1,982 checks,
+> smoke **29/29** against the copy unpacked outside the repo, and the **published asset
+> downloaded and hash-verified** against the local artifact (`sha256 6dc4d797…72615`).
+> ⚠ **Its first push, `559f5ce`, was red on 11 of 12 jobs and was never tagged** — four
+> checks that assumed Windows and one REAL lock race (`LEDGER.md` §harness, *"IT DID NOT
+> TRAVEL AGAIN"*). ⭐ The full mutation gate over the released tree: **849/849** (53 min,
+> `EXIT=0`).
+
+> ⭐ **`v1.0.1` WENT LIVE WITH EVERY GATE GREEN** — `tests` 12/12 *(recorded as 13/13 until
+> 2026-09-23; the run has 12 jobs)*, `release` 2/2 with the
 > stamp gate passing for the first time, suite 27 suites / 1616 checks, smoke 20/20
 > against the copy unpacked outside the repo, and the **published asset downloaded and
 > hash-verified** against the local artifact. Tag `3114321`.

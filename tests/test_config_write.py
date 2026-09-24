@@ -47,9 +47,43 @@ def test_what_is_written_reads_back_as_the_same_settings(tmp_path):
 
 
 def test_every_schema_key_is_written_so_a_person_can_read_what_is_in_force(tmp_path):
+    u"""⚠ Every key but the ones an older hato has never heard of, at their
+    default -- the check below says why. Once set, those are written too."""
     text = config.dumps(load_from(tmp_path))
     for name in config.SCHEMA:
+        if name in config.NEWER_THAN_1_0_2:
+            continue
         assert (u"\n%s = " % name) in text, name
+    changed = config.with_changes(load_from(tmp_path), prefer_format=u"srt",
+                                  format_fallback=True)
+    text = config.dumps(changed)
+    for name in config.NEWER_THAN_1_0_2:
+        assert (u"\n%s = " % name) in text, name
+
+
+def test_a_file_written_with_the_format_settings_untouched_is_one_1_0_2_can_read(tmp_path):
+    u"""🚨 RUNBOOK 9a. An older hato REFUSES a key it does not know -- in every
+    version -- and a 1.0.2 tray re-reads this file on every tick and starts every
+    run with its own `hato-cli`. Written with `prefer_format` at its default, the
+    first setting a person changed in the 1.0.3 window would stop every run their
+    old tray, or a daily task pointing at an old copy, ever started.
+
+    Two arms against 1.0.2's key list, VERBATIM from its `config.py` -- ⚠ not
+    today's schema minus the new keys: today's parser READS the new keys, so
+    shrinking its schema tests neither version (measured: it raised KeyError).
+    Untouched, every key is one 1.0.2 knows; changed, one is not -- which is what
+    proves the rule is doing something, and why the tray needs a restart then.
+    """
+    from hato.config import _toml
+    known_to_1_0_2 = {"folders", "skip_folders", "lang", "out", "subs_dir", "candidates",
+                      "archives", "allow_ai", "recurse", "skip_embedded", "watch",
+                      "schedule", "surasura_dir", "log"}
+    fresh = config.with_changes(load_from(tmp_path), folders=[str(tmp_path / "Anime")],
+                                candidates=4)
+    untouched = set(_toml.loads(config.dumps(fresh)))
+    changed = set(_toml.loads(config.dumps(config.with_changes(fresh, prefer_format=u"srt"))))
+    assert untouched <= known_to_1_0_2, untouched - known_to_1_0_2          # arm 1
+    assert changed - known_to_1_0_2 == {"prefer_format"}                    # arm 2
 
 
 def test_the_writer_raises_when_the_schema_grows_a_key_it_does_not_carry(tmp_path):

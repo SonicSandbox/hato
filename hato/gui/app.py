@@ -122,6 +122,7 @@ except ImportError as _exc:                               # pragma: no cover
         "pip install PyQt6 -- hato itself does not need it, and `hato <folder>` "
         "works without a window (%s)" % _exc)
 
+from hato import formats
 from hato.gui import branding, theme
 from hato.gui import run as gui_run
 
@@ -345,6 +346,10 @@ class State(object):
         #: ⭐ RUNBOOK 7h. Empty means the integration is off, which is the
         #: default -- most people do not run surasura.
         self.surasura_dir = u""
+        #: ⭐ RUNBOOK 9a -- the format a person wants, and whether the other will
+        #: do. `config.toml`'s defaults: `.ass`, and the other kind never.
+        self.prefer_format = formats.DEFAULT_PREFERENCE
+        self.format_fallback = False
         self.key_hint = None
         #: ⭐ What jimaku said the last time a key was entered, and whether it
         #: worked. ⛔ Set ONLY on key entry -- Sonic: *"just on the key entry,
@@ -388,6 +393,14 @@ class State(object):
         self.watching = False
         #: ⭐ V1 -- a tray IS running, but an older one that keeps no promise.
         self.old_tray = False
+        #: ⭐ 9a -- False when a tray IS running whose runs cannot read the format
+        #: settings: every hato before this one, 1.0.2 included (ADVERSARY
+        #: 2026-09-23 #1). Read from its pid file on every look, like `old_tray`.
+        self.tray_reads_formats = True
+        #: ⭐ 9a -- config.toml itself carries `prefer_format` or `format_fallback`,
+        #: whatever their values: an older hato refuses the KEY, and a hand-written
+        #: `prefer_format = 'ass'` stopped its runs as surely as `'srt'`.
+        self.format_keys_in_file = False
         #: the soft and hard retry windows in days, as `hato problems` reports them.
         self.retry_days = 1
         self.hard_days = 30
@@ -586,6 +599,11 @@ class State(object):
             grouped[ident].append(row.get(u"episode"))
         return [(title, word, grouped[(title, word)]) for title, word in order]
 
+    def skipped_rows(self, title, word):
+        u"""The rows behind one `fully_skipped` line. -> [row] (the same rule)"""
+        return [row for row in self.rows if self.word(row) == word
+                and (row.get(u"title") or row.get(u"name") or u"") == title]
+
     def next_unresolved(self, after):
         u"""-> the key of the row that should open as `after` closes, or None.
 
@@ -648,6 +666,40 @@ QUIET_TIPS = {
     gui_run.ON_SKIP_LIST:
         u"You told hato to skip this one.",
 }
+
+#: 🚨 *"Waiting to retry"* IS THREE DIFFERENT WAITS, and `QUIET_TIPS` said the
+#: first one's sentence -- *"hato downloaded subtitles for this and none of them
+#: lined up"* -- over all three: a format wait, where nothing was downloaded, and
+#: an episode jimaku did not have yet (ADVERSARY 2026-09-23 #8). ⭐ `quiet_tip`
+#: picks by what the line's ROWS say.
+RETRY_TIPS = {
+    u"tried": QUIET_TIPS[gui_run.RETRYING],
+    u"format":
+        u"jimaku has this only in a format your settings do not take, so nothing "
+        u"was downloaded. hato looks again at the retry in case yours appears — "
+        u"Needs you can take the other format now.",
+    u"mixed":
+        u"hato looks for these again on its own. Needs you says why each one is "
+        u"waiting.",
+    # ⚠ CLAIMS NOTHING: no files on the row covers an episode jimaku lacks, a
+    # name with no episode number (the fix is a rename), and a refusal whose
+    # files are no longer remembered -- *"nothing was downloaded"* would be false
+    # of that last one. Needs you says which.
+    u"none":
+        u"hato looks for this again on its own. Needs you says why it is waiting.",
+}
+
+
+def quiet_tip(word, rows):
+    u"""The tooltip under one quiet line, from what ITS rows say. -> text or None
+
+    ⚠ Only *waiting to retry* varies: every other quiet word is one fact.
+    """
+    if word != gui_run.RETRYING:
+        return QUIET_TIPS.get(word)
+    kinds = set((u"format" if gui_run.is_format_wait(row)
+                 else u"tried" if gui_run.candidates_of(row) else u"none") for row in rows)
+    return RETRY_TIPS[kinds.pop() if len(kinds) == 1 else u"mixed"]
 
 
 def candidates(row):
@@ -1010,6 +1062,42 @@ class Check(QAbstractButton):
         painter.drawPolyline(QPoint(3, 7), QPoint(6, 10), QPoint(11, 4))
 
 
+class Radio(QAbstractButton):
+    u"""A radio, painted -- ONE OF SEVERAL, which is what a round box says.
+
+    ⭐ RUNBOOK 9a, the first choice of one-of-two in the window. The mock's own
+    `.radio input` rule: a circle, the accent ring and dot when chosen.
+    [!] PAINTED, because a native radio leaks Windows blue into this palette --
+    the mock's note on exactly this control. ⚠ Auto-exclusive: its siblings
+    under the same parent are one group, and clicking the chosen one keeps it.
+    """
+
+    BOX = 14
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setAutoExclusive(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(self.BOX, self.BOX)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        on = self.isChecked()
+        edge = QColor(theme.ACCENT if on else
+                      (theme.ACCENT_QUIET if self.underMouse() else theme.LINE_HI))
+        painter.setPen(QPen(edge, 1))
+        painter.setBrush(QColor(theme.BG))
+        painter.drawEllipse(QRectF(0.5, 0.5, self.BOX - 1, self.BOX - 1))
+        if not on:
+            return
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(theme.ACCENT))
+        painter.drawEllipse(QRectF(3.5, 3.5, self.BOX - 7, self.BOX - 7))
+
+
 class PulseDot(Styled):
     u"""The live dot on the footer. Pulses only while something is running.
 
@@ -1240,6 +1328,55 @@ def label(text, name=None, parent=None):
     if name:
         widget.setObjectName(name)
     return widget
+
+
+class Flowing(QLabel):
+    u"""A label that PREFERS one line and wraps only when it must. -> QLabel
+
+    🚨 LOOKED, 2026-09-23 (RUNBOOK 9a): four real titles on a Needs-you strip ran
+    past the window, and the strip's own button was cut at the edge with its info
+    dot gone. The ruled mock draws that line as a PARAGRAPH (`class="had"`), which
+    wraps; the Qt build laid it out as labels that could not.
+    ⚠ AND A PLAIN WRAPPED QLabel IS NOT THE FIX -- LOOKED, the same hour: Qt sizes
+    one to a narrow heuristic column, so four names became five lines beside a
+    screen of empty space. ⭐ This one's size hint is its text on ONE line: given
+    the room, it takes it and the button stays beside it; short of room, the
+    layout shrinks it and it wraps.
+    """
+
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.setObjectName(u"had")
+        self.setWordWrap(True)
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        margins = self.contentsMargins()
+        hint.setWidth(self.fontMetrics().horizontalAdvance(self.text())
+                      + margins.left() + margins.right() + 2)
+        return hint
+
+
+def _strip_row(box, lead, detail, action, dot=None):
+    u"""One Needs-you strip: its lead, the flowing detail, its button, its dot.
+
+    ⚠ TOP-ALIGNED, with the text padded down to the button's middle: centred, a
+    wrapped detail of four lines pulled the one-line lead and the button to its
+    middle, away from the words they belong to (LOOKED, 2026-09-23).
+    """
+    pad = max(0, (action.sizeHint().height() - lead.fontMetrics().height()) // 2)
+    for text in (lead, detail):
+        text.setContentsMargins(0, pad, 0, 0)
+        box.addWidget(text, 0, Qt.AlignmentFlag.AlignTop)
+    box.addWidget(action, 0, Qt.AlignmentFlag.AlignTop)
+    if dot is not None:
+        holder = QWidget(action.parentWidget())
+        column = QVBoxLayout(holder)
+        column.setContentsMargins(
+            0, max(0, (action.sizeHint().height() - dot.sizeHint().height()) // 2), 0, 0)
+        column.addWidget(dot)
+        box.addWidget(holder, 0, Qt.AlignmentFlag.AlignTop)
+    box.addStretch(1)
 
 
 def paragraph(text, parent=None):
@@ -2333,9 +2470,9 @@ class HatoWindow(Styled):
             column.addWidget(self._quiet(
                 title if not tail else u"%s · %s" % (title, tail),
                 u"— %s" % word,
-                tip=QUIET_TIPS.get(word, u"Nothing was requested for %d video%s."
-                                   % (len(episodes),
-                                      u"" if len(episodes) == 1 else u"s"))))
+                tip=quiet_tip(word, state.skipped_rows(title, word))
+                or u"Nothing was requested for %d video%s."
+                % (len(episodes), u"" if len(episodes) == 1 else u"s")))
 
         #: [!] ZERO ROWS IS A REAL STATE, AND THREE DIFFERENT ONES -- a settled
         #: library, an empty folder, or nothing pairable. It must not look
@@ -2644,8 +2781,25 @@ class HatoWindow(Styled):
             box.addStretch(1)
             column.addWidget(strip)
 
-        not_yet = [r for r in problems if gui_run.problem_kind(r) == gui_run.WAITING
+        waiting = [r for r in problems if gui_run.problem_kind(r) == gui_run.WAITING
                    and not r.get(u"waiting_by_choice")]
+        # ⭐ 9a -- AN EPISODE ONLY IN THE OTHER FORMAT IS ON JIMAKU. ⛔ Never folded
+        # into "not on jimaku yet", which would be false of every one of them.
+        # ⚠ AND TWO LINES, NOT ONE: an episode the settings still refuse, and one
+        # they take now (the person changed them since the wait was recorded).
+        # One line said the blocked sentence of both -- *"you prefer .srt"* over
+        # an episode that IS `.srt` -- and offered to download the kind they had
+        # just chosen (ADVERSARY 2026-09-23 #9).
+        other_format = [r for r in waiting if gui_run.is_format_wait(r)]
+        not_yet = [r for r in waiting if not gui_run.is_format_wait(r)]
+        blocked = [r for r in other_format if not formats.accepts_any(
+            formats.only_as(r.get(u"reason")), state.prefer_format, state.format_fallback)]
+        taken = [r for r in other_format if formats.accepts_any(
+            formats.only_as(r.get(u"reason")), state.prefer_format, state.format_fallback)]
+        if blocked:
+            column.addWidget(self._other_format_strip(blocked, host, now))
+        if taken:
+            column.addWidget(self._taken_format_strip(taken, host))
         if not_yet:
             names = u", ".join(episode_name(row) for row in not_yet[:4])
             strip = Styled(host, u"quiet")
@@ -2659,7 +2813,6 @@ class HatoWindow(Styled):
             #: [!] `setProperty` ALONE IS INVISIBLE -- a selector that has
             #: already been polished never re-evaluates. `mark` repolishes.
             mark(lead, u"kind", u"notfound")
-            box.addWidget(lead)
             # ⭐ THE REAL WAIT, NOT "TOMORROW" (4b). The soonest of them, said the
             # way `retry_text` says it: a promise only when the tray will keep it.
             soonest = min((gui_run.retry_due(r) for r in not_yet
@@ -2667,9 +2820,8 @@ class HatoWindow(Styled):
             when = gui_run.retry_text({u"retry_after": soonest.isoformat()},
                                       now, state.watching,
                                       state.daily()) if soonest else u""
-            box.addWidget(label(
-                u"— %s%s" % (names, u" · %s" % when if when else u""),
-                u"had", strip))
+            # ⚠ A LIST OF NAMES, SO IT FLOWS (`Flowing`, LOOKED 2026-09-23).
+            detail = Flowing(u"— %s%s" % (names, u" · %s" % when if when else u""), strip)
             # ⭐ AND THE MANUAL CHOICE, ONE CLICK AWAY -- `05-interface.md`'s
             # *"unless prompted is a Retry on one row"*, which was never built.
             again = button(u"Look again now", strip)
@@ -2680,10 +2832,9 @@ class HatoWindow(Styled):
             again.clicked.connect(
                 lambda _c=False, rs=list(not_yet): self.look_again(rs))
             self._not_while_running(again)
-            box.addWidget(again)
             # ⚠ BOTH WAITS. A show jimaku has no entry for at all waits 30 days,
             # and sat under a tooltip saying 24 hours (ADVERSARY 2026-09-22 A17).
-            box.addWidget(info_dot(
+            dot = info_dot(
                 u"A just-aired episode usually has no subtitle for hours or "
                 u"days. hato waits %s before asking again about an episode jimaku "
                 u"has no file for yet — and %s when jimaku has no entry for the "
@@ -2695,8 +2846,8 @@ class HatoWindow(Styled):
                    u"\n\nhato is not in the tray, so the daily run at %s asks "
                    u"again — or Look again now." % state.schedule if state.auto else
                    u"\n\nhato is not in the tray, so nothing asks again on its "
-                   u"own — the next run does, or Look again now."), strip))
-            box.addStretch(1)
+                   u"own — the next run does, or Look again now."), strip)
+            _strip_row(box, lead, detail, again, dot)
             column.addWidget(strip)
 
         broken = [r for r in problems if gui_run.problem_kind(r) == gui_run.TROUBLE]
@@ -2725,7 +2876,7 @@ class HatoWindow(Styled):
                 box.addWidget(label(u"— and %d more" % (len(broken) - 4), u"had", strip))
             column.addWidget(strip)
 
-        if not rows and not chosen and not not_yet and not broken:
+        if not rows and not chosen and not waiting and not broken:
             column.addWidget(self._empty(
                 u"Nothing needs you.",
                 u"Episodes hato could not settle on its own land here."))
@@ -2847,6 +2998,84 @@ class HatoWindow(Styled):
         box.addStretch(1)
         return strip
 
+    def _other_format_strip(self, rows, host, now):
+        u"""⭐ 9a -- the episodes waiting because jimaku has them only in a format
+        the person's settings do not take. -> QWidget
+
+        ⭐ SAY IT WAS HANDLED, SAY WHEN IT RESOLVES, KEEP THE CHOICE ONE CLICK
+        AWAY (`workflows/build-ui.md`, FROZEN): what jimaku has, what they
+        prefer, when hato looks again, and a button that IS the Settings
+        checkbox. ⚠ Only BLOCKED rows reach here, so the button names only kinds
+        the settings refuse; a row the settings take now is
+        `_taken_format_strip`'s (ADVERSARY 2026-09-23 #9).
+        """
+        state = self.state
+        offered = formats.kinds_words(
+            kind for r in rows for kind in formats.only_as(r.get(u"reason")) or ())
+        strip = Styled(host, u"quiet")
+        box = QHBoxLayout(strip)
+        box.setContentsMargins(PAD, 14, PAD, 8)
+        box.setSpacing(8)
+        lead = label(u"%d episode%s only on jimaku as %s"
+                     % (len(rows), u" is" if len(rows) == 1 else u"s are", offered),
+                     u"hadb", strip)
+        mark(lead, u"kind", u"notfound")
+        names = u", ".join(episode_name(row) for row in rows[:4])
+        soonest = min((gui_run.retry_due(r) for r in rows
+                       if gui_run.retry_due(r) is not None), default=None)
+        when = gui_run.retry_text({u"retry_after": soonest.isoformat()}, now,
+                                  state.watching, state.daily()) if soonest else u""
+        detail = Flowing(u"— %s · you prefer .%s%s"
+                         % (names, state.prefer_format, u" · %s" % when if when else u""),
+                         strip)
+        take = button(u"Download %s instead" % offered, strip)
+        take.setToolTip(wrap(
+            u"Turns on “%s” in Settings, and looks for these now. From then on, "
+            u"an episode with no .%s gets another format."
+            % (formats.fallback_words(state.prefer_format), state.prefer_format)))
+        take.clicked.connect(lambda _c=False, rs=list(rows): self.take_other_format(rs))
+        said = (u"jimaku has %s, but only as %s, and “%s” is off in Settings — so "
+                u"hato did not download %s. It looks again at the retry in case a .%s "
+                u"appears.\n\nDownload %s instead turns that setting on and fetches %s now."
+                % (u"this episode" if len(rows) == 1 else u"these episodes", offered,
+                   formats.fallback_words(state.prefer_format),
+                   u"it" if len(rows) == 1 else u"them", state.prefer_format,
+                   offered, u"it" if len(rows) == 1 else u"them"))
+        self._not_while_running(take)
+        _strip_row(box, lead, detail, take, info_dot(said, strip))
+        return strip
+
+    def _taken_format_strip(self, rows, host):
+        u"""⭐ 9a -- episodes that waited for their format, and the settings take it
+        NOW (the person changed them since). -> QWidget
+
+        ⚠ Said apart from the blocked ones (ADVERSARY 2026-09-23 #9). ⛔ Not "now"
+        and not the retry date: the gate looks past such a wait at hato's NEXT run,
+        whenever that is -- LOOKED, 2026-09-23, *"your settings take it now"* read as
+        a fetch in progress. The button does it straight away.
+        """
+        strip = Styled(host, u"quiet")
+        box = QHBoxLayout(strip)
+        box.setContentsMargins(PAD, 14, PAD, 8)
+        box.setSpacing(8)
+        offered = formats.kinds_words(
+            kind for r in rows for kind in formats.only_as(r.get(u"reason")) or ())
+        lead = label(u"%d episode%s on jimaku as %s"
+                     % (len(rows), u" is" if len(rows) == 1 else u"s are", offered),
+                     u"hadb", strip)
+        mark(lead, u"kind", u"notfound")
+        names = u", ".join(episode_name(row) for row in rows[:4])
+        detail = Flowing(u"— %s · allowed by your settings now · fetched at hato's "
+                         u"next run" % names, strip)
+        take = button(u"Look again now", strip)
+        take.clicked.connect(lambda _c=False, rs=list(rows): self.look_again(rs))
+        said = (u"These waited because jimaku has them only as %s, and your settings "
+                u"now take that — so the wait ends at hato's next run. Look again now "
+                u"fetches %s straight away." % (offered, u"it" if len(rows) == 1 else u"them"))
+        self._not_while_running(take)
+        _strip_row(box, lead, detail, take, info_dot(said, strip))
+        return strip
+
     def _toggle_pick(self, key):
         u"""[*] ONE OPEN AT A TIME. The accordion is a single value."""
         self.state.open_pick = None if self.state.open_pick == key else key
@@ -2873,6 +3102,7 @@ class HatoWindow(Styled):
 
         stack.addWidget(self._card_when(holder))
         stack.addWidget(self._card_folders(holder))
+        stack.addWidget(self._card_format(holder))
         stack.addWidget(self._card_key(holder))
         stack.addWidget(self._card_skips(holder))
         stack.addWidget(self._card_blacklist(holder))
@@ -3178,6 +3408,84 @@ class HatoWindow(Styled):
         line.addWidget(label(u"look inside subfolders", u"hint", tail))
         line.addStretch(1)
         body.addWidget(tail)
+        return card
+
+    def _card_format(self, parent):
+        u"""⭐ RUNBOOK 9a -- which format, and whether the other one will do.
+
+        Sonic, 2026-09-23: *"i want setting that asks for preference between the
+        two, but OFF by default is download if the other type doesn't exist."*
+        ⛔ The fallback's words are `formats.fallback_words` -- the same sentence
+        a waiting row and the Needs-you button say, so each points at the other.
+        """
+        card, body = self._card(u"Subtitle format", parent)
+        state = self.state
+        top = QWidget(card)
+        line = QHBoxLayout(top)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(8)
+        line.addWidget(label(u"Prefer", None, top))
+        for fmt in formats.PREFERENCES:
+            radio = Radio(top)
+            radio.setChecked(state.prefer_format == fmt)
+            radio.clicked.connect(lambda _c=False, f=fmt: self._set_prefer(f))
+            line.addSpacing(6)
+            line.addWidget(radio)
+            line.addWidget(label(u".%s" % fmt, None, top))
+        line.addStretch(1)
+        body.addWidget(top)
+
+        other = [f for f in formats.PREFERENCES if f != state.prefer_format][0]
+        row = QWidget(card)
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(10)
+        box = Check(row)
+        box.setChecked(state.format_fallback)
+        box.clicked.connect(self._toggle_fallback)
+        line.addWidget(box, 0, Qt.AlignmentFlag.AlignTop)
+        pair = QWidget(row)
+        words = QHBoxLayout(pair)
+        words.setContentsMargins(0, 0, 0, 0)
+        words.setSpacing(5)
+        words.addWidget(label(formats.fallback_words(state.prefer_format), None, pair))
+        words.addWidget(label(u"· off: waits for .%s" % state.prefer_format, u"hint", pair))
+        words.addWidget(info_dot(
+            u"jimaku often has an episode in both formats, and hato tries the "
+            u".%s first either way.\n\n"
+            u"With this off hato downloads only .%s: an episode jimaku has only as "
+            u".%s — or as another format, like .vtt — waits, says so in Needs you, "
+            u"and is looked for again a day later in case a .%s appears. On, the "
+            u".%s comes first and anything else after it.\n\n"
+            u"The timing check still decides which file fits your copy."
+            % (state.prefer_format, state.prefer_format, other, state.prefer_format,
+               state.prefer_format), pair))
+        words.addStretch(1)
+        line.addWidget(pair, 1)
+        body.addWidget(row)
+        if (state.old_tray or not state.tray_reads_formats) and (
+                state.prefer_format != formats.DEFAULT_PREFERENCE
+                or state.format_fallback or state.format_keys_in_file):
+            # 🚨 AN OLDER hato CANNOT READ THESE TWO -- it refuses a setting it has
+            # never heard of, so every run the old tray starts stops at the file
+            # (`config.NEWER_THAN_1_0_2`). Said here, with the one fix.
+            # ⚠ ANY tray without `formats` -- 1.0.2 has `retries` and is not
+            # `old_tray` -- and whenever the KEYS are in the file, whatever their
+            # values: a hand-written default is refused as surely (ADVERSARY
+            # 2026-09-23 #1).
+            old = QWidget(card)
+            pair = QHBoxLayout(old)
+            pair.setContentsMargins(0, 2, 0, 0)
+            pair.setSpacing(8)
+            said = label(u"The hato in your tray is an older version and cannot read "
+                         u"this setting — its runs stop until it is restarted.",
+                         u"hint", old)
+            said.setWordWrap(True)
+            pair.addWidget(said, 1)
+            restart = button(u"Restart the tray", old)
+            restart.clicked.connect(self.restart_watcher)
+            pair.addWidget(restart)
+            body.addWidget(old)
         return card
 
     def _card_key(self, parent):
@@ -3536,10 +3844,13 @@ class HatoWindow(Styled):
             # 14h"* is a promise only while a tray that KEEPS it is running (8h,
             # V1); read from the world on every look, never from the Settings tick.
             watching, old = self.tray_is_watching(), self.tray_is_old()
+            reads = self.tray_reads_formats()
             changed = (int(self.state.queued_in) != was
                        or watching != self.state.watching
-                       or old != self.state.old_tray)
+                       or old != self.state.old_tray
+                       or reads != self.state.tray_reads_formats)
             self.state.watching, self.state.old_tray = watching, old
+            self.state.tray_reads_formats = reads
             # ⭐ A DATE PASSES WITH NOTHING ELSE CHANGING (ADVERSARY 2026-09-22
             # A16). An open window held a waited row hidden past its date, and
             # *"retrying in 30m"* read the same five hours later. Once a minute,
@@ -4384,11 +4695,28 @@ class HatoWindow(Styled):
         except Exception:                     # noqa: BLE001
             return False
 
+    @staticmethod
+    def tray_reads_formats():
+        u"""-> False when a tray IS running whose runs cannot read the format
+        settings (9a). No tray, or one that says `formats`, -> True.
+
+        🚨 ITS OWN TOKEN. 1.0.2 already says `retries`, so `tray_is_old` answers
+        *current* for it -- and every run it started died on `prefer_format` with
+        no word from Settings (ADVERSARY 2026-09-23 #1).
+        """
+        try:
+            from hato import watch as _watch
+            caps = _watch.watching_capabilities()
+            return caps is None or u"formats" in caps
+        except Exception:                     # noqa: BLE001 -- a guess must not crash
+            return True
+
     def restart_watcher(self):
         u"""⭐ V1 -- replace an older tray with this build's. -> the argv, or None."""
         self.stop_watcher()
         argv = self.start_watcher()
         self.state.old_tray = False
+        self.state.tray_reads_formats = True
         self.render()
         return argv
 
@@ -4445,6 +4773,65 @@ class HatoWindow(Styled):
             u"--set", u"recurse=%s" % (u"true" if self.state.recurse
                                        else u"false")))
         self.render()
+
+    def _set_prefer(self, fmt):
+        u"""⭐ 9a -- the format tried first, and the only one taken with the
+        fallback off."""
+        if fmt == self.state.prefer_format:
+            return
+        self.state.prefer_format = fmt
+        self.spawn(gui_run.argv_for_config(u"--set", u"prefer_format=%s" % fmt))
+        # ⚠ The writer rewrites the file and keeps these keys only away from their
+        # defaults (`config.dumps`) -- so from here the VALUES say what is in it.
+        self.state.format_keys_in_file = False
+        self.render()
+
+    def _toggle_fallback(self):
+        u"""⭐ 9a -- whether the OTHER format is downloaded when the preferred
+        one is not on jimaku. ⚠ Takes effect at the next run: the wait an
+        episode was given for its format ends when this allows it."""
+        self.state.format_fallback = not self.state.format_fallback
+        self.spawn(gui_run.argv_for_config(
+            u"--set", u"format_fallback=%s" % (u"true" if self.state.format_fallback
+                                               else u"false")))
+        self.state.format_keys_in_file = False       # ⚠ as `_set_prefer`
+        self.render()
+
+    def take_other_format(self, rows):
+        u"""⭐ 9a, from Needs you -- turn the fallback ON and look for these now.
+
+        ⛔ NOT a way round the setting: it IS the setting, and the button says
+        so. The look-again is what makes it take effect in the next seconds
+        rather than at the next run.
+
+        🚨 AND THE LOOK WAITS FOR THE WRITE (ADVERSARY 2026-09-23 #11, suspected,
+        0 of 6 by a race). A run reads config.toml as it starts, and the two were
+        started back to back: a run that read first would find the same wait
+        again. `set_key`'s *WAIT FOR THE WRITE*, the same class -- ⭐ through
+        `_read`, so the window does not block while it waits.
+        """
+        rows = list(rows or ())
+        if self.state.format_fallback:
+            return self.look_again(rows)
+        self.state.format_fallback = True
+        self.render()
+        return self._read(gui_run.argv_for_config(u"--set", u"format_fallback=true"),
+                          lambda finished, _events: self.fallback_written(finished, rows))
+
+    def fallback_written(self, finished, rows):
+        u"""`take_other_format`'s write has exited. -> the look-again's argv, or None.
+
+        ⛔ A write that failed looks again at nothing -- the run would read the old
+        setting and re-find the same wait -- and the checkbox goes back to what
+        the file says, with the sentence that says why.
+        """
+        if finished is not None and finished.code == gui_run.EXIT_CLEAN:
+            return self.look_again(rows)
+        self.state.format_fallback = False
+        self.state.live = (u"“%s” could not be saved, so nothing was fetched"
+                           % formats.fallback_words(self.state.prefer_format))
+        self.render()
+        return None
 
     def _set_schedule(self):
         u"""A new time: kept in the config, and -- ⭐ D2 -- given to the task.
@@ -4879,6 +5266,12 @@ def settings_from_disk(state=None):
         state.watch = cfg.watch
         state.schedule = cfg.schedule
         state.surasura_dir = cfg.surasura_dir
+        state.prefer_format = cfg.prefer_format
+        state.format_fallback = cfg.format_fallback
+        # ⭐ 9a -- whether the FILE carries either key, which is what an older
+        # hato refuses, whatever the value (ADVERSARY 2026-09-23 #1).
+        state.format_keys_in_file = any(cfg.origin(name) == u"config.toml"
+                                        for name in _config.NEWER_THAN_1_0_2)
     except (_config.ConfigError, paths.PathError) as exc:
         # ⛔ NOT SWALLOWED. A config hato refuses is why the settings look
         # empty, and a window that opened on silent defaults would be telling
@@ -4948,6 +5341,7 @@ def main(argv=None):
     # there to keep a promised retry (8h). Read, never assumed.
     window.state.watching = window.tray_is_watching()
     window.state.old_tray = window.tray_is_old()       # V1 -- an older tray keeps nothing
+    window.state.tray_reads_formats = window.tray_reads_formats()   # 9a #1
     window.state.waits = gui_run.load_waits()          # 4c -- the waits chosen before
     window.refresh_problems()
     window.refresh_blacklist()

@@ -32,8 +32,8 @@ from pathlib import Path
 import pytest
 import tsubasa
 
-from hato import cache as cache_module, client as client_module, credentials, keep, \
-    pipeline, port, present, resolution, state
+from hato import archives, cache as cache_module, client as client_module, config, \
+    credentials, formats, keep, pipeline, port, present, resolution, state
 from hato import report as report_module
 from hato.cache import Cache
 
@@ -174,8 +174,13 @@ class Lab(object):
     # -- driving -----------------------------------------------------------
 
     def settings(self, **overrides):
+        # ⚠ `format_fallback=True`, SAID OUT LOUD. Every check here but section 9a's
+        # is about something else -- the cap, a film, an archive -- and was written
+        # when every format was tried. The product default is OFF (RUNBOOK 9a), so
+        # these would otherwise be measuring the format rule by accident: three
+        # went red the moment it landed. 9a's own checks pass it explicitly.
         values = dict(folders=[self.media], lang=u"ja", subs_dir=self.subs,
-                      candidates=3)
+                      candidates=3, format_fallback=True)
         values.update(overrides)
         return pipeline.Settings(**values)
 
@@ -454,14 +459,18 @@ def test_a_low_confidence_identification_raises_the_cap(tmp_path):
     assert len(lab.downloads) == 1 + pipeline.LOW_CONFIDENCE_EXTRA
 
 
-def test_a_movie_entry_offers_every_file_to_the_one_film(tmp_path):
-    u"""06 §3, RULED: ⛔ skip episode matching entirely."""
+def test_a_movie_entry_offers_every_subtitle_to_the_one_film(tmp_path):
+    u"""06 §3, RULED: ⛔ skip episode matching entirely. ⚠ Every SUBTITLE: the
+    entry's `.sup.7z` is not one (ADVERSARY 2026-09-23 #10)."""
     lab = Lab(tmp_path, names=[u"Kimi no Na wa.mkv"])
     report = lab.run(candidates=1)
 
+    listed = json.loads((FIXTURES / "api" / "entries_movie_flag.json").read_text(encoding="utf-8"))
+    packs = [f for f in listed if archives.is_archive(f["name"])]
+    assert packs, u"the recorded movie entry is expected to carry an archive"
     assert report.shows[0].resolved.movie is True
-    assert report.results[0].candidates_offered == len(
-        json.loads((FIXTURES / "api" / "entries_movie_flag.json").read_text(encoding="utf-8")))
+    assert report.results[0].candidates_offered == len(listed) - len(packs)
+    assert not [n for n in lab.downloads if archives.is_archive(n)], lab.downloads
 
 
 # ---------------------------------------------------------------------------
@@ -2307,3 +2316,456 @@ def test_a_run_inside_the_retry_window_carries_the_same_facts_as_hatos_memory(tm
     assert said[u"candidates_offered"] is None, (
         u"a run that never listed the entry said it offered %r files"
         % said[u"candidates_offered"])
+
+
+# ---------------------------------------------------------------------------
+# ⭐ 9a -- the person's format, RULED 2026-09-23
+# ---------------------------------------------------------------------------
+# *"even if you prefer one, if it isn't checked, then it won't download the
+# other kind."* The recorded list offers every episode in BOTH formats, so an
+# episode offered in one only is made by cutting the list -- everything metered
+# is still the real client over the real recording.
+
+class OneFormat(ListForAnyEntry):
+    u"""DERIVED: the recorded file list, cut to one format."""
+
+    def __init__(self, inner, ext):
+        ListForAnyEntry.__init__(self, inner)
+        self.ext = ext
+
+    def files(self, entry_id):
+        self.entries.append(entry_id)
+        return [f for f in self._inner.files(entry_id)
+                if f["name"].lower().endswith(u"." + self.ext)]
+
+
+def test_with_the_fallback_off_an_episode_only_in_the_other_format_is_not_downloaded(
+        tmp_path):
+    u"""⛔ NOTHING downloaded, and the reason says it IS on jimaku -- never *"has
+    no file for this episode"*, which would be false. A wait all the same: the
+    preferred kind may yet be uploaded."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    lab.client = OneFormat(lab.real, u"srt")
+    row, = lab.run(format_fallback=False).results
+
+    assert row.outcome == pipeline.NOT_FOUND and lab.downloads == [], (row, lab.downloads)
+    assert row.reason.startswith(u"only as .srt on jimaku -- you prefer .ass"), row.reason
+    assert u"If there is no .ass, download .srt" in row.reason
+    assert u"has no file for this episode" not in row.reason
+    assert row.retry_after is not None
+    waiting = lab.db.negative(lab.hash_of(u"frieren S2 - 01.mkv"), u"ja")
+    assert formats.only_as(waiting.reason) == (u"srt",), waiting.reason
+
+
+def test_turning_the_fallback_on_takes_it_at_the_next_run_not_tomorrow(tmp_path):
+    u"""⭐ THE SWITCH MUST DO SOMETHING. The wait was recorded because every file
+    was the other kind; a person who turns the fallback on and is told
+    *"tomorrow"* has a setting that did nothing. Two arms, the same hour: left
+    off, the wait stands (zero requests); turned on, the .srt is fetched."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    lab.client = OneFormat(lab.real, u"srt")
+    lab.run(format_fallback=False)
+    lab.now[0] += timedelta(hours=1)
+
+    still, = lab.run(format_fallback=False).results                     # arm 1
+    assert still.skip == pipeline.NEGATIVE and lab.downloads == [], still
+    assert lab.spent == 0
+
+    taken, = lab.run(format_fallback=True).results                      # arm 2
+    assert taken.outcome == pipeline.CONFIDENT, taken.reason
+    assert lab.downloads and all(n.endswith(u".srt") for n in lab.downloads), lab.downloads
+
+
+def test_choosing_the_other_preference_takes_it_too(tmp_path):
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    lab.client = OneFormat(lab.real, u"srt")
+    lab.run(format_fallback=False)
+    lab.now[0] += timedelta(hours=1)
+    taken, = lab.run(prefer_format=u"srt", format_fallback=False).results
+    assert taken.outcome == pipeline.CONFIDENT, taken.reason
+
+
+def test_a_wait_for_anything_else_is_not_ended_by_the_format_setting(tmp_path):
+    u"""⛔ Only the format wait is looked past. Episode 24 is not on jimaku at
+    all; turning the fallback on changes nothing about that, and must not spend
+    a request finding out again."""
+    lab = Lab(tmp_path, names=[u"frieren S2 - 24.mkv"])
+    first, = lab.run(format_fallback=False).results
+    assert first.outcome == pipeline.NOT_FOUND and formats.only_as(first.reason) is None
+    lab.now[0] += timedelta(hours=1)
+    again, = lab.run(format_fallback=True).results
+    assert again.skip == pipeline.NEGATIVE and lab.spent == 0, again
+
+
+def test_with_the_fallback_off_only_the_preferred_kind_is_ever_tried(tmp_path):
+    u"""The whole list, both kinds, every candidate refused: with the fallback off
+    only `.ass` files were downloaded; ON -- the control -- the `.srt` ones follow
+    them, in 1.0.2's order. And with `.srt` preferred it is `.srt` only."""
+    for fallback, prefer, allowed in ((False, u"ass", (u".ass",)),
+                                      (True, u"ass", (u".ass", u".srt")),
+                                      (False, u"srt", (u".srt",))):
+        lab = Lab(tmp_path / (u"%s-%s" % (prefer, fallback)), names=episodes_up_to(1))
+        refuse_everything(lab)
+        lab.run(candidates=5, prefer_format=prefer, format_fallback=fallback)
+        kinds = [os.path.splitext(n)[1] for n in lab.downloads]
+        assert kinds and set(kinds) == set(allowed), (prefer, fallback, lab.downloads)
+        assert kinds[0] == allowed[0], (prefer, fallback, lab.downloads)
+
+
+def test_the_plan_never_counts_the_other_format_as_not_on_jimaku(tmp_path):
+    u"""`--dry-run`'s summary line. Two arms: only `.srt` on offer -> *"only in the
+    other format"*; episode 24, which jimaku really lacks -> *"not on jimaku"*."""
+    lab = Lab(tmp_path / u"srt-only", names=episodes_up_to(1))
+    def plan_of(report):
+        # ⚠ FLAT: the plan wraps, and a phrase split across two indented lines is
+        # a check asserting the wrapping as well as the words.
+        return u" ".join(u" ".join(report_module.render_plan(report)).split())
+
+    lab.client = OneFormat(lab.real, u"srt")
+    plan = plan_of(lab.run(format_fallback=False, dry_run=True))
+    assert u"1 only in the other format" in plan and u"not on jimaku" not in plan, plan
+
+    lab = Lab(tmp_path / u"missing", names=[u"frieren S2 - 24.mkv"])
+    plan = plan_of(lab.run(format_fallback=False, dry_run=True))
+    assert u"1 not on jimaku" in plan and u"other format" not in plan, plan
+
+
+def test_the_format_settings_reach_the_run_from_config_toml(tmp_path):
+    u"""The road a real run takes: `config.toml` -> `Settings.from_config`."""
+    cfg = config.parse(u"folders = ['%s']\nprefer_format = 'srt'\nformat_fallback = true\n"
+                       % str(tmp_path).replace(u"\\", u"/"))
+    s = pipeline.Settings.from_config(cfg)
+    assert (s.prefer_format, s.format_fallback) == (u"srt", True)
+    s = pipeline.Settings.from_config(config.parse(u"folders = ['%s']\n"
+                                                   % str(tmp_path).replace(u"\\", u"/")))
+    assert (s.prefer_format, s.format_fallback) == (u"ass", False)
+
+
+# ---------------------------------------------------------------------------
+# ⭐ 9a's adversarial pass, 2026-09-23 -- `ADVERSARY-2026-09-23.md`, one check
+# per finding, each shaped as the adversary's own probe was
+# ---------------------------------------------------------------------------
+
+class WrongEntryOnlySrt(ListForAnyEntry):
+    u"""DERIVED: every other entry answers with the capture's `.srt` files,
+    RENAMED -- a wrong season's entry that happens to carry only `.srt`, while
+    the right one (the runner-up) carries the `.ass`."""
+
+    def files(self, entry_id):
+        self.entries.append(entry_id)
+        real = self._inner.files(ENTRY)
+        if entry_id == ENTRY:
+            return real
+        return [dict(f, name=WRONG_SEASON + f["name"]) for f in real
+                if f["name"].lower().endswith(u".srt")]
+
+
+def test_an_entry_offering_only_the_other_format_is_escalated_past(tmp_path):
+    u"""🚨 #2a -- with the fallback off the wrong season's `.srt` counted as an
+    OFFER: nothing escalated, the wait described the wrong season's files, and
+    the wrong entry was still the one cached two days later. Two arms, one
+    library: ON (the control) tries the `.srt`, is refused, and moves on; OFF
+    now moves on without downloading any of it."""
+    for fallback in (True, False):
+        lab = Lab(tmp_path / (u"fallback-%s" % fallback), names=[u"frieren - 31.mkv"])
+        lab.client = WrongEntryOnlySrt(lab.real)
+        lab.decide = lambda name: (
+            {"outcome": port.REFUSED, "reason": u"the timing does not hold"}
+            if name.startswith(WRONG_SEASON) else {"outcome": port.CONFIDENT})
+        report = lab.run(candidates=2, format_fallback=fallback)
+        row, = report.results
+        show, = report.shows
+        assert lab.client.entries[0] != ENTRY, u"the wrong entry has to be tried FIRST"
+        assert row.outcome == pipeline.CONFIDENT and row.output_path.endswith(u".ass"), (
+            fallback, row.outcome, row.reason)
+        assert lab.resolutions.get(resolution.cache_key(u"frieren")).entry_id == ENTRY, fallback
+    assert not [n for n in lab.downloads if n.startswith(WRONG_SEASON)], lab.downloads
+    assert [n for n in show.notes if u"in a format your settings take" in n], show.notes
+
+
+class OnlySrtEverywhere(ListForAnyEntry):
+    u"""DERIVED: every entry answers with the capture's `.srt` files, nothing else."""
+
+    def files(self, entry_id):
+        self.entries.append(entry_id)
+        return [f for f in self._inner.files(ENTRY) if f["name"].lower().endswith(u".srt")]
+
+
+def test_an_alternate_offering_only_the_other_format_is_not_adopted_either(tmp_path):
+    u"""#2a's other half: LOOKING at the next entry is right, ADOPTING one that also
+    offers only the other format is not -- the cache would be repointed at an entry
+    no better than the first. Every entry here has only `.srt`: the run looks,
+    adopts nothing, and waits on the entry it identified."""
+    lab = Lab(tmp_path, names=[u"frieren - 31.mkv"])
+    lab.client = OnlySrtEverywhere(lab.real)
+    report = lab.run(format_fallback=False)
+    row, = report.results
+    show, = report.shows
+    first = lab.client.entries[0]
+    assert first != ENTRY and ENTRY in lab.client.entries, (
+        u"the alternate has to be LOOKED at, or this proves nothing", lab.client.entries)
+    assert row.outcome == pipeline.NOT_FOUND and formats.only_as(row.reason) == (u"srt",), (
+        row.outcome, row.reason)
+    assert lab.resolutions.get(resolution.cache_key(u"frieren")).entry_id == first
+    assert not [n for n in show.notes if u"held nothing" in n], show.notes
+
+
+def _pack(member, body):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(member, body)
+    return buf.getvalue()
+
+
+ASS_BODY = (u"[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer, Start, End, "
+            u"Style, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,日本語\n").encode("utf-8")
+SRT_BODY = u"1\n00:00:01,000 --> 00:00:03,000\n日本語\n\n".encode("utf-8")
+
+
+class ArchiveAndPlain(OneArchiveOnTheEntry):
+    u"""DERIVED: one batch archive AND these plain files on the entry."""
+
+    def __init__(self, inner, blob, plain):
+        OneArchiveOnTheEntry.__init__(self, inner, blob)
+        self.plain = list(plain)
+
+    def files(self, entry_id):
+        listed = OneArchiveOnTheEntry.files(self, entry_id)
+        return listed + [{"name": n, "size": 1234,
+                          "url": u"https://jimaku.cc/entry/11446/download/%s" % n,
+                          "last_modified": u"2026-01-01T00:00:00Z"} for n in self.plain]
+
+
+def _serving(lab):
+    u"""The `downloader=` seam hands out the client's archive bytes, and counts
+    each time -- ⚠ bytes come from the seam, never from the client."""
+    plain = lab.download
+
+    def download(item):
+        if item["name"] == lab.client.name:
+            lab.downloads.append(item["name"])
+            return lab.client.blob
+        return plain(item)
+    lab.download = download
+
+
+def test_an_archive_holding_the_preferred_format_is_opened_beside_other_plain_files(tmp_path):
+    u"""🚨 #2b -- archives ON, `.ass` preferred: the plain files offer the episode
+    only as `.srt`, and the batch archive holds its `.ass`. It was never opened,
+    because the video counted as served. Two arms: no plain file (the control,
+    opened before and after); a plain `.srt` beside it (opened now)."""
+    member = u"[Grp] frieren S2 - 03 (1080p) [ABCD].ja.ass"
+    for plain in ([], [u"[Other] frieren S2 - 03 (WEB 1080p).srt"]):
+        lab = Lab(tmp_path / (u"plain-%d" % len(plain)), names=[u"frieren S2 - 03.mkv"])
+        lab.client = ArchiveAndPlain(lab.real, _pack(member, ASS_BODY), plain)
+        _serving(lab)
+        row, = lab.run(archives=True, format_fallback=False).results
+        assert row.outcome == pipeline.CONFIDENT and row.jimaku_filename == member, (
+            plain, row.outcome, row.reason, lab.downloads)
+        assert not [n for n in lab.downloads if n.endswith(u".srt")], lab.downloads
+
+
+def test_an_archive_whose_members_land_nowhere_says_so(tmp_path):
+    u"""⚠ The pass now opens an archive for a video the plain files reach in the
+    other format -- and `trial` holds those plain files too, so *"is the video in
+    it"* was true whatever the archive held, and the note said the archive was
+    used. Its only member here carries no episode number: it lands on nothing,
+    and the note says exactly that."""
+    lab = Lab(tmp_path, names=[u"frieren S2 - 03.mkv"])
+    lab.client = ArchiveAndPlain(lab.real, _pack(u"[Grp] Frieren Bonus (1080p).ja.ass", ASS_BODY),
+                                 [u"[Other] frieren S2 - 03 (WEB 1080p).srt"])
+    _serving(lab)
+    report = lab.run(archives=True, format_fallback=False)
+    row, = report.results
+    show, = report.shows
+    assert lab.downloads.count(lab.client.name) == 1, u"the archive has to be OPENED"
+    assert [n for n in show.notes if u"none of them lands" in n], show.notes
+    assert not [n for n in show.notes if u"was opened because" in n], show.notes
+    assert row.outcome == pipeline.NOT_FOUND and formats.only_as(row.reason) == (u"srt",), (
+        row.outcome, row.reason)
+
+
+def test_an_archive_already_in_the_cache_is_not_downloaded_again(tmp_path):
+    u"""🚨 #2c -- a video an archive cannot serve comes back at every retry, and
+    each retry downloaded the whole archive again to learn the same thing:
+    measured 1, 2, 3, 4 over four days. Its only member is `.srt`, `.ass` is
+    preferred, the fallback is off: a format wait every day, and ONE download.
+    ⭐ The other arm: a re-upload -- new bytes, a new size -- IS fetched."""
+    lab = Lab(tmp_path, names=[u"frieren S2 - 03.mkv"])
+    lab.client = OneArchiveOnTheEntry(
+        lab.real, _pack(u"[Grp] frieren S2 - 03 (1080p) [ABCD].ja.srt", SRT_BODY))
+    _serving(lab)
+    for day in range(4):
+        row, = lab.run(archives=True, format_fallback=False).results
+        assert row.outcome == pipeline.NOT_FOUND and formats.only_as(row.reason) == (u"srt",), (
+            day, row.outcome, row.skip, row.reason)
+        lab.now[0] += timedelta(hours=25)
+    assert lab.downloads.count(lab.client.name) == 1, lab.downloads
+
+    lab.client.blob = _pack(u"[Grp] frieren S2 - 03 (1080p) [ABCD] v2.ja.srt", SRT_BODY * 3)
+    lab.run(archives=True, format_fallback=False)
+    assert lab.downloads.count(lab.client.name) == 2, (u"a re-upload was never fetched",
+                                                       lab.downloads)
+
+
+def test_a_re_sync_never_writes_a_format_the_person_stopped_taking(tmp_path):
+    u"""🚨 #3 -- `.ass` written and its original kept; the person chose `.srt` and
+    deleted the `.ass`. The next run re-timed the kept `.ass` straight back, and
+    the present-check said *already there* from then on. Two arms: the
+    preference unchanged is the zero-network re-sync (the control); `.srt`
+    preferred is a fetch of the `.srt`."""
+    for prefer, kind, fetches in ((u"ass", u".ass", False), (u"srt", u".srt", True)):
+        lab = Lab(tmp_path / prefer, names=episodes_up_to(1))
+        first, = lab.run(format_fallback=False).results
+        assert first.outcome == pipeline.CONFIDENT and first.output_path.endswith(u".ass")
+        lab.forget_videos()
+        del lab.downloads[:]
+        again, = lab.run(prefer_format=prefer, format_fallback=False).results
+        assert again.outcome == pipeline.CONFIDENT and again.output_path.endswith(kind), (
+            prefer, again.outcome, again.reason, again.output_path)
+        assert bool(lab.downloads) is fetches, (prefer, lab.downloads)
+        assert all(n.endswith(kind) for n in lab.downloads), lab.downloads
+
+
+class SrtAndVtt(ListForAnyEntry):
+    u"""DERIVED: the capture cut to `.srt`, three of episode 1's renamed `.vtt` --
+    an episode jimaku has in TWO kinds, neither of them `.ass`."""
+
+    def files(self, entry_id):
+        self.entries.append(entry_id)
+        out, n = [], 0
+        for f in self._inner.files(ENTRY):
+            if not f["name"].lower().endswith(u".srt"):
+                continue
+            if u"01" in f["name"] and n < 3:
+                f, n = dict(f, name=f["name"][:-4] + u".vtt"), n + 1
+            out.append(f)
+        return out
+
+
+def test_a_wait_in_two_formats_names_both_and_either_ends_it(tmp_path):
+    u"""🚨 #4 -- *"only as .vtt"* over two `.srt` and three `.vtt`: false, and a
+    person who then chose `.srt` was still waiting an hour later, at zero
+    requests, while the window offered them *Download .vtt instead*."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    lab.client = SrtAndVtt(lab.real)
+    first, = lab.run(format_fallback=False).results
+    assert first.outcome == pipeline.NOT_FOUND, first
+    assert formats.only_as(first.reason) == (u"srt", u"vtt"), first.reason
+    assert u"(5 files)" in first.reason, first.reason
+    lab.now[0] += timedelta(hours=1)
+    taken, = lab.run(prefer_format=u"srt", format_fallback=False).results
+    assert taken.outcome == pipeline.CONFIDENT, (taken.skip, taken.reason)
+    assert lab.downloads and all(n.endswith(u".srt") for n in lab.downloads), lab.downloads
+
+
+def test_mode_a_never_calls_a_format_wait_not_found_or_not_there(tmp_path):
+    u"""🚨 #7 -- the printed run said *"NOT FOUND"* and *"1 not found"* on the run
+    that found it, and *"asked for recently and not there yet -- --force asks
+    again now"* inside the wait: it IS there, and `--force` finds the same wait.
+    Two arms each time: an episode jimaku really lacks still says so."""
+    def text(report):
+        return u" ".join(u" ".join(report_module.render_run(report)).split())
+
+    lab = Lab(tmp_path / u"srt-only", names=episodes_up_to(1))
+    lab.client = OneFormat(lab.real, u"srt")
+    first = text(lab.run(format_fallback=False))
+    assert u"OTHER FORMAT" in first and u"1 only in the other format" in first, first
+    assert u"NOT FOUND" not in first and u"not found" not in first, first
+    lab.now[0] += timedelta(hours=1)
+    inside = text(lab.run(format_fallback=False))
+    assert u"only in a format your settings do not take" in inside, inside
+    assert u"not there yet" not in inside and u"waiting to retry" not in inside, inside
+
+    lab = Lab(tmp_path / u"missing", names=[u"frieren S2 - 24.mkv"])
+    first = text(lab.run(format_fallback=False))
+    assert u"NOT FOUND" in first and u"1 not found" in first and u"format" not in first, first
+    lab.now[0] += timedelta(hours=1)
+    inside = text(lab.run(format_fallback=False))
+    assert u"not there yet" in inside and u"format" not in inside, inside
+
+
+def test_a_film_offered_only_as_an_archive_is_never_downloaded_as_a_subtitle(tmp_path):
+    u"""🚨 #10 -- a film jimaku has only as its `.sup.7z`: the archive was a
+    candidate, downloaded unopened, handed to tsubasa, refused at 0% -- and 9a
+    called it *"the other format"*, with a button to download it. Now nothing is
+    downloaded, the reason says why, and it is no format wait."""
+    class OnlyTheArchive(ListForAnyEntry):
+        def files(self, entry_id):
+            self.entries.append(entry_id)
+            return [f for f in self._inner.files(entry_id) if archives.is_archive(f["name"])]
+
+    lab = Lab(tmp_path, names=[u"Kimi no Na wa.mkv"])
+    lab.client = OnlyTheArchive(lab.real)
+    report = lab.run(format_fallback=False)
+    row, = report.results
+    assert report.shows[0].resolved.movie is True
+    assert lab.downloads == [], lab.downloads
+    assert row.outcome == pipeline.NOT_FOUND and formats.only_as(row.reason) is None, row.reason
+    assert u"no subtitle file" in row.reason, row.reason
+
+
+def test_an_opened_archive_is_never_said_to_be_unopened(tmp_path):
+    u"""⚠ Beside 9a: *"1 archive(s) on this entry were NOT opened"* was printed over
+    the archive the same run had just opened. Two arms: ON and opened -> not
+    said; OFF -> said, naming the key (the existing check holds the words)."""
+    member = u"[Grp] frieren S2 - 03 (1080p) [ABCD].ja.ass"
+    for on in (True, False):
+        lab = Lab(tmp_path / (u"on-%s" % on), names=[u"frieren S2 - 03.mkv"])
+        lab.client = OneArchiveOnTheEntry(lab.real, _pack(member, ASS_BODY))
+        _serving(lab)
+        show, = lab.run(archives=on).shows
+        said = [n for n in show.notes if u"were NOT opened" in n]
+        assert bool(said) is not on, (on, show.notes)
+    assert u"archives = true" in said[0], said
+
+
+def _failing_downloads(lab, failing):
+    plain = lab.download
+
+    def download(item):
+        if failing(item["name"]):
+            lab.downloads.append(item["name"])
+            raise client_module.DownloadError(u"HTTP 503", status=503)
+        return plain(item)
+    lab.download = download
+
+
+def test_a_download_that_failed_is_never_called_a_timing_refusal(tmp_path):
+    u"""🚨 Beside 9a: every candidate failing to DOWNLOAD read *"N candidates fetched
+    and retimed, none held"* and was recorded *"all refused by timing"* -- two
+    false sentences, and a day's quiet for files nobody looked at. An ERROR now,
+    with NO wait: the next run, the same hour, simply tries again."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _failing_downloads(lab, lambda name: True)
+    row, = lab.run(candidates=2).results
+    assert row.outcome == pipeline.ERROR, (row.outcome, row.reason)
+    assert u"could not be downloaded, so none was timed" in row.reason, row.reason
+    assert u"retimed" not in row.reason and u"refused" not in row.reason, row.reason
+    assert lab.db.negative(lab.hash_of(u"frieren S2 - 01.mkv"), u"ja") is None
+    tried = len(lab.downloads)
+    lab.now[0] += timedelta(minutes=5)
+    lab.run(candidates=2)
+    assert len(lab.downloads) > tried, u"the next run did not try again"
+
+
+def test_some_failed_downloads_and_some_refusals_are_each_counted_as_what_they_were(tmp_path):
+    u"""The mixed case stays a refusal -- the timed file WAS refused -- but neither
+    half is called the other."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    first = []
+
+    def fails_first(name):
+        if not first:
+            first.append(name)
+        return name == first[0]
+    _failing_downloads(lab, fails_first)
+    lab.decide = lambda name: dict(outcome=port.REFUSED, reason=u"no", match_rate=0.2)
+    row, = lab.run(candidates=2).results
+    assert row.outcome == pipeline.REFUSED, (row.outcome, row.reason)
+    assert row.reason.startswith(u"1 candidate fetched and retimed, none held"), row.reason
+    assert u"1 more could not be downloaded" in row.reason, row.reason
+    waiting = lab.db.negative(lab.hash_of(u"frieren S2 - 01.mkv"), u"ja")
+    assert u"1 refused by timing, 1 could not be downloaded" in waiting.reason, waiting.reason

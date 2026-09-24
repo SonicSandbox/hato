@@ -67,7 +67,7 @@ date: 2026-09-07
 
 | Case | Behaviour |
 | --- | --- |
-| Entry has `flags.movie == true` | ⛔ **Skip episode matching entirely.** Every file on the entry is a candidate for the one video |
+| Entry has `flags.movie == true` | ⛔ **Skip episode matching entirely.** Every file on the entry is a candidate for the one video. ⚠ **AMENDED 2026-09-23 (ADVERSARY 9a-10): every SUBTITLE** — a film jimaku has only as its `.sup.7z` was offered the archive, downloaded it unopened, handed it to tsubasa and recorded a 0% *timing* refusal. An archive is named in a note and opened only with archives on (§5), like the episode path's |
 | jimaku's `episode=` param on a movie entry | Ignored server-side anyway. We never send it |
 | Several films in one folder | One video per parsed title. Match on title + year |
 | A film with several cuts (theatrical / director's) | ⚠ **The timing verdict is the only discriminator.** Escalate through candidates; refuse if none holds |
@@ -79,6 +79,7 @@ date: 2026-09-07
 | **429** | Honour `x-ratelimit-reset-after`. It may be fractional |
 | **401** | 🚨 **Stop the whole run immediately** and say the key is bad. A 401 still consumes quota — retrying burns the budget silently |
 | Download 404s | The file list is stale. Re-fetch the list **once**, then ERROR |
+| 🚨 **Every candidate's download fails** (added 2026-09-23, beside 9a) | **ERROR, and NO wait recorded** — nothing was timed. It read *"N candidates fetched and retimed, none held"* and was recorded *"all refused by timing"*, a day's quiet over files nobody looked at. Some failed and some timed: a refusal still, each half counted as what it was |
 | Download is truncated or empty | ERROR. ⛔ Never write a zero-byte subtitle |
 | Download is **HTML** (an error page) | ERROR. Sniff the first bytes — a subtitle never starts with `<!DOCTYPE` |
 | Network drops mid-run | Retry 5 s / 15 s / 45 s. After 6 consecutive failures **that never reached a server**, stop and say so — do not grind through 200 files failing individually |
@@ -89,7 +90,7 @@ date: 2026-09-07
 | Case | Behaviour |
 | --- | --- |
 | ⭐ **Archives are OFF by default — RULED 2026-09-17** | The person turns them on (`archives = true`, or `--archives`). ⛔ While off, an archive candidate is **skipped with a reason that names the flag** — never silently dropped, and never unpacked |
-| Entry offers only a `.zip` / `.7z` / `.rar`, archives ON | Download and unpack **in the cache dir**. RULED |
+| Entry offers only a `.zip` / `.7z` / `.rar`, archives ON | Download and unpack **in the cache dir**. RULED. ⚠ **AMENDED 2026-09-23 (ADVERSARY 9a-2):** also opened when the plain files offer the episode only in a format the settings do not take — the archive may hold the preferred one; and ⭐ **an archive already in the working cache is not downloaded again** (name and listed size): one a video could not use was fetched whole at every daily retry |
 | `.rar` and no `unrar` binary | ⚠ **Degrade gracefully.** Skip that candidate with a clear reason. Never a crash |
 | 🚨 **Archive path traversal** (`../../`) | ⛔ **Reject the entry outright.** Never extract a member whose resolved path escapes the extraction root. This is the classic zip-slip and it is a real attack on user-uploaded content |
 | Archive is a **zip bomb** | Cap extracted size and member count. Abort with ERROR past the cap |
@@ -103,8 +104,9 @@ date: 2026-09-07
 | --- | --- |
 | `<video>.ja.srt` present | SKIP. Zero requests |
 | `<video>.en.srt` present, no `.ja` | **Fetch.** The check is per (video × language) |
-| `<video>.srt` with no language tag | Language is `und`. ⚠ **Treat as NOT the target language** and fetch — but never overwrite it; the new file gets the `.ja` suffix and both coexist |
-| `<video>.Japanese.srt` | Recognise the English display name — Jellyfin and Emby both document it. 🚨 **DEFECT, MEASURED 2026-09-17 (4b's builder) — tsubasa 0.1.4 does NOT.** See below |
+| `<video>.srt` with no language tag | Language is `und`. ⚠ **Treat as NOT the target language** and fetch — but never overwrite it; the new file gets the `.ja` suffix and both coexist. ⭐ **AMENDED 2026-09-23 (RUNBOOK 9b, Sonic's ruling):** when the target is Japanese its TEXT is read first — clearly Japanese dialogue → **SKIP, and the skip says the name gave no language and the text did**; anything uncertain → fetch, exactly as before. *"needs to not report falsely ... errs on the side of 'download'"*. ⚠ **AMENDED by the pass (ADVERSARY 2026-09-23, 9b):** a file bigger than what is read (16 MB) is **never judged on its first part** — a 4.5 MB `[CHS, JPN]` .ass read Japanese from its karaoke and not Japanese whole; and a name that is EXACTLY the video's (`Show.S01E01.JP.srt` beside `Show.S01E01.JP.mkv`) is untagged whatever its last token parses to |
+| `<video>.Japanese.srt` | Recognise the English display name — Jellyfin and Emby both document it. ✅ **Read as Japanese since tsubasa 0.1.5** (the defect below is history, kept for the record) |
+| `<video>.jp.srt` | ⚠ `jp` is Japan's COUNTRY code, not a language code — but it is everywhere (18,228 times among the jimaku corpus's tokens). tsubasa 0.1.7 reads it `und`, so hato fetches beside it. ▶ RUNBOOK 9c teaches tsubasa |
 | `<video>.chi.srt` | Chinese. 🚨 **Not hearing-impaired.** Whole-token matching only — this is Bazarr's live bug |
 | `<video>.hi.srt` | **Hindi.** Parse the language before trimming flags |
 | `<video>.ja.forced.srt` only | A forced sub is not a full sub. **Fetch the full one** |
@@ -113,6 +115,11 @@ date: 2026-09-07
 | Video has **no subtitle track at all** — a raw | ⭐ **SKIP before identification — RULED 2026-09-17.** tsubasa has nothing to time against until its audio path exists. Zero requests, zero downloads, ⛔ **never recorded as a refusal**. Output: *no subtitle track in the video — can't sync yet* |
 | The user deleted a subtitle on purpose | It comes back next run — **re-synced from its kept original, zero network**. ⚠ Documented, not a bug — the filesystem is canonical, and a deliberate absence is indistinguishable from a missing one |
 
+> ✅ **RESOLVED UPSTREAM — tsubasa 0.1.5 reads `.Japanese.` in every casing, and
+> `test_existing.py::test_the_jellyfin_display_name_is_read_as_japanese` holds it.**
+> ⚠ This block still read as current on 2026-09-23 and was repeated to Sonic from here
+> rather than measured; the record below is kept as the history of how it was found.
+>
 > 🚨 **DEFECT, MEASURED AT 4b's BUILD (2026-09-17) — `<video>.Japanese.srt` reads `und`.**
 > `tsubasa.parse_subtitle_name` 0.1.4, in three casings (`Japanese`, `japanese`, `JAPANESE`),
 > answers `lang="und"` and hands back the stem `Show - 01.Japanese`. So a Jellyfin- or

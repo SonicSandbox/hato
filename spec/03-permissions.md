@@ -159,7 +159,11 @@ for video in discovered_videos:
                                                  # does not have yet — the cost the negative cache exists to stop
 
     kept = kept_original_for(video)                             # subs_dir, zero network
-    if kept:                                     return resync(video, kept)  # the synced file was deleted
+    if kept and format_taken(kept):              return resync(video, kept)  # the synced file was deleted
+                                                 # ⚠ 9a (ADVERSARY 2026-09-23 #3): only in a format the
+                                                 # person's settings still take -- `.ass` kept, `.srt` chosen
+                                                 # and the `.ass` deleted re-timed the `.ass` straight back,
+                                                 # and the present-check then said "already there" for good
 
     entry = resolution_cache.get(title) or resolve(title)      # <= 2 API calls, cached
     if not entry:                                return NOT_FOUND(record_hard_negative)
