@@ -1175,12 +1175,18 @@ def _rehearsal(bundle, cli):
                  card[u"done_at"]))
         now = _version_of(os.path.join(install, CLI_NAME))
         opened = [pid for pid in _hato_windows(install, swap) if visible_windows(pid) > 0]
-        said, waited = [], 0.0
+        # ⚠ A READ THAT RETURNED NO TEXT AT ALL IS THE READER FAILING, NOT THE WINDOW:
+        # every hato window shows *Run now*. The 1.0.5 smoke failed here once with
+        # *"it said: nothing"* -- the control run and two probes all saw the banner --
+        # and the message could not say which it was (the Layer 12 pass). It says now.
+        said, waited, reads, blank = [], 0.0, 0, 0
         while opened and waited < 20.0 and not any(u"Updated to" in w for w in said):
             time.sleep(1.0)
             waited += 1.0
             said = [line[5:].strip() for line in _uia(opened[0], u"read").splitlines()
                     if line.startswith(u"TEXT ")]
+            reads += 1
+            blank += 0 if said else 1
         check(u"rehearsal: the new version goes in",
               code == 0 and now == version and opened,
               u"swapper exit %s · installed says %s · %d window(s) open"
@@ -1188,7 +1194,10 @@ def _rehearsal(bundle, cli):
         check(u"rehearsal: the new window says it was updated",
               any((u"Updated to %s" % version) in w for w in said) if was != version
               else any(u"Updated to" in w for w in said),
-              u"it said: %s" % (u" | ".join(w for w in said if u"pdate" in w) or u"nothing"))
+              u"it said: %s" % (u" | ".join(w for w in said if u"pdate" in w) or (
+                  u"nothing about an update -- %d read(s) of the window, %d with no text at "
+                  u"all (the reader failing), the last showing %d text(s)"
+                  % (reads, blank, len(said)))))
         check(u"rehearsal: the old version is kept for Go back",
               os.path.isdir(os.path.join(str(root), u"previous", was or u"?")),
               u"%s" % os.path.join(str(root), u"previous", was or u"?"))

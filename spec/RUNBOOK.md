@@ -147,7 +147,7 @@ LAYER 9 — WHICH FORMAT, AND WHAT COUNTS AS ALREADY THERE. Added 2026-09-23
 LAYER 10 — D12: RUN NOW CLOSED THE WINDOW (1.0.2, 1.0.3). Added 2026-09-24
   ├── 10a ✅ Run now runs — wired through `lambda _checked=False`; a real click in the
            suite, the CLASS read off the source, and the smoke PRESSES it (6b)
-           M10a 3/3 · ⏸ release 1.0.4 waits on Sonic's go (IRREVERSIBLE)
+           M10a 3/3 · ✅ RELEASED in v1.0.4
   └── 10b ✅ an error inside the window is written to hato.log and the window stays
            (RULED 2026-09-24: in the next release) · M10b 12/12
 
@@ -163,6 +163,22 @@ LAYER 11 — AUTO-UPDATE. RULED 2026-09-24 (gui-mock/mock-update.html, mechanism
   └── 11z ✅ the adversarial pass -- ADVERSARY-2026-09-24.md: 27 fixed · 0 dropped ·
            3 deferred; m11z 58 + 16 older re-aimed · THE GATE 245: 243 killed,
            2 survived -> both closed (G1, G2)
+           ✅ RELEASED as hato v1.0.4, tag 41e1515, 2026-09-24 (Step 6) -- the first
+           release that updates itself
+
+LAYER 12 — UPDATES YOU CAN SEE. RULED 2026-09-24 (Sonic: "Go do all of your leans")
+  ├── 12a ✅ an open window sees what the tray downloaded; Check now never downloads
+  │         what is already on disk
+  ├── 12b ✅ an open window keeps checking once a day; "checked 12 min ago" moves
+  ├── 12c ✅ Check now shows it did something: the button stays (disabled), then
+  │         "✓ you have the newest"
+  ├── 12d ✅ the version in the footer, one click from Settings → Updates
+  ├── 12e ✅ a rate-limited check says GitHub asked hato to wait
+  ├── 12f ✅ What's new for the version you have
+  └── 12z ✅ the adversarial pass -- ADVERSARY-2026-09-24.md §Layer 12: 21 fixed ·
+           0 dropped · 1 deferred; m12 62 + 10 re-aimed · THE GATE 303/303 killed
+           ✅ RELEASED as hato v1.0.5 (Step 6) -- the first release an install takes
+           by itself
 
 LAYER 6 — release
 ```
@@ -1595,7 +1611,7 @@ lines).
 
 ---
 
-## 🚨 LAYER 10 — D12: RUN NOW CLOSED THE WINDOW. Added 2026-09-24
+## 🚨 LAYER 10 — D12: RUN NOW CLOSED THE WINDOW. Added 2026-09-24 · ✅ RELEASED in `v1.0.4`
 
 > **From Sonic's report on 1.0.3, 2026-09-24:** *"it crashes gui on 'run' button is clicked.
 > Reproduced on 2 machines. The automatic detection and run still seems to work great."*
@@ -1638,7 +1654,7 @@ it was ruled on: D12's own crash with a prototype net — the window stays up an
 
 ---
 
-## ⭐ LAYER 11 — AUTO-UPDATE. RULED 2026-09-24 (*"I take all your leans"*) · BUILT 11a–11h the same day · 1.0.4 AUTHORIZED once green
+## ⭐ LAYER 11 — AUTO-UPDATE. RULED 2026-09-24 (*"I take all your leans"*) · BUILT 11a–11h + 11z the same day · ✅ RELEASED in `v1.0.4`, 2026-09-24
 
 > **Asked by Sonic, 2026-09-24:** *"I have another python app ... surasura ... they have an auto
 > update feature ... tell me if you think this would be worth implementing and how you would
@@ -1834,7 +1850,71 @@ it was ruled on: D12's own crash with a prototype net — the window stays up an
 
 ---
 
-## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.3`, 2026-09-23 (`v1.0.2` the same day, `v1.0.1` 2026-09-19). ⛔ NO PyPI, RULED
+## ⭐ LAYER 12 — UPDATES YOU CAN SEE. RULED 2026-09-24
+
+> **Asked by Sonic after 1.0.4 shipped:** *"Is there a button for 'check for an update' in the
+> settings so they could manually check? And any UX quality of life related to that?"* The
+> button existed (Settings → Updates, *Check now*). Reading the code for the answer found two
+> real gaps and four small ones, put to him as a table with leans. ✅ **RULED: *"Go do all of
+> your leans, I agree in all cases"*** — and on releasing them: *"Yes, and that's a great way
+> i will be able to test the update too."* ⛔ The seventh row, a *Check for updates* item in
+> the tray menu, was leaned OUT (the tray updates by itself; choices live in the window).
+>
+> **Why it matters:** 1.0.5 is the first release any install takes BY ITSELF — Sonic installs
+> 1.0.4 by hand and watches it update. Every step below is about an update that happened
+> being SEEN (the frozen rule: a decision made on a person's behalf needs a surface).
+
+| Step | surfaces | What | Its proof |
+| --- | --- | --- | --- |
+| **12a** | `logic` `ui` | 🚨 **An open window sees what the tray downloaded.** It read *what is staged* only at start and when a swap result landed, so a release the tray downloaded behind an open window showed no pill — and the tray will not install under an open window, so it waited silently until hato closed. *Check now* then downloaded all 77 MB AGAIN (the in-memory `staged` was stale and `hato update --stage` never asked the disk). The minute tick re-reads `update.staged_version` (disk only); the check's answer and *Restart now* read the disk before choosing to download; `--stage` answers *staged* without a byte when that version is already whole on disk | a stage appearing on disk mid-life → the pill at the next minute · *Check now* answering READY for a staged version → no download, *Restart now* · `--stage` over a whole stage → the fetcher never called |
+| **12b** | `logic` `ui` | **An open window keeps checking.** It asked GitHub only as it opened; left open for days it never asked again, and *"checked 12 min ago"* stood still unless something else on screen was dated. The minute tick runs the once-a-day check when it is DUE (`update.due`, in-process — no spawn otherwise), and re-renders while the line carries a *checked … ago* | due → one `--check --if-due`; not due → nothing spawned; the line moves with the clock |
+| **12c** | `ui` | **Check now shows it did something.** The button STAYS, disabled, while checking — it used to vanish, and the row's height jumped (the layout must not depend on the state) · *checking…* is held at least half a second · a manual check that finds nothing says *"✓ you have the newest"* for a few seconds | the pressed button disabled and the row the same height · an instant answer applied only after the hold · the confirmation, then the plain line |
+| **12d** | `ui` | **The version in the footer.** *hato 1.0.4*, left of *Created by*; a click opens Settings with the Updates card in view | the footer's text from `State`; the click lands on the card |
+| **12e** | `logic` `ui` | **A rate-limited check says so.** GitHub answers 403/429 when an address asks too often (60 an hour unauthenticated) and hato said *"GitHub did not answer"*. `update.fetch` marks the refusal, the check answers NONE with the reason `rate_limited` (still never remembered), and the window and the terminal say *"GitHub asked hato to wait — try again within the hour"* | a 403 with `X-RateLimit-Remaining: 0` and a 429 → the reason; a plain 500 → not; the sentence in both places |
+| **12f** | `ui` | **What's new, for the version you have.** Once the *Updated to X* banner is dismissed there was no way back to its notes: a *What's new* link on the Updates line whenever nothing is on offer, to this version's own release page (built from `__version__`, never from an answer) | the link in the no-offer states, absent while something is on offer, and its address |
+| **12z** | — | the adversarial pass over Layer 12 → a register; then **release 1.0.5** by `LEDGER.md` §delivery — the first release an install takes on its own | the register; `verify-release`'s `an_install_takes_it` RUNS (min_from 1.0.4) |
+
+> ✅ **12a–12f BUILT 2026-09-24**, each with its checks (`gui_updates` · `update` · `watch`)
+> and its mutants (`m12.mjs` M12-01…27); the states shot and LOOKED — two defects found
+> only by looking: the footer's own gap sat inside *"hato 1.0.4 │ Created by"* (V1), and
+> the wait was cut off by its own link, so every sentence line of the card now WRAPS (V2).
+>
+> ✅ **12z RUN 2026-09-24 — `ADVERSARY-2026-09-24.md` §*Layer 12*: 21 fixed · 0 dropped · 1
+> deferred.** One adversary over the layer (8 reproduced, 6 check-only, 3 suspected), the
+> orchestrator's review, a re-shoot LOOKED state by state, and ⭐ a **stamp rehearsal** —
+> the suites over a copy stamped 1.0.5 — which found three checks failing and two gone
+> vacuous at the next number (T1: fixtures publishing 1.0.5 against the real
+> `__version__`). 🚨 The worst were the class 12a was built to close, one level down: a
+> stage ANOTHER version prepared read as *ready* for ever — `hand_off` had the wall and
+> `staged_version` did not (L12-1); and a window beside the tray asked *"is a check due?"* of
+> the file the tray writes too — never due, so it never asked and never read the tray's
+> answer (L12-2). Also: a check that could not tell erased an offer on screen (L12-15, the
+> review), and the window's voice capitalised the name — *"Hato can't write…"*, in 1.0.4
+> already (V3, the re-shoot). `m12` +35 (M12-28…62), 10 re-aimed.
+> ⭐ **The gate** (`--scratch`, `^(M11|M12)`, over the vault after the fixes): **303
+> mutants, 303 killed, 0 survived** (48 min, `EXIT=0`); M12-62, written after it began, run
+> alone: killed; the same filter over the tree BEFORE the fixes had killed 269/269 — every
+> finding was a defect no mutant yet described. Stamp `1.0.5` (`sha256:d957e21f…`, 83
+> files) → the full runner over the stamped tree: **33 suites / 2,467 checks GREEN**.
+
+---
+
+## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.4`, 2026-09-24 (`v1.0.3` and `v1.0.2` 2026-09-23, `v1.0.1` 2026-09-19). ⛔ NO PyPI, RULED
+
+> ⭐ **`v1.0.4` IS LIVE — THE FIRST RELEASE THAT UPDATES ITSELF** — LAYER 11, D12 and 10b.
+> Stamp `1.0.4` (`sha256:e6a857f5…`, 83 files) → the full runner **33 suites / 2,424 checks**
+> over the stamped tree → freeze → smoke **45/45** on the zip unpacked outside the repo, its
+> REHEARSAL updating the released 1.0.3 through the new swapper both ways (a version that
+> cannot start put back; the new one in WITH its tray — exactly one — saying *Updated to
+> 1.0.4*; the frozen splash LOOKED) → `update-manifest` (signed; read back 3/3) → sync →
+> `41e1515` → `tests` **12/12 jobs on the FIRST push** → `_release_1_0_0.py --go`: tag
+> `v1.0.4` = `41e1515`, THREE assets → `verify-release` **9 held · 1 skipped by design** (every
+> published byte identical to the local file; zip `sha256 70664555…7d58`, 77,016,517 bytes;
+> GitHub's digest agrees) → `release` **2/2** on the tag. ⭐ The real client against the real
+> release, two arms: before publishing a copy numbered 1.0.3 heard `none 1.0.3`; after,
+> `tell 1.0.4 too_old` — reached only past the signature and GitHub's digest. Before all of
+> it, the Layer 11 gate: 245 mutants, 243 killed, both survivors closed (G1, G2), their
+> re-run 33/33.
 
 > ⭐ **`v1.0.3` IS LIVE AND EVERY GATE IS GREEN** — Layer 9. **tsubasa `v0.1.8` first**
 > (`5be457c`; CI 16/16, release 4/4, verified from its published bytes and two-arm against

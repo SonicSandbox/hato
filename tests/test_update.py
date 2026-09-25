@@ -990,10 +990,13 @@ def test_a_successful_update_is_not_turned_away(tmp_path, monkeypatch):
 def test_what_is_staged_is_read_from_the_disk(tmp_path, monkeypatch):
     install, root, pending = _staged_over(tmp_path, monkeypatch)
     assert update.staged_version(str(install), u"1.0.4", root=str(root)) == u"1.0.5"
-    assert update.staged_version(str(install), u"1.0.5", root=str(root)) is None, \
-        u"a release no newer than this copy read as waiting"
     with open(pending, encoding="utf-8") as handle:
         hand = json.load(handle)
+    # ⚠ prepared by the copy asking, so the from-check (L12-1) cannot answer for this one
+    update.save_json(pending, dict(hand, **{u"from": u"1.0.5"}))
+    assert update.staged_version(str(install), u"1.0.5", root=str(root)) is None, \
+        u"a release no newer than this copy read as waiting"
+    update.save_json(pending, hand)
     import shutil
     shutil.rmtree(hand[u"staged"])
     assert update.staged_version(str(install), u"1.0.4", root=str(root)) is None, \
@@ -1235,6 +1238,18 @@ def test_a_stage_prepared_for_another_copy_is_not_waiting_here(tmp_path, monkeyp
     update.hand_off(pending, install=str(install), start=lambda argv: u"proc")
 
 
+def test_a_stage_another_version_prepared_is_not_waiting_here(tmp_path, monkeypatch):
+    u"""🚨 THE LAYER 12 PASS, L12-1: 1.0.5's tray staged 1.0.6, then a *Go back* to 1.0.4.
+    `hand_off` refuses a stage this copy did not prepare (*"it will be downloaded
+    again"*) -- and read as waiting, it never was: a pill for ever, every *Restart now*
+    refused, and `--stage` answering *staged* without a byte. The wall `hand_off` has."""
+    install, root, _pending = _staged_over(tmp_path, monkeypatch)        # 1.0.4 prepared it
+    assert update.staged_version(str(install), u"1.0.4", root=str(root)) == u"1.0.5", \
+        u"the control: the copy that prepared it"
+    assert update.staged_version(str(install), u"1.0.3", root=str(root)) is None, \
+        u"a stage 1.0.4 prepared read as waiting in 1.0.3"
+
+
 @pytest.mark.parametrize("current, why", [(u"1.0.5", u"not newer"), (u"1.0.6", u"not newer"),
                                           (u"1.0.3", u"prepared by")],
                          ids=[u"the-same-version", u"a-newer-copy", u"another-writer"])
@@ -1322,6 +1337,15 @@ def _args(**over):
     return args
 
 
+def _running(monkeypatch, version=u"1.0.4"):
+    u"""THIS copy's number, where the command reads it -> `version`. ⚠ The fixtures
+    publish 1.0.5: read from the real `__version__`, three of these checks FAILED and
+    two went quietly VACUOUS the day the tree was stamped 1.0.5 (the Layer 12 stamp
+    rehearsal, 2026-09-24) -- a stage of 1.0.5 is no update to a 1.0.5."""
+    from hato.commands import update as command
+    monkeypatch.setattr(command, "__version__", version)
+    return version
+
 def test_the_command_says_offline_plainly_and_never_invents_a_version(capsys, monkeypatch):
     from hato.commands import update as command
     monkeypatch.setenv("HATO_NO_NETWORK", "1")
@@ -1344,6 +1368,7 @@ def test_the_command_tells_without_a_reason_code(capsys, monkeypatch):
 
 def test_if_due_answers_from_memory_without_the_network(capsys, monkeypatch):
     from hato.commands import update as command
+    _running(monkeypatch)
     update.save_state({u"checked_at": 1000.0, u"decision": update.Decision(
         update.TELL, u"1.0.5", update.SOURCE).as_dict()})
     monkeypatch.setattr(update, "check", lambda *a, **k: pytest.fail(u"asked GitHub"))
@@ -1368,6 +1393,7 @@ def test_a_remembered_answer_never_offers_the_version_now_installed(capsys, monk
 
 def test_staging_from_the_command_streams_progress_then_says_staged(capsys, monkeypatch, tmp_path):
     from hato.commands import update as command
+    _running(monkeypatch)
     decision, zip_bytes = _ready(tmp_path, monkeypatch)
     install = tmp_path / "install"
     install.mkdir()
@@ -1382,6 +1408,150 @@ def test_staging_from_the_command_streams_progress_then_says_staged(capsys, monk
     assert lines[-1][u"version"] == u"1.0.5" and os.path.isfile(lines[-1][u"pending"])
     last = [l for l in lines if l[u"type"] == u"progress"][-1]
     assert last[u"done"] == last[u"total"] == len(zip_bytes)
+
+
+def test_staging_what_is_already_staged_downloads_nothing(capsys, monkeypatch, tmp_path):
+    u"""⭐ RUNBOOK 12a: the tray stages releases too. A window whose memory said nothing
+    was waiting asked `--stage` again and fetched all 77 MB a second time: a version
+    already whole on disk is answered STAGED without a byte."""
+    from hato.commands import update as command
+    _running(monkeypatch)
+    decision, zip_bytes = _ready(tmp_path, monkeypatch)
+    install = tmp_path / "install"
+    install.mkdir()
+    monkeypatch.setattr(update, "check", lambda *a, **k: decision)
+    monkeypatch.setattr(update, "stream", _serve(zip_bytes, 4096))
+    monkeypatch.setattr(update, "installed_version", lambda _f: u"1.0.5")
+    monkeypatch.setattr(command, "install_dir", lambda: str(install))
+    assert command.run(_args(stage=True, json=True, progress=True)) == command.EXIT_OK
+    first = [json.loads(l) for l in capsys.readouterr().out.splitlines()][-1]
+    assert first[u"type"] == u"staged", u"the control: the first stage downloaded"
+
+    def again(*a, **k):
+        raise AssertionError(u"the staged release was downloaded again")
+    monkeypatch.setattr(update, "stream", again)
+    assert command.run(_args(stage=True, json=True, progress=True)) == command.EXIT_OK
+    lines = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
+    assert [l[u"type"] for l in lines] == [u"staged"], lines
+    assert (lines[-1][u"version"], lines[-1][u"pending"]) == (u"1.0.5", first[u"pending"])
+
+def test_staging_over_a_stage_another_version_prepared_downloads_it_again(capsys, monkeypatch,
+                                                                          tmp_path):
+    u"""🚨 L12-1, the command's half: `--stage` answered *staged* over a stage `hand_off`
+    refuses -- closing the one way out. It is downloaded again, and made this copy's."""
+    from hato.commands import update as command
+    running = _running(monkeypatch)
+    decision, zip_bytes = _ready(tmp_path, monkeypatch)
+    install = tmp_path / "install"
+    install.mkdir()
+    monkeypatch.setattr(update, "check", lambda *a, **k: decision)
+    monkeypatch.setattr(update, "stream", _serve(zip_bytes, 4096))
+    monkeypatch.setattr(update, "installed_version", lambda _f: u"1.0.5")
+    monkeypatch.setattr(command, "install_dir", lambda: str(install))
+    assert command.run(_args(stage=True, json=True, progress=True)) == command.EXIT_OK
+    first = [json.loads(l) for l in capsys.readouterr().out.splitlines()][-1]
+    with open(first[u"pending"], encoding="utf-8") as handle:
+        hand = json.load(handle)
+    update.save_json(first[u"pending"], dict(hand, **{u"from": u"1.0.3"}))   # not this copy's
+    fetched = []
+    monkeypatch.setattr(update, "stream",
+                        lambda url: fetched.append(url) or _serve(zip_bytes, 4096)(url))
+    assert command.run(_args(stage=True, json=True, progress=True)) == command.EXIT_OK
+    lines = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
+    assert fetched, u"a stage hand_off refuses was answered STAGED without a byte"
+    assert lines[-1][u"type"] == u"staged", lines[-1]
+    with open(lines[-1][u"pending"], encoding="utf-8") as handle:
+        assert json.load(handle)[u"from"] == running
+
+
+@pytest.mark.parametrize("status, headers, limited", [
+    (403, {u"X-RateLimit-Remaining": u"0"}, True),
+    (429, {}, True),
+    # ⭐ THE LAYER 12 PASS, L12-5: GitHub's SECONDARY limit -- requests left, and a wait
+    (403, {u"X-RateLimit-Remaining": u"57", u"Retry-After": u"60"}, True),
+    (403, {u"X-RateLimit-Remaining": u"41"}, False),
+    (500, {}, False)],
+    ids=["403-none-left", "429", "403-retry-after", "403-another-refusal", "500"])
+def test_a_github_that_says_wait_is_told_from_one_that_failed(monkeypatch, status,
+                                                              headers, limited):
+    u"""⭐ RUNBOOK 12e: an address that asked too often -- 60 an hour, unauthenticated --
+    is refused with 403 and no requests left, or 429. That is a WAIT; anything else is
+    not. (`requests` is replaced: no socket is opened.)"""
+    import requests
+
+    class Answer(object):
+        def __init__(self):
+            self.status_code, self.headers = status, dict(headers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def iter_content(self, size):
+            return iter(())
+
+    monkeypatch.delenv("HATO_NO_NETWORK", raising=False)
+    monkeypatch.setattr(requests, "get", lambda *a, **k: Answer())
+    with pytest.raises(update.FetchError) as err:
+        update.fetch(update.LATEST_URL, 1024)
+    assert err.value.limited is limited, (status, headers)
+
+
+def test_a_check_refused_for_asking_too_often_says_to_wait(tmp_path):
+    def limited(url, limit):
+        raise update.FetchError(u"answered 403", limited=True)
+
+    def down(url, limit):
+        raise update.FetchError(u"answered 500")
+
+    said = update.check(u"1.0.4", get=limited, frozen=True, windows=True,
+                        install_dir=str(tmp_path))
+    assert (said.kind, said.version, said.reason) == (update.NONE, None, update.RATE_LIMITED)
+    said = update.check(u"1.0.4", get=down, frozen=True, windows=True,
+                        install_dir=str(tmp_path))
+    assert (said.kind, said.version, said.reason) == (update.NONE, None, None), \
+        u"the control: an outage is not a wait"
+
+@pytest.mark.parametrize("limited", [True, False], ids=["asked-to-wait", "failed"])
+def test_a_manifest_that_could_not_be_fetched_is_could_not_tell(tmp_path, monkeypatch,
+                                                               limited):
+    u"""🚨 THE LAYER 12 PASS, L12-6: the release answered, then the manifest pair's request
+    was refused -- and the check said TELL/manifest: remembered a day as *"can't be
+    installed from inside hato -- download it yourself"*, and the tray acts only on
+    READY. A request that failed is could-not-tell: NONE, never remembered. (The
+    manifest refused for one case, its signature for the other: two requests.)"""
+    wire, _manifest = _published(tmp_path, monkeypatch)
+    assert _check(wire, tmp_path).kind == update.READY, u"the control: the pair answers"
+    name = update.MANIFEST_NAME if limited else update.SIGNATURE_NAME
+    target = [u for u in wire.files if u.endswith(u"/" + name)][0]
+
+    def refusing(url, limit):
+        if url == target:
+            raise update.FetchError(u"answered 403", limited=limited)
+        return wire(url, limit)
+
+    got = _check(refusing, tmp_path)
+    assert (got.kind, got.version, got.reason) == (
+        update.NONE, None, update.RATE_LIMITED if limited else None), got
+    told = _check(refusing, tmp_path, frozen=False)
+    assert (told.kind, told.reason) == (update.TELL, update.SOURCE), \
+        u"a checkout is still told a release is out: %r" % told
+
+
+def test_the_command_says_github_asked_hato_to_wait(capsys, monkeypatch):
+    u"""⛔ In the person's words -- never the engine's `rate_limited` -- and never
+    remembered: a wait is not an answer about hato."""
+    from hato.commands import update as command
+    before = update.load_state().get(u"decision")
+    monkeypatch.setattr(update, "check", lambda *a, **k: update.Decision(
+        update.NONE, reason=update.RATE_LIMITED))
+    command.run(_args(), now=1000.0)
+    out = capsys.readouterr().out
+    assert u"asked hato to wait" in out and u"did not answer" not in out, out
+    assert u"rate_limited" not in out, u"the engine's word reached a person"
+    assert update.load_state().get(u"decision") == before, u"a wait was remembered"
 
 
 def _frozen_at(monkeypatch, install, tray=None, others=()):
@@ -1421,9 +1591,8 @@ WINDOWS_ONLY = pytest.mark.skipif(not __import__("sys").platform.startswith("win
 def test_apply_is_refused_while_the_window_or_a_run_is_open(capsys, monkeypatch, tmp_path):
     u"""⛔ The swapper would wait a minute for them and give up, telling nobody."""
     from hato.commands import update as command
-    from hato import __version__
     install, _root, _pending = _staged_over(tmp_path, monkeypatch, root=None,
-                                            current=__version__)
+                                            current=_running(monkeypatch))
     calls = _frozen_at(monkeypatch, install, tray=4242, others=[777])
     assert command.run(_args(apply=True, json=True)) == command.EXIT_FAILED
     assert u"close hato's window first" in _said(capsys)[u"reason"]
@@ -1434,9 +1603,8 @@ def test_apply_is_refused_while_the_window_or_a_run_is_open(capsys, monkeypatch,
 def test_apply_stops_the_tray_and_hands_off_to_start_everything_again(capsys, monkeypatch,
                                                                       tmp_path):
     from hato.commands import update as command
-    from hato import __version__
     install, root, pending = _staged_over(tmp_path, monkeypatch, root=None,
-                                          current=__version__)
+                                          current=_running(monkeypatch))
     calls = _frozen_at(monkeypatch, install, tray=4242)
     assert command.run(_args(apply=True, json=True)) == command.EXIT_OK
     said = _said(capsys)
@@ -1452,9 +1620,8 @@ def test_apply_stops_the_tray_and_hands_off_to_start_everything_again(capsys, mo
 def test_a_failed_apply_never_costs_the_tray(capsys, monkeypatch, tmp_path):
     from hato import watch
     from hato.commands import update as command
-    from hato import __version__
     install, _root, pending = _staged_over(tmp_path, monkeypatch, root=None,
-                                           current=__version__)
+                                           current=_running(monkeypatch))
     with open(pending, encoding="utf-8") as handle:
         os.remove(os.path.join(json.load(handle)[u"staged"], update.SWAPPER_NAME))
     calls = _frozen_at(monkeypatch, install, tray=4242)

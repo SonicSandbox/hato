@@ -289,10 +289,19 @@ UNSIGNED = u"unsigned"        # no signature, or not one hato trusts
 UNREADABLE = u"manifest"      # the release carries no manifest, or an unreadable one
 MISMATCH = u"mismatch"        # the tag, the manifest and GitHub's record of the zip disagree
 TOO_OLD = u"too_old"          # this copy is older than the release's `min_from`
+#: ⭐ RUNBOOK 12e -- NONE's reason when GitHub refused an address that asked too often
+#: (60 an hour, unauthenticated): a WAIT, said as one, never "GitHub did not answer".
+RATE_LIMITED = u"rate_limited"
 
 
 class FetchError(Exception):
-    u"""A request that did not bring back what was asked for. Never shown raw."""
+    u"""A request that did not bring back what was asked for. Never shown raw.
+    `limited`: GitHub refused because this address asked too often -- 403 with no
+    requests left, or 429. A wait, not an outage (RUNBOOK 12e)."""
+
+    def __init__(self, message=u"", limited=False):
+        Exception.__init__(self, message)
+        self.limited = bool(limited)
 
 
 class Decision(object):
@@ -340,7 +349,14 @@ def fetch(url, limit):
                                         u"Accept": u"application/vnd.github+json"},
                           timeout=15, stream=True) as response:
             if response.status_code != 200:
-                raise FetchError(u"answered %d" % response.status_code)
+                code, left = response.status_code, response.headers.get(
+                    u"X-RateLimit-Remaining")
+                # ⭐ 12e: a WAIT -- 429; 403 with no requests left; or 403 carrying
+                # `Retry-After`, GitHub's secondary limit (the Layer 12 pass, L12-5)
+                wait = response.headers.get(u"Retry-After") is not None
+                raise FetchError(u"answered %d" % code,
+                                 limited=code == 429 or (code == 403 and left == u"0")
+                                 or (code == 403 and wait))
             body = bytearray()
             for block in response.iter_content(64 * 1024):
                 body.extend(block)
@@ -371,8 +387,10 @@ def _read_manifest(assets, get):
         raw = get(manifest[u"browser_download_url"], MAX_MANIFEST_BYTES)
         sig = get(signature[u"browser_download_url"], MAX_SIGNATURE_BYTES)
         return raw, sig.decode("ascii", "replace")
-    except (FetchError, KeyError, TypeError, AttributeError):
+    except (KeyError, TypeError, AttributeError):
         return None, None
+    # ⚠ a FetchError is NOT caught here: a request that failed is "could not tell"
+    # (`_decide`), never "this release cannot be installed" -- remembered a day
 
 
 def check(current, get=None, frozen=None, windows=None, install_dir=None, keys=None):
@@ -405,8 +423,11 @@ def _decide(current, get=None, frozen=None, windows=None, install_dir=None, keys
         tag = release[u"tag_name"]
         assets = dict((a[u"name"], a) for a in release.get(u"assets") or ()
                       if isinstance(a, dict) and isinstance(a.get(u"name"), str))
-    except (FetchError, ValueError, UnicodeDecodeError, KeyError, TypeError,
-            AttributeError):
+    except FetchError as exc:
+        # ⭐ RUNBOOK 12e: asked too often is a WAIT -- and like every NONE without a
+        # version, never remembered
+        return Decision(NONE, reason=RATE_LIMITED if exc.limited else None)
+    except (ValueError, UnicodeDecodeError, KeyError, TypeError, AttributeError):
         return Decision(NONE)
     version = tag[1:] if isinstance(tag, str) and tag.startswith(u"v") else tag
     if not is_newer(version, current):
@@ -414,7 +435,16 @@ def _decide(current, get=None, frozen=None, windows=None, install_dir=None, keys
     page = release.get(u"html_url") if isinstance(release.get(u"html_url"), str) \
         else RELEASES_PAGE
 
-    raw, signature = _read_manifest(assets, get)
+    try:
+        raw, signature = _read_manifest(assets, get)
+    except FetchError as exc:
+        # 🚨 THE LAYER 12 PASS, L12-6: throttled on the SECOND request, the answer was
+        # TELL/manifest -- remembered for a day as *"can't be installed from inside
+        # hato"*, and the tray acts only on READY. For a copy that installs, a request
+        # that failed is NONE (never remembered); a checkout wants only the notes.
+        if frozen and windows:
+            return Decision(NONE, reason=RATE_LIMITED if exc.limited else None)
+        raw, signature = None, None
     shown = ()
     if raw is not None:
         try:
@@ -973,6 +1003,12 @@ def staged_version(install_dir, current, root=None):
         return None
     if not same_folder(pending.get(u"install"), install_dir):
         return None
+    # 🚨 AND PREPARED BY THIS VERSION (the Layer 12 pass, L12-1): 1.0.5's tray staged
+    # 1.0.6, then a Go back to 1.0.4 -- `hand_off` refuses it (*"it will be downloaded
+    # again"*), and read as waiting it was never downloaded again: a pill for ever, and
+    # `--stage` answering *staged* without a byte. The wall `hand_off` already has.
+    if pending.get(u"from") != current:
+        return None
     return version
 
 
@@ -1086,7 +1122,8 @@ def skipped(path=None):
 
 __all__ = ["CHECK_EVERY_SECONDS", "Decision", "FOLDER", "FOLDER_ENTRIES", "FORMAT",
            "FetchError", "GO_BACK_NAME", "LATEST_URL", "MANIFEST_NAME", "MISMATCH", "Manifest",
-           "ManifestError", "NONE", "PENDING_NAME", "PLATFORM", "PUBLIC_KEYS", "READY",
+           "ManifestError", "NONE", "PENDING_NAME", "PLATFORM", "PUBLIC_KEYS", "RATE_LIMITED",
+           "READY",
            "REPO", "REQUIRED_ENTRIES", "RESULT_NAME", "SIGNATURE_NAME", "SOURCE",
            "STATE_NAME", "SWAPPER_NAME", "StageError", "TELL", "TOO_OLD", "UNREADABLE",
            "UNSIGNED", "ZIP_TEMPLATE", "check", "download", "due", "fetch",

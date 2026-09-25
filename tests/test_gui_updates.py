@@ -162,10 +162,28 @@ def test_from_source_there_is_no_switch_and_no_go_back_only_git_pull():
     assert frozen[u"auto"] and frozen[u"kept"][1] == (u"Go back to 1.0.3", updating.ASK_BACK)
 
 
+def test_a_check_github_refused_says_it_asked_hato_to_wait():
+    u"""⭐ RUNBOOK 12e -- a WAIT is not an outage, and says when it ends."""
+    assert updating.RATE_LIMITED == update.RATE_LIMITED, u"the wire word drifted"
+    wait = updating.settings(updates(decision={u"type": u"update", u"kind": u"none",
+                                               u"version": None, u"reason": u"rate_limited"}))
+    assert u"GitHub asked hato to wait" in wait[u"rest"] and \
+        u"within the hour" in wait[u"rest"], wait[u"rest"]
+    down = updating.settings(updates(decision={u"type": u"update", u"kind": u"none",
+                                               u"version": None, u"reason": None}))
+    assert u"did not answer" in down[u"rest"], u"the control"
+
+
 def test_a_sentence_from_the_command_reads_in_the_windows_voice():
     assert updating.prose(u"the download stopped -- try again") == \
         u"The download stopped — try again"
     assert updating.prose(None) == u""
+    # ⚠ V3 (LOOKED 2026-09-24, the Layer 12 pass): hato's own name stays lower-case --
+    # *"Hato can't write to its own folder"* sat under *"hato 1.0.5 is out"*
+    assert updating.prose(u"hato can't write to its own folder -- download it") == \
+        u"hato can't write to its own folder — download it"
+    assert updating.prose(u"hato's updater closed") == u"hato's updater closed"
+    assert updating.prose(u"hatoful words") == u"Hatoful words", u"the control: the name only"
 
 
 def test_the_view_imports_no_toolkit():
@@ -209,6 +227,10 @@ def frame(**fields):
         setattr(u, name, value)
     window.quit_calls = []
     window.quit_app = lambda: window.quit_calls.append(u"quit")
+    # ⚠ THE WIRE'S SHAPE (LEDGER-HOT): in hato a staged release IS a stage on disk, and
+    # since RUNBOOK 12a the window asks the disk before choosing to download. The disk
+    # here says what the state says; a check about the tray's own download overrides it.
+    window._disk_staged = lambda: window.state.updates.staged
     window.render()
     return window
 
@@ -804,3 +826,488 @@ def test_the_window_asks_for_its_own_updaters_splash(qapp, handed, monkeypatch):
     press(card_buttons(window)[u"Restart now"])
     assert _pump(lambda: closed, 2.0) and asked and asked[0] == 4321, asked
 
+
+
+# ===========================================================================
+# ⭐ LAYER 12 -- updates you can see (RULED 2026-09-24: "Go do all of your leans").
+# 1.0.5 is the first release an install takes BY ITSELF: an update that happened
+# must be SEEN -- the frozen rule, a decision made on a person's behalf gets a surface.
+# ===========================================================================
+
+NOW104 = {u"type": u"update", u"kind": u"none", u"version": u"1.0.4", u"current": u"1.0.4"}
+THIS_PAGE = u"https://github.com/SonicSandbox/hato/releases/tag/v1.0.4"
+
+
+def _check_button(window):
+    return dict((b.text(), b) for b in settings_card(window).findChildren(QPushButton))[
+        u"Check now"]
+
+
+def _in_flight(window):
+    u"""A check that is RUNNING: the read seam hands back a started reader (the suite's
+    `spawn` returns no process, which the window reads as nothing started); the
+    answer is then delivered by hand, as the reader would."""
+    window._read = lambda argv, done, each=None: object()
+
+
+def _fresh(window):
+    u"""The minute tick, armed as `main()` arms it -- never firing on its own."""
+    window.keep_updates_fresh(every_ms=3600000)
+    window._updates_timer.stop()
+    return window._updates_timer.timeout
+
+@pytest.fixture
+def store(monkeypatch, tmp_path):
+    u"""hato's own store, empty and this check's alone. ⚠ Since L12-2 the tick READS the
+    remembered answer: a store shared with other checks would answer for them."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    return tmp_path / "data"
+
+
+def test_an_open_window_sees_a_release_the_tray_downloaded(qapp, store):
+    u"""🚨 12a: the window read what was staged only as it opened. The TRAY stages
+    releases too -- and will not install under an open window -- so its download
+    showed no pill and waited, unseen, until hato was closed."""
+    window = frame(decision=NOW104)                  # the window's own answer: up to date
+    window._check_due = lambda: False
+    tick = _fresh(window)
+    tick.emit()
+    assert not window.update_pill.isVisibleTo(window), u"the control: nothing waiting yet"
+    window._disk_staged = lambda: u"1.0.5"          # ... and then the tray downloaded 1.0.5
+    tick.emit()
+    assert window.state.updates.staged == u"1.0.5"
+    assert window.update_pill.isVisibleTo(window) and \
+        window.update_pill.text.text() == u"hato 1.0.5 is ready", window.update_pill.text.text()
+
+
+def test_check_now_never_downloads_what_the_tray_already_downloaded(qapp):
+    u"""🚨 12a: with the window's memory stale, *Check now* answered READY and the window
+    fetched all 77 MB again -- a stage already whole on disk."""
+    window = frame(decision=NOW104)
+    window._disk_staged = lambda: u"1.0.5"
+    sent = []
+    window.spawn = lambda argv, **kw: sent.append(argv) or None
+    window._update_checked(None, [ready()])
+    assert not any(u"--stage" in argv for argv in sent), sent
+    assert window.state.updates.staged == u"1.0.5"
+    assert u"Restart now" in dict((b.text(), b) for b in
+                                  settings_card(window).findChildren(QPushButton))
+
+
+def test_restart_now_installs_what_the_tray_downloaded(qapp, handed):
+    u"""12a: *Download and restart* over a release the tray already has goes straight to
+    the hand-off -- nothing is fetched twice."""
+    window = frame(decision=ready(), auto=False, card=u"ready")
+    window._disk_staged = lambda: u"1.0.5"
+    sent = []
+    window.spawn = lambda argv, **kw: sent.append(argv) or None
+    buttons = card_buttons(window)
+    press(buttons.get(u"Restart now") or buttons[u"Download and restart"])
+    assert not any(u"--stage" in argv for argv in sent), sent
+    assert [c[0] for c in handed if not isinstance(c, str)] == [u"hand_off"], handed
+
+
+def test_an_open_window_checks_again_once_a_day_and_not_every_minute(qapp, store):
+    u"""12b: the window asked GitHub only as it opened. Its tick asks, in process, whether
+    a day has passed -- and an automatic check is not tried again within the hour
+    (offline, a due check is not remembered, so it would be due at every tick).
+    ⚠ On a clock the check drives (the Layer 12 pass, L12-13): two ticks milliseconds
+    apart passed any throttle above a few milliseconds."""
+    window = frame(decision=NOW104)
+    window._disk_staged = lambda: None
+    clock = [5000.0]
+    window._mono = lambda: clock[0]
+    sent = []
+    window.spawn = lambda argv, **kw: sent.append(argv) or None
+    due = [False]
+    window._check_due = lambda: due[0]
+    tick = _fresh(window)
+    tick.emit()
+    assert sent == [], u"asked GitHub before a day had passed"
+    due[0] = True
+    tick.emit()
+    assert len(sent) == 1 and sent[0][-4:] == [u"update", u"--check", u"--if-due", u"--json"], sent
+    window.state.updates.checking = False           # it failed -- offline
+    clock[0] += 59 * 60
+    tick.emit()
+    assert len(sent) == 1, u"retried within the hour: %s" % sent
+    clock[0] += 2 * 60
+    tick.emit()
+    assert len(sent) == 2, u"never tried again once the hour had passed: %s" % sent
+
+
+def test_checked_ago_moves_while_the_window_stays_open(qapp, store):
+    u"""12b: *"checked 12 min ago"* stood still unless something else on screen was
+    dated -- a number printed once is a confidently wrong number."""
+    at = time.time()
+    window = frame(decision=NOW104, checked_at=at - 12 * 60)
+    window.state.updates.now = at
+    window._check_due = lambda: False
+    settings_card(window)
+    assert u"checked 12 min ago" in window._urest.text(), u"the control"
+    window.state.updates.now = at + 3600
+    _fresh(window).emit()
+    assert u"checked 1 h ago" in window._urest.text(), window._urest.text()
+
+
+def test_the_window_keeps_its_update_knowledge_fresh_as_it_starts():
+    u"""12a/12b: armed by `main()` itself, read off the source -- a tick nothing starts
+    would pass every check above and do nothing for anyone."""
+    with open(gui_app.__file__, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read())
+    main = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == u"main"]
+    calls = set(ast.unparse(n.func) for n in ast.walk(main[0]) if isinstance(n, ast.Call))
+    assert u"window.keep_updates_fresh" in calls, sorted(calls)
+
+
+def test_check_now_stays_in_place_disabled_while_it_checks(qapp):
+    u"""12c: the button used to VANISH while checking -- the row lost its height under
+    the person's pointer (the layout must not depend on the state), and a quick answer
+    looked like a press that did nothing."""
+    window = frame(decision=NOW104)
+    _in_flight(window)
+    row = _check_button(window).parentWidget()
+    tall = row.sizeHint().height()
+    press(_check_button(window))
+    go = _check_button(window)
+    assert not go.isEnabled(), u"a second press could start a second check"
+    assert u"checking…" in window._urest.text()
+    assert go.parentWidget().sizeHint().height() == tall, u"the row changed height"
+
+
+def test_a_check_you_asked_for_that_finds_nothing_says_so_then_steps_back(qapp):
+    u"""12c: *checking…* is held at least `CHECK_HOLD`, then *"✓ you have the newest"*
+    for a few seconds, then the plain line."""
+    window = frame(decision=NOW104)
+    _in_flight(window)
+    later = []
+    window._later = lambda ms, call: later.append((ms, call))
+    press(_check_button(window))
+    window._update_checked(None, [dict(NOW104)])    # an answer faster than the eye
+    assert window.state.updates.checking, u"the answer landed before 'checking…' was seen"
+    assert later and 0 < later[0][0] <= updating.CHECK_HOLD * 1000 + 1, later
+    later.pop(0)[1]()                                # the hold ends
+    assert u"✓ you have the newest" in window._urest.text(), window._urest.text()
+    assert window._urest.property(u"tone") == u"ok"
+    window.state.updates.now += updating.CONFIRM_SECONDS + 1
+    later.pop(0)[1]()                                # the confirmation steps back
+    assert u"up to date" in window._urest.text() and u"✓" not in window._urest.text()
+    assert window._urest.property(u"tone") == u""
+
+
+def test_a_check_nobody_asked_for_confirms_nothing(qapp):
+    u"""12c, the control: the day's own check changes the line quietly -- STARTED the way
+    the tick starts it (the Layer 12 pass, L12-11: delivered by hand, a check that
+    marked every check as asked-for passed)."""
+    window = frame(decision=None)
+    _in_flight(window)
+    later = []
+    window._later = lambda ms, call: later.append((ms, call))
+    window.check_updates()
+    window._update_checked(None, [dict(NOW104)])
+    assert later == [], u"a check nobody asked for was held for the eye: %s" % later
+    assert not window.state.updates.checking
+    assert u"✓" not in updating.settings(window.state.updates)[u"rest"]
+
+
+def test_the_footer_names_the_version_and_opens_updates(qapp):
+    u"""12d: the version was only at the bottom of Settings. The footer says it, and a
+    click brings the Updates card into view."""
+    window = frame(decision=NOW104)
+    assert u">hato 1.0.4<" in window.version_label.text(), window.version_label.text()
+    window.state.updates.current = u"1.0.5"
+    window.render()
+    assert u">hato 1.0.5<" in window.version_label.text(), u"the footer did not follow State"
+    shown = []
+    window._later = lambda ms, call: call()
+    window.panes[gui_app.TAB_SET].ensureWidgetVisible = lambda widget, *a: shown.append(widget)
+    window.version_label.linkActivated.emit(u"updates")
+    assert window.state.tab == gui_app.TAB_SET
+    assert shown and shown[0] is window._ucard, u"the Updates card was not brought into view"
+    titles = [l.text() for l in shown[0].findChildren(QLabel) if l.objectName() == u"cardtitle"]
+    assert titles == [u"UPDATES"], titles
+
+
+def test_whats_new_links_this_versions_own_page_while_nothing_is_on_offer():
+    u"""12f: once the *Updated to X* banner is dismissed there was no way back to what
+    changed. The link goes to THIS version's page -- built from its own number."""
+    for why, fields in ((u"up to date", dict(decision=NOW104)),
+                        (u"not checked yet", dict(decision=None)),
+                        (u"could not check", dict(decision={u"kind": u"none", u"version": None})),
+                        (u"checking", dict(decision=NOW104, checking=True)),
+                        (u"from source", dict(decision=NOW104, frozen=False))):
+        assert updating.settings(updates(**fields))[u"link"] == (u"What's new", THIS_PAGE), why
+    assert updating.settings(updates(decision=ready(), staged=u"1.0.5"))[u"link"] is None, \
+        u"a release on offer has its own card with its notes"
+    odd = updating.settings(updates(decision=NOW104, current=u"dev"))
+    assert odd[u"link"][1] == update.RELEASES_PAGE, u"a page built from a non-version"
+
+
+def test_the_wait_says_only_the_wait():
+    u"""V2 (LOOKED 2026-09-24): *"… within the hour · checked 3"* -- the line's end was
+    cut off by its own link and button. The wait is the news; its line is one clause."""
+    wait = updating.settings(updates(decision={u"type": u"update", u"kind": u"none",
+                                               u"version": None, u"reason": u"rate_limited"},
+                                     checked_at=1000000.0 - 3 * 3600))
+    assert u"checked" not in wait[u"rest"], wait[u"rest"]
+    down = updating.settings(updates(decision={u"type": u"update", u"kind": u"none",
+                                               u"version": None, u"reason": None},
+                                     checked_at=1000000.0 - 3 * 3600))
+    assert u"checked 3 h ago" in down[u"rest"], u"the control: an outage keeps its time"
+
+
+def test_no_line_of_the_updates_card_is_cut_off(qapp):
+    u"""V2, the CLASS: a long sentence on the Updates line -- an offer hato cannot
+    install (*"… so hato won't install it -- download it yourself"*), a checkout's long
+    folder -- WRAPS. Cut off, the part lost was the instruction."""
+    window = frame(decision=ready(kind=u"tell", reason=u"unsigned"))
+    settings_card(window)
+    assert window._urest.wordWrap(), u"the Updates line can be cut off"
+    window = frame(decision=ready(kind=u"tell", reason=u"source"), frozen=False,
+                   folder=u"C:\\Users\\someone\\Documents\\a rather long path\\hato")
+    card = settings_card(window)
+    git = [l for l in card.findChildren(QLabel)
+           if l.objectName() == u"hint" and u"then start hato again" in l.text()]
+    assert git and git[0].wordWrap(), u"the git line can be cut off"
+
+
+def test_the_footers_version_and_credit_read_as_one_phrase(qapp):
+    u"""V1 (LOOKED 2026-09-24): *"hato 1.0.4 │"*, then the footer's own wide gap, then
+    *"Created by"* -- one phrase split by a layout. One group, no spacing inside."""
+    window = frame(decision=NOW104)
+    group = window.version_label.parentWidget()
+    credit = [l for l in group.findChildren(QLabel)
+              if l is not window.version_label and u"Created by" in l.text()]
+    assert credit, u"the credit is not in the version's group"
+    assert group.layout().spacing() == 0
+    assert window.version_label.text().endswith(u"│&nbsp;"), window.version_label.text()
+
+
+# ---------------------------------------------------------------------------
+# THE LAYER 12 PASS (ADVERSARY-2026-09-24.md, Layer 12) -- each finding's own check
+# ---------------------------------------------------------------------------
+
+BLIND = {u"type": u"update", u"kind": u"none", u"version": None, u"reason": None}
+
+
+def test_an_open_window_learns_what_the_trays_own_check_found(qapp, store):
+    u"""🚨 L12-2: the tray asks GitHub once a day into the SAME file -- so next to a tray
+    an open window was never due: it never asked, and never learned what the tray
+    found (*"checked 3 days ago"*; a release the tray could only report, never shown).
+    The tick adopts a remembered answer NEWER than its own, judged against this copy."""
+    at = time.time()
+    window = frame(decision=NOW104, checked_at=at - 3 * 86400)
+    window.state.updates.now = at
+    window._check_due = lambda: False
+    tick = _fresh(window)
+    settings_card(window)
+    update.save_state({u"checked_at": at - 4 * 86400,
+                       u"decision": ready(kind=u"tell", reason=u"unsigned")})
+    tick.emit()
+    assert not window.update_pill.isVisibleTo(window), u"an OLDER answer was adopted"
+    update.save_state({u"checked_at": at - 3600, u"decision": dict(NOW104)})  # the tray, 1 h ago
+    tick.emit()
+    assert u"checked 1 h ago" in window._urest.text(), window._urest.text()
+    update.save_state({u"checked_at": at - 60,
+                       u"decision": ready(kind=u"tell", reason=u"unsigned")})
+    tick.emit()
+    assert window.update_pill.isVisibleTo(window) and \
+        window.update_pill.text.text() == u"hato 1.0.5 is out", window.update_pill.text.text()
+    update.save_state({u"checked_at": at - 30, u"decision": ready(version=u"1.0.4")})
+    tick.emit()
+    assert not window.update_pill.isVisibleTo(window), u"the version running was offered"
+    assert u"up to date" in window._urest.text(), \
+        u"an answer about this very version was not judged against it: %s" % window._urest.text()
+
+
+def test_a_critical_release_the_tray_downloaded_opens_its_card_in_an_open_window(qapp, store):
+    u"""L12-2 + 12a: the tray found a CRITICAL release and downloaded it. An open window
+    learns both on its tick -- and a critical release asks now, as it does at start."""
+    at = time.time()
+    window = frame(decision=NOW104, checked_at=at - 7200)
+    window._check_due = lambda: False
+    tick = _fresh(window)
+    update.save_state({u"checked_at": at - 60, u"decision": ready(critical=True)})
+    window._disk_staged = lambda: u"1.0.5"
+    tick.emit()
+    assert window.state.updates.card == u"ready"
+
+
+@pytest.mark.parametrize("asked", [u"card", u"after-run", u"when-closed"])
+def test_a_download_that_left_the_disk_takes_what_was_asked_about_it_along(qapp, store,
+                                                                            asked):
+    u"""🚨 L12-3, by the tick: only the download was on offer (the last check could not
+    tell -- C9), and it left the disk. The card about it closes, a *Restart after this
+    run* or *When I close hato* is forgotten -- and Settings -> Updates says why."""
+    fields = {u"card": dict(card=u"ready"), u"after-run": dict(after_run=True),
+              u"when-closed": dict(when_closed=True)}[asked]
+    window = frame(decision=dict(BLIND), staged=u"1.0.5", **fields)
+    window._check_due = lambda: False
+    tick = _fresh(window)
+    window._disk_staged = lambda: None                   # ... and then it was gone
+    tick.emit()
+    u = window.state.updates
+    assert (u.card, u.after_run, u.when_closed) == (None, False, False), asked
+    assert u.said == updating.GONE
+    assert updating.prose(updating.GONE) in texts_in(settings_card(window))
+
+
+def test_restart_now_over_a_download_that_left_the_disk_says_why(qapp, handed, store):
+    u"""🚨 L12-3, by the press: *Restart now* re-read the disk, found nothing to install
+    and returned in silence -- the card kept its button, the pill its *ready*, and
+    every press did nothing. The card closes and Settings -> Updates says why, beside
+    *Check now* -- whose press then answers what was said."""
+    window = frame(decision=dict(BLIND), staged=u"1.0.5", card=u"ready")
+    shown = []
+    window._later = lambda ms, call: call()
+    window.panes[gui_app.TAB_SET].ensureWidgetVisible = lambda widget, *a: shown.append(widget)
+    restart = card_buttons(window)[u"Restart now"]
+    window._disk_staged = lambda: None                   # ... and then it was gone
+    press(restart)
+    u = window.state.updates
+    assert u.card is None and not window.update_pill.isVisibleTo(window), \
+        u"the card or the pill stayed"
+    assert window.state.tab == gui_app.TAB_SET and shown and shown[-1] is window._ucard, \
+        u"the press did nothing anyone could see"
+    assert updating.prose(updating.GONE) in texts_in(window._ucard)
+    assert [c for c in handed if not isinstance(c, str)] == [], handed
+    window.spawn = lambda argv, **kw: None
+    press(_check_button(window))
+    assert u.said == u"", u"the old sentence stood beside the new check"
+
+
+def test_an_open_window_checks_and_fetches_nothing_once_handed_off(qapp, store):
+    u"""L12-4: handed off, the window only waits for the splash -- its tick started
+    `hato update --check` from the folder the swapper was about to empty, and the
+    answer could start a download."""
+    window = frame(decision=NOW104)
+    sent = []
+    window.spawn = lambda argv, **kw: sent.append(argv) or None
+    window._check_due = lambda: True
+    tick = _fresh(window)
+    window._handed_off = True
+    tick.emit()
+    assert sent == [], u"checked after the hand-off: %s" % sent
+    window._apply_check([ready()])                      # an answer already on its way
+    assert not any(u"--stage" in argv for argv in sent), u"fetched after the hand-off"
+    window._handed_off = False
+    tick.emit()
+    assert sent, u"the control: a due tick asks"
+
+
+def test_a_check_running_never_hides_what_is_on_offer():
+    u"""L12-7: since 12b the day's own check runs in an open window -- and for its
+    seconds *Restart now* became a disabled *Check now*, with *What's new* beside a
+    release on offer."""
+    for why, fields, button in (
+            (u"ready", dict(decision=ready(), staged=u"1.0.5"), (u"Restart now", updating.RESTART)),
+            (u"out", dict(decision=ready()), (u"Install", updating.INSTALL)),
+            (u"told", dict(decision=ready(kind=u"tell", reason=u"unsigned")),
+             (u"Download", updating.PAGE))):
+        said = updating.settings(updates(checking=True, **fields))
+        assert said[u"button"] == button and not said[u"busy"], (why, said)
+        assert said[u"link"] is None and u"checking" not in said[u"rest"], (why, said)
+    idle = updating.settings(updates(decision=NOW104, checking=True))
+    assert idle[u"busy"] and u"checking…" in idle[u"rest"], u"the control: nothing on offer"
+
+
+def test_from_source_a_check_you_asked_for_says_what_it_found_too():
+    u"""L12-8: the checkout's line ignored the confirmation -- a manual check that found
+    nothing newer said nothing, as a button that did nothing does."""
+    u = updates(decision=NOW104, frozen=False, confirmed_at=1000000.0 - 1)
+    said = updating.settings(u)
+    assert u"✓ you have the newest" in said[u"rest"] and said[u"confirmed"], said
+    u.now += updating.CONFIRM_SECONDS + 1
+    assert u"up to date" in updating.settings(u)[u"rest"], u"the confirmation never stepped back"
+
+
+def test_the_window_reads_a_real_stage_off_the_disk(qapp, monkeypatch, tmp_path):
+    u"""L12-9: every 12a check above replaces `_disk_staged` -- its body never ran, and
+    one answering from MEMORY passed them all. The real one, over a real stage 1.0.4
+    prepared, where the tray leaves it."""
+    import test_update as tu
+    from hato.commands import update as command
+    install, _root, _pending = tu._staged_over(tmp_path, monkeypatch, root=None)
+    monkeypatch.setattr(command, "install_dir", lambda: str(install))
+    window = frame(decision=NOW104)
+    del window._disk_staged                              # the real one, not the mirror
+    window._check_due = lambda: False
+    _fresh(window).emit()
+    assert window.state.updates.staged == u"1.0.5"
+    assert window.update_pill.text.text() == u"hato 1.0.5 is ready"
+
+
+def test_an_open_window_asks_github_when_the_remembered_answer_is_a_day_old(qapp, store):
+    u"""L12-10: the once-a-day check replaces `_check_due` -- one that never said *due*
+    passed it. The REAL one, over the remembered answer's own age."""
+    now = time.time()
+    window = frame(decision=NOW104, checked_at=now - 3600)
+    sent = []
+    window.spawn = lambda argv, **kw: sent.append(argv) or None
+    update.save_state({u"checked_at": now - 3600, u"decision": dict(NOW104)})
+    tick = _fresh(window)
+    tick.emit()
+    assert sent == [], u"asked GitHub an hour after the last answer"
+    update.save_state({u"checked_at": now - update.CHECK_EVERY_SECONDS - 60,
+                       u"decision": dict(NOW104)})
+    tick.emit()
+    assert [argv[-4:] for argv in sent] == [[u"update", u"--check", u"--if-due", u"--json"]], sent
+
+
+def test_a_slow_answer_is_applied_at_once(qapp):
+    u"""L12-12: the hold tops *checking…* up to `CHECK_HOLD` -- it is not added after an
+    answer that already took longer."""
+    window = frame(decision=NOW104)
+    _in_flight(window)
+    clock = [1000.0]
+    window._mono = lambda: clock[0]
+    later = []
+    window._later = lambda ms, call: later.append((ms, call))
+    press(_check_button(window))
+    clock[0] += updating.CHECK_HOLD + 2.0               # GitHub took its time
+    window._update_checked(None, [dict(NOW104)])
+    assert not window.state.updates.checking, u"a slow answer was held again"
+    assert u"✓ you have the newest" in window._urest.text(), window._urest.text()
+    assert [ms for ms, _c in later] == [int(updating.CONFIRM_SECONDS * 1000) + 50], later
+
+
+def test_a_tick_where_nothing_changed_repaints_only_the_line(qapp, store):
+    u"""L12-14: nothing asserted the tick is repaint-only when nothing changed -- a render
+    each minute rebuilds the pane in front of the person (1.0.0's *"the settings tab
+    glitches HARD"*)."""
+    window = frame(decision=NOW104)
+    window._check_due = lambda: False
+    tick = _fresh(window)
+    renders = []
+    real = window.render
+    window.render = lambda: renders.append(1) or real()
+    tick.emit()
+    tick.emit()
+    assert renders == [], u"a tick with nothing new rebuilt the window %d time(s)" % len(renders)
+
+
+def test_the_footer_brings_the_card_as_it_is_now_into_view(qapp):
+    u"""S-b: during a run Settings is rebuilt every 120 ms -- a rebuild between the
+    footer's click and its scroll deleted the card the scroll had captured, and the
+    Updates card never came into view."""
+    window = frame(decision=NOW104)
+    later, shown = [], []
+    window._later = lambda ms, call: later.append(call)
+    window.panes[gui_app.TAB_SET].ensureWidgetVisible = lambda widget, *a: shown.append(widget)
+    window.version_label.linkActivated.emit(u"updates")
+    window.render()                                      # a run's rebuild lands first
+    later.pop(0)()
+    assert shown and shown[0] is window._ucard, u"the scroll went to a card that is gone"
+
+
+def test_an_automatic_check_that_could_not_tell_erases_nothing_known(qapp):
+    u"""L12-15: since 12b the day's check runs in an OPEN window -- and offline its answer
+    took *"hato 1.0.5 is out"* off the screen. The release had gone nowhere; the command
+    does not remember such an answer either."""
+    window = frame(decision=ready(), auto=False)
+    window._update_checked(None, [dict(BLIND)])
+    assert window.update_pill.isVisibleTo(window) and \
+        window.update_pill.text.text() == u"hato 1.0.5 is out", u"a blind answer erased the offer"
+    window._update_checked(None, [dict(NOW104)])
+    assert not window.update_pill.isVisibleTo(window), \
+        u"the control: an answer that DOES tell -- 1.0.5 withdrawn -- is taken"

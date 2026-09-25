@@ -661,6 +661,7 @@ QComboBox QAbstractItemView {
 #udot                { font-size: 12px; color: %(INK_FAINT)s; background: transparent; }
 #udot[tone="ok"]     { color: %(OK)s; }
 #udot[tone="accent"] { color: %(ACCENT)s; }
+#hint[tone="ok"]     { color: %(OK)s; }
 #uver       { font-size: 12px; font-weight: 600; color: %(INK)s; background: transparent; }
 #ucmd       { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px;
               color: %(INK)s; background: %(BG)s; border: 1px solid %(LINE_HI)s;

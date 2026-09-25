@@ -2034,7 +2034,7 @@ def test_the_window_is_found_by_its_program_file():
 def idle(monkeypatch, tmp_path):
     u"""A frozen install with 1.0.9 staged beside it, nothing open -> the world to
     change one thing in, and the hand-offs made."""
-    from hato import config as _config, runlock, update
+    from hato import __version__, config as _config, runlock, update
     monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
     install = tmp_path / u"ツール置き場" / u"hato"
     install.mkdir(parents=True)
@@ -2046,10 +2046,11 @@ def idle(monkeypatch, tmp_path):
     (staged / u"hato.exe").write_bytes(b"1.0.9's window")
     # ⚠ THE WIRE'S SHAPE (LEDGER-HOT): a stage names its install and its entries --
     # 11z made both part of "staged" (A5: whole; A6: this copy's), and a fixture with
-    # neither was a hand-off no stage writes
+    # neither was a hand-off no stage writes. ⚠ And `from`: since the Layer 12 pass
+    # (L12-1) a stage another version prepared is not waiting here
     update.save_json(os.path.join(str(root), update.PENDING_NAME),
                      {u"to": u"1.0.9", u"staged": str(staged), u"install": str(install),
-                      u"entries": {u"hato.exe": u"0" * 64}})
+                      u"from": __version__, u"entries": {u"hato.exe": u"0" * 64}})
     world = {u"auto": True, u"run": False, u"window": False, u"handed": []}
 
     class Cfg(object):
@@ -2087,6 +2088,27 @@ def test_nothing_goes_in_while_hato_is_busy_or_told_not_to(idle, change):
     else:
         idle[change] = True
     assert idle[u"install"]() is False and idle[u"handed"] == [], change
+
+
+def test_a_stage_another_version_prepared_is_never_handed_off_nor_logged(idle, monkeypatch):
+    u"""THE LAYER 12 PASS (suspected, closed by L12-1): over a stage another version
+    prepared -- 1.0.5's, after a Go back to 1.0.4 -- the tray handed off every hour and
+    `hand_off` refused it every hour, into hato.log, for ever. Not waiting now: nothing
+    is handed off and nothing is said, and the next `--auto` fetches it as this copy's."""
+    import json
+    from hato import update
+    said = []
+    monkeypatch.setattr(watch, "complain", lambda text, **kw: said.append(text))
+    # the fixture's install is the folder its tray runs from
+    root = update.stage_root(os.path.dirname(watch.sys.executable))
+    pending = os.path.join(str(root), update.PENDING_NAME)
+    with open(pending, encoding="utf-8") as handle:
+        hand = json.load(handle)
+    update.save_json(pending, dict(hand, **{u"from": u"0.0.1"}))
+    assert idle[u"install"]() is False and idle[u"handed"] == [], idle[u"handed"]
+    assert said == [], u"the tray complained about a stage it should not see: %s" % said
+    update.save_json(pending, hand)
+    assert idle[u"install"]() is True, u"the control: this copy's own stage goes in"
 
 
 def test_an_updater_windows_will_not_start_is_said_and_rested_an_hour(idle, monkeypatch):

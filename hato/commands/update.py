@@ -87,6 +87,9 @@ def sentence(decision, current):
             decision.version, current, TELLS.get(decision.reason, u""), decision.page)
     if decision.version:
         return u"hato %s is up to date." % current
+    if decision.reason == update.RATE_LIMITED:
+        return (u"Could not tell whether a newer hato is out -- GitHub asked hato to wait; "
+                u"try again within the hour.")
     return u"Could not tell whether a newer hato is out -- GitHub did not answer."
 
 
@@ -275,6 +278,17 @@ def run(args, now=None):
         decision = update.check(__version__, install_dir=install_dir())
         if decision.kind != update.READY:
             return _fail(args, sentence(decision, __version__))
+        # ⭐ RUNBOOK 12a: the TRAY stages releases too -- a window whose memory said
+        # nothing was waiting asked again, and 77 MB came down a second time. A
+        # version already whole on disk is answered without a byte.
+        if update.staged_version(install_dir(), __version__) == decision.version:
+            pending = os.path.join(str(update.stage_root(install_dir())),
+                                   update.PENDING_NAME)
+            _say(args, {u"type": u"staged", u"version": decision.version,
+                        u"pending": pending},
+                 u"hato %s is downloaded and checked -- it installs when hato closes."
+                 % decision.version)
+            return EXIT_OK
 
         def progress(done, total):
             if args.json and args.progress:

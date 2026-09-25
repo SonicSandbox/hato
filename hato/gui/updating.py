@@ -25,6 +25,16 @@ import time
 
 READY, TELL, NONE = u"ready", u"tell", u"none"          # `hato.update`'s wire words
 SOURCE = u"source"
+#: ⭐ RUNBOOK 12e -- NONE's reason when GitHub asked hato to wait (`hato.update`'s)
+RATE_LIMITED = u"rate_limited"
+#: ⭐ RUNBOOK 12c -- a check a person asked for shows *checking…* at least this long,
+#: seconds: an answer faster than the eye reads as a button that did nothing.
+CHECK_HOLD = 0.5
+#: ... and one that found nothing new says so this long before the plain line returns.
+CONFIRM_SECONDS = 4.0
+#: ⭐ The Layer 12 pass, L12-3 -- said when the download on offer has left the disk.
+GONE = (u"the update that was downloaded is no longer on this computer — Check now "
+        u"looks for it again")
 STEPS = (u"Downloaded", u"Checked", u"Installing", u"Reopening")
 #: The Settings card's last line -- where updates come from, and what they touch.
 FOOTNOTE = (u"Updates come from github.com/SonicSandbox/hato, and nothing is installed "
@@ -52,6 +62,9 @@ class Updates(object):
         #: when that answer was made, epoch seconds -- for "checked 12 min ago"
         self.checked_at = None
         self.checking = False
+        #: ⭐ RUNBOOK 12c -- when a check a PERSON asked for found nothing newer, for
+        #: *"✓ you have the newest"*; None otherwise
+        self.confirmed_at = None
         #: the version staged and waiting (`update.staged_version`), or None
         self.staged = None
         #: (done, total) bytes while a download runs; None otherwise
@@ -142,6 +155,16 @@ def downloads_by_itself(u):
                 and u.skipped != version and u.downloading is None)
 
 
+def this_version_page(u):
+    u"""⭐ RUNBOOK 12f -- the release page of the version RUNNING, for *What's new* once
+    the *Updated to X* banner is gone. Built from `__version__`, never from an answer;
+    the releases page when this copy's number is not a version."""
+    from hato import update
+    if update.parse_version(u.current) is None:
+        return update.RELEASES_PAGE
+    return u"https://github.com/%s/releases/tag/v%s" % (update.REPO, u.current)
+
+
 def megabytes(size):
     u"""67_400_000 -> '67 MB'; nothing known -> u''."""
     if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
@@ -175,6 +198,10 @@ def prose(text):
     it was damaged…"* in the card). ⭐ Converted here, once -- the command keeps its
     own style for a terminal."""
     text = (text or u"").strip().replace(u" -- ", u" — ")
+    # ⚠ EXCEPT hato's own name, lower-case wherever it stands (LOOKED 2026-09-24, the
+    # Layer 12 pass, V3: *"Hato can't write to its own folder"* under *"hato 1.0.5 is out"*)
+    if text.startswith(u"hato") and not text[4:5].isalnum():
+        return text
     return text[:1].upper() + text[1:]
 
 
@@ -375,16 +402,23 @@ CHECK, INSTALL, COPY, ASK_BACK = u"check", u"install", u"copy", u"askback"
 
 def settings(u, running=False):
     u"""The Updates card -> {mode: 'frozen'|'source', dot: 'ok'|'accent'|'dim',
-    lead, rest, button: (text, action) or None, link, auto, kept, git, copy, note,
-    said}. ⛔ From source there is no switch and no *Go back* -- controls vanish
+    lead, rest, button: (text, action) or None, busy (the button disabled: a check is
+    running), confirmed (the line says a manual check found nothing newer), link,
+    auto, kept, git, copy, note, said}. ⛔ From source there is no switch and no *Go back* -- controls vanish
     where they would be meaningless; the `git pull` line is the instruction."""
     decision = _decision(u)
     version = offered(u)
     out = {u"mode": u"frozen" if u.frozen else u"source", u"button": None,
            u"link": None, u"git": None, u"copy": None, u"kept": None,
-           u"said": prose(u.said), u"auto": None, u"note": FOOTNOTE}
+           u"said": prose(u.said), u"auto": None, u"note": FOOTNOTE,
+           u"busy": False, u"confirmed": False}
     checked = (u" · checked %s" % ago(u.clock() - u.checked_at)
                if u.checked_at is not None else u"")
+    # ⭐ RUNBOOK 12c: a check a person asked for says what it found, for a moment --
+    # from source too (the Layer 12 pass, L12-8)
+    confirmed = (u.confirmed_at is not None and not u.checking
+                 and decision.get(u"kind") == NONE and bool(decision.get(u"version"))
+                 and 0 <= u.clock() - u.confirmed_at < CONFIRM_SECONDS)
     if not u.frozen:
         out[u"note"] = SOURCE_NOTE
         if version:
@@ -397,14 +431,17 @@ def settings(u, running=False):
         else:
             out.update(dot=u"ok" if decision.get(u"kind") == NONE else u"dim",
                        lead=u"hato %s" % u.current,
-                       rest=u" · run from source" + (u" · up to date" + checked
-                                                     if decision.get(u"kind") == NONE
-                                                     else u""),
-                       button=(u"Check now", CHECK) if not u.checking else None)
+                       rest=u" · run from source" + (
+                           u" · checking…" if u.checking
+                           else u" · ✓ you have the newest" if confirmed
+                           else u" · up to date" + checked if decision.get(u"kind") == NONE
+                           else u""),
+                       # ⭐ 12c: the button STAYS while checking -- disabled, so the
+                       # press shows and the row keeps its height
+                       button=(u"Check now", CHECK), busy=u.checking, confirmed=confirmed,
+                       link=(u"What's new", this_version_page(u)))
         return out
-    if u.checking:
-        out.update(dot=u"dim", lead=u"hato %s" % u.current, rest=u" · checking…")
-    elif version and u.staged == version:
+    if version and u.staged == version:
         out.update(dot=u"accent", lead=u"hato %s is ready" % version,
                    rest=u" · you have %s" % u.current,
                    button=(u"Restart after this run" if running else u"Restart now", RESTART))
@@ -419,16 +456,33 @@ def settings(u, running=False):
         out.update(dot=u"accent", lead=u"hato %s is out" % version,
                    rest=u" · " + prose(_tells().get(decision.get(u"reason"), u"")),
                    button=(u"Download", PAGE))
+    elif u.checking:
+        # ⭐ RUNBOOK 12c: the button STAYS, disabled -- it used to vanish, the row's
+        # height jumped, and a quick answer looked like a press that did nothing.
+        # ⚠ Only once nothing is on offer (the Layer 12 pass, L12-7): the day's own
+        # check hid a *Restart now* behind a disabled *Check now* for its seconds.
+        out.update(dot=u"dim", lead=u"hato %s" % u.current, rest=u" · checking…",
+                   button=(u"Check now", CHECK), busy=True,
+                   link=(u"What's new", this_version_page(u)))
     elif decision.get(u"kind") == NONE and decision.get(u"version"):
-        out.update(dot=u"ok", lead=u"hato %s" % u.current, rest=u" · up to date" + checked,
-                   button=(u"Check now", CHECK))
+        out.update(dot=u"ok", lead=u"hato %s" % u.current,
+                   rest=(u" · ✓ you have the newest" if confirmed
+                         else u" · up to date" + checked),
+                   button=(u"Check now", CHECK), confirmed=confirmed,
+                   link=(u"What's new", this_version_page(u)))
     elif decision.get(u"kind") == NONE:
         out.update(dot=u"dim", lead=u"hato %s" % u.current,
-                   rest=u" · could not check — GitHub did not answer" + checked,
-                   button=(u"Check now", CHECK))
+                   # ⚠ the wait is the news -- its line stays ONE clause (LOOKED
+                   # 2026-09-24: *"… · checked 3"* was cut off at the end)
+                   rest=(u" · GitHub asked hato to wait — try again within the hour"
+                         if decision.get(u"reason") == RATE_LIMITED
+                         else u" · could not check — GitHub did not answer" + checked),
+                   button=(u"Check now", CHECK),
+                   link=(u"What's new", this_version_page(u)))
     else:
         out.update(dot=u"dim", lead=u"hato %s" % u.current, rest=u" · not checked yet",
-                   button=(u"Check now", CHECK))
+                   button=(u"Check now", CHECK),
+                   link=(u"What's new", this_version_page(u)))
     out[u"auto"] = (u"Update automatically",
                     u" · downloads quietly, restarts only when you say — or while hato "
                     u"is closed", AUTO_TIP)
@@ -443,7 +497,8 @@ def settings(u, running=False):
 ACTIONS = (RESTART, LATER, CLOSE, PAGE, GO_BACK, DISMISS, AGAIN, CHECK, INSTALL, COPY,
            ASK_BACK)
 
-__all__ = ["ACTIONS", "AGAIN", "ASK_BACK", "AUTO_TIP", "CHECK", "CLOSE", "COPY", "DISMISS",
+__all__ = ["ACTIONS", "AGAIN", "ASK_BACK", "AUTO_TIP", "CHECK", "CHECK_HOLD", "CLOSE",
+           "CONFIRM_SECONDS", "COPY", "DISMISS", "GONE", "RATE_LIMITED", "this_version_page",
            "FOOTNOTE", "GO_BACK", "INSTALL", "LATER", "NONE", "PAGE", "READY", "RESTART",
            "SOURCE", "SOURCE_NOTE", "STEPS", "TELL", "TO_CARD", "TO_SETTINGS", "Updates",
            "ago", "back_card", "banner", "card", "downloads_by_itself", "installable",

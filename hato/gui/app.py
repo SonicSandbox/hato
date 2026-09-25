@@ -2466,20 +2466,43 @@ class HatoWindow(Styled):
             box.addWidget(tally)
 
         box.addStretch(1)
+        #: ⭐ RUNBOOK 12d -- the version, one click from Settings -> Updates. Its
+        #: words come from `State` in `render()`, never written here.
+        #: ⚠ ONE GROUP WITH THE CREDIT, NO SPACING INSIDE IT (LOOKED 2026-09-24):
+        #: as two items of the footer's own row, the row's gap sat inside one
+        #: phrase -- *"hato 1.0.4 │      Created by"*.
+        credits = QWidget(foot)
+        credits_line = QHBoxLayout(credits)
+        credits_line.setContentsMargins(0, 0, 0, 0)
+        credits_line.setSpacing(0)
+        self.version_label = QLabel(u"", credits)
+        self.version_label.setObjectName(u"credit")
+        self.version_label.setTextFormat(Qt.TextFormat.RichText)
+        self.version_label.setOpenExternalLinks(False)
+        self.version_label.linkActivated.connect(lambda _href: self.open_updates())
+        self.version_label.setToolTip(
+            u"Settings → Updates: check for a new version, choose whether hato updates "
+            u"itself, or go back to the version before")
+        palette = self.version_label.palette()
+        palette.setColor(QPalette.ColorRole.Link, QColor(theme.LINK))
+        palette.setColor(QPalette.ColorRole.LinkVisited, QColor(theme.LINK))
+        self.version_label.setPalette(palette)
+        credits_line.addWidget(self.version_label)
         #: On the footer line, left of the cost. *"put the created by and
         #: github link to the left of the api calls so its all on one line."*
         credit = label(
             u"Created by SonicSandbox │ "
             u"<a href=\"%s\" style=\"%s\">GitHub</a>"
             % (REPO_URL, theme.LINK_CSS),
-            u"credit", foot)
+            u"credit", credits)
         credit.setTextFormat(Qt.TextFormat.RichText)
         credit.setOpenExternalLinks(True)
         palette = credit.palette()
         palette.setColor(QPalette.ColorRole.Link, QColor(theme.LINK))
         palette.setColor(QPalette.ColorRole.LinkVisited, QColor(theme.LINK))
         credit.setPalette(palette)
-        box.addWidget(credit)
+        credits_line.addWidget(credit)
+        box.addWidget(credits)
 
         self.right_label = label(u"", u"right", foot)
         box.addWidget(self.right_label)
@@ -2548,6 +2571,12 @@ class HatoWindow(Styled):
         self._render_update()
 
         self.live_label.setText(footer_status(state))
+        # ⭐ RUNBOOK 12d -- the running version, one click from Settings -> Updates
+        import html
+        current = state.updates.current
+        self.version_label.setText(
+            u"<a href=\"updates\" style=\"%s\">hato %s</a> │&nbsp;"
+            % (theme.LINK_CSS, html.escape(current)) if current else u"")
         # ⭐ 10b -- the line says WHERE, on hover: the substance, not commentary.
         # ⚠ The path on a line of its own, NOT through `wrap()`: that broke it at
         # a hyphen inside a folder name (LOOKED, 2026-09-24).
@@ -4354,6 +4383,8 @@ class HatoWindow(Styled):
         `updating.settings()`. ⛔ From source: no switch, no *Go back* -- the
         `git pull` line instead (controls vanish where they would be meaningless)."""
         card, body = self._card(u"Updates", parent)
+        #: ⭐ RUNBOOK 12d -- the footer's version brings THIS card into view
+        self._ucard = card
         said = updating.settings(self.state.updates, running=self._run_is_going())
         top = QWidget(card)
         line = QHBoxLayout(top)
@@ -4363,13 +4394,26 @@ class HatoWindow(Styled):
         mark(dot, u"tone", said[u"dot"])
         line.addWidget(dot)
         line.addWidget(plain(said[u"lead"], u"uver", top))
-        line.addWidget(plain(said[u"rest"], u"hint", top), 1)
+        # ⚠ WRAPPED (LOOKED 2026-09-24): a long sentence here -- an offer hato cannot
+        # install, *"… download it yourself"* -- was cut off by the line's own link
+        # and button, and the cut part was the instruction
+        rest = plain(said[u"rest"], u"hint", top, wrapped=True)
+        # ⭐ 12c: a check a person asked for that found nothing says so, in the OK
+        # colour, for a moment
+        mark(rest, u"tone", u"ok" if said[u"confirmed"] else u"")
+        #: ⭐ RUNBOOK 12b/12c -- repainted IN PLACE by the minute tick and when the
+        #: confirmation steps back (`_refresh_update_line`): no Settings rebuild
+        self._urest = rest
+        line.addWidget(rest, 1)
         if said[u"link"] and said[u"link"][1]:
             line.addWidget(link_label(said[u"link"][0], said[u"link"][1], u"tablink", top))
         if said[u"button"]:
             text, action = said[u"button"]
             go = button(text, top, accent=action in (updating.RESTART, updating.INSTALL))
             go.clicked.connect(lambda _checked=False, a=action: self.update_action(a))
+            # ⭐ 12c: while a check runs the button STAYS, disabled -- it used to
+            # vanish, and the row's height jumped under the person's pointer
+            go.setEnabled(not said[u"busy"])
             line.addWidget(go)
         body.addWidget(top)
         if said[u"git"]:
@@ -4378,7 +4422,7 @@ class HatoWindow(Styled):
             line.setContentsMargins(0, 0, 0, 0)
             line.setSpacing(10)
             line.addWidget(label(said[u"git"][0], u"ucmd", row))
-            line.addWidget(plain(said[u"git"][1], u"hint", row), 1)
+            line.addWidget(plain(said[u"git"][1], u"hint", row, wrapped=True), 1)
             text, action = said[u"copy"]
             copy = button(text, row)
             copy.clicked.connect(lambda _checked=False, a=action: self.update_action(a))
@@ -4498,14 +4542,8 @@ class HatoWindow(Styled):
                 u.staged = update.staged_version(install, u.current)
                 u.kept = update.kept_version(install, u.current)
             saved = update.load_state()
-            decision = saved.get(u"decision")
-            if isinstance(decision, dict):
-                decision = dict(decision)
-                # ⚠ judged against THIS copy, as `hato update --if-due` does: an
-                # answer saved before an update would offer the version now running
-                if decision.get(u"kind") != updating.NONE and not update.is_newer(
-                        decision.get(u"version"), u.current):
-                    decision[u"kind"] = updating.NONE
+            decision = self._judged(saved.get(u"decision"))
+            if decision is not None:
                 u.decision = decision
             at = saved.get(u"checked_at")
             u.checked_at = at if isinstance(at, (int, float)) and not isinstance(at, bool) \
@@ -4514,6 +4552,20 @@ class HatoWindow(Styled):
         except Exception as exc:              # noqa: BLE001
             sys.stderr.write(u"hato: the update state could not be read: %s\n" % exc)
         return u
+
+    def _judged(self, decision):
+        u"""A saved answer, judged against THIS copy, as `hato update --if-due` does: an
+        answer saved before an update would offer the version now running. -> a copy,
+        or None when it is not an answer. ⭐ One rule, for the window's start
+        (`read_updates`) and its minute tick (`refresh_remembered`). ⛔ May raise."""
+        from hato import update
+        if not isinstance(decision, dict):
+            return None
+        decision = dict(decision)
+        if decision.get(u"kind") != updating.NONE and not update.is_newer(
+                decision.get(u"version"), self.state.updates.current):
+            decision[u"kind"] = updating.NONE
+        return decision
 
     def poll_update_result(self):
         u"""The swapper's result, when it lands AFTER this window opened -- which,
@@ -4539,6 +4591,172 @@ class HatoWindow(Styled):
         self.render()
         return u.result
 
+    #: ⭐ RUNBOOK 12a/12b -- how often an OPEN window re-reads its update knowledge;
+    #: and how long after an automatic check the next may start: offline, a due check
+    #: fails WITHOUT being remembered, and would otherwise be due again every minute.
+    UPDATES_MS = 60000
+    AUTO_CHECK_EVERY = 3600.0
+    _last_auto_check = None
+
+    def _later(self, ms, call):
+        u"""`call` in `ms` milliseconds, on this window's thread. A seam: the suite runs
+        it at once, or holds it, instead of waiting on the clock."""
+        QTimer.singleShot(int(ms), call)
+
+    def _mono(self):
+        u"""Seconds on a clock that only goes forward -- the check's hold, and the hour
+        between automatic checks. A seam: the suite moves it (the Layer 12 pass, L12-13:
+        two ticks milliseconds apart passed any throttle above a few ms)."""
+        return time.monotonic()
+
+    def _disk_staged(self):
+        u"""The release staged and waiting, as the DISK says. ⛔ May raise."""
+        from hato import update
+        from hato.commands import update as command
+        return update.staged_version(command.install_dir(), self.state.updates.current)
+
+    def refresh_staged(self):
+        u"""⭐ RUNBOOK 12a -- what is downloaded and waiting, read from the DISK. -> True
+        when it changed. The TRAY stages releases too, and it will not install under an
+        open window: read only at start, a release it downloaded showed no pill and
+        waited silently until hato closed -- and *Check now* fetched all 77 MB again.
+        ⛔ Never raises. A checkout stages nothing."""
+        u = self.state.updates
+        if not u.frozen:
+            return False
+        try:
+            staged = self._disk_staged()
+        except Exception:                     # noqa: BLE001
+            return False
+        if staged == u.staged:
+            return False
+        u.staged = staged
+        if staged is None and not updating.installable(u):
+            # 🚨 THE LAYER 12 PASS, L12-3: the download on offer LEFT the disk, and
+            # nothing installable is left. Kept, the card said *"hato  is out"* with no
+            # version and its *Restart now* did nothing at every press; a *Restart
+            # after this run* or *When I close hato* waited on a release that was
+            # gone. Closed and forgotten -- and said, beside *Check now*.
+            asked = u.after_run or u.when_closed or u.card == u"ready"
+            if u.card == u"ready" and updating.offered(u) is None:
+                u.card = None
+            u.after_run = u.when_closed = False
+            if asked:
+                u.said = updating.GONE
+        return True
+
+    def refresh_remembered(self):
+        u"""⭐ RUNBOOK 12b (the Layer 12 pass, L12-2) -- the last answer as the DISK
+        remembers it, adopted when it is NEWER than the one on screen. -> True when
+        it was. The tray asks GitHub once a day too, into the same file: next to a
+        tray an open window was never due, so it never asked -- and never learned
+        what the tray found (*"checked 3 days ago"*; a release the tray could only
+        report, unseen). ⛔ Never raises; never while this window's own check is out.
+        ⛔ And it starts no download: the tray may be fetching that release now."""
+        from hato import update
+        u = self.state.updates
+        if u.checking:
+            return False
+        try:
+            saved = update.load_state()
+            at = saved.get(u"checked_at")
+            fresh = (isinstance(at, (int, float)) and not isinstance(at, bool)
+                     and (u.checked_at is None or at > u.checked_at))
+            if not fresh:
+                return False
+            decision = self._judged(saved.get(u"decision"))
+        except Exception:                     # noqa: BLE001
+            return False
+        u.checked_at = at
+        if decision is not None:
+            u.decision = decision
+        return True
+
+    def _check_due(self):
+        u"""Has a day passed since hato last asked GitHub? Read in process: nothing
+        is spawned to find out. ⛔ Never raises."""
+        from hato import update
+        try:
+            return update.due(update.load_state(), time.time())
+        except Exception:                     # noqa: BLE001
+            return False
+
+    def keep_updates_fresh(self, every_ms=None):
+        u"""⭐ RUNBOOK 12a + 12b -- an OPEN window's update knowledge, kept true. -> the
+        timer. Once a minute: what is staged, read from the disk (12a); the last answer
+        the disk remembers, when the tray's check is newer than this window's (12b,
+        L12-2); the once-a-day check when it is DUE -- asked in process, and at most
+        once an hour, since an offline check is not remembered (12b); and the Updates
+        line's *checked … ago*, repainted in place -- it stood still unless something
+        else on screen was dated. ⛔ Nothing, once handed off (L12-4)."""
+        def tick():
+            if self._handed_off:
+                # ⛔ THE LAYER 12 PASS, L12-4: handed off, this window only waits for
+                # the splash -- a check started now ran a program from the folder the
+                # swapper is about to empty, and its answer could start a download
+                return
+            u = self.state.updates
+            changed = self.refresh_staged()
+            # ⭐ L12-2: what the TRAY's own check found -- it asks once a day into the
+            # same file, so next to it this window was never due
+            changed = self.refresh_remembered() or changed
+            if changed:
+                self._maybe_open_critical()
+                self.render()
+            last = self._last_auto_check
+            if not u.checking and (last is None or self._mono() - last
+                                   >= self.AUTO_CHECK_EVERY) and self._check_due():
+                self.check_updates()
+            self._refresh_update_line()
+
+        timer = QTimer(self)
+        timer.timeout.connect(tick)
+        timer.start(int(every_ms or self.UPDATES_MS))
+        self._updates_timer = timer
+        return timer
+
+    def _refresh_update_line(self):
+        u"""⭐ RUNBOOK 12b/12c -- the Updates line's words and tone, repainted IN PLACE:
+        *checked 12 min ago* moves with the clock, and a confirmation steps back to
+        the plain line, without rebuilding Settings. -> True when the words changed."""
+        rest = getattr(self, u"_urest", None)
+        if rest is None:
+            return False
+        said = updating.settings(self.state.updates, running=self._run_is_going())
+        tone = u"ok" if said[u"confirmed"] else u""
+        try:
+            changed = rest.text() != said[u"rest"]
+            if changed:
+                rest.setText(said[u"rest"])
+            if rest.property(u"tone") != tone:
+                mark(rest, u"tone", tone)
+        except RuntimeError:                  # the card was rebuilt: this label is gone
+            self._urest = None
+            return False
+        return changed
+
+    def open_updates(self):
+        u"""⭐ RUNBOOK 12d -- the footer's version: Settings, with the Updates card in
+        view (it is the last card). -> the card, or None."""
+        self.show_tab(TAB_SET)
+        card = getattr(self, u"_ucard", None)
+        if card is None:
+            return None
+
+        def into_view():
+            # ⚠ the card AS IT IS NOW (the Layer 12 pass, S-b): during a run Settings
+            # is rebuilt every 120 ms, and the one captured above may be gone
+            now = getattr(self, u"_ucard", None)
+            if now is None:
+                return
+            try:
+                self.panes[TAB_SET].ensureWidgetVisible(now)
+            except RuntimeError:              # rebuilt since
+                pass
+        # ⚠ once the pane has laid out: a card built this instant has no geometry yet
+        self._later(0, into_view)
+        return card
+
     def check_updates(self, force=False):
         u"""`hato update --check`: once a day, unless `force` (*Check now*). -> the
         reader, or None when nothing was started."""
@@ -4546,6 +4764,17 @@ class HatoWindow(Styled):
         if u.checking:
             return None
         u.checking = True
+        # ⭐ RUNBOOK 12c: a check a PERSON asked for shows itself and says what it
+        # found; 12b: an automatic one is not tried again for an hour
+        self._check_manual = bool(force)
+        self._check_began = self._mono()
+        u.confirmed_at = None
+        if force:
+            # ⚠ a check a person asked for answers what was said before it -- L12-3's
+            # *"… Check now looks for it again"* stood beside the check's own answer
+            u.said = u""
+        else:
+            self._last_auto_check = self._mono()
         flags = [u"--check"] + ([] if force else [u"--if-due"])
         runner = self._read(gui_run.argv_for_update(*flags), self._update_checked)
         if runner is None:
@@ -4554,17 +4783,50 @@ class HatoWindow(Styled):
         return runner
 
     def _update_checked(self, finished, events):
-        u"""The check's answer. ⭐ And what it sets going: the quiet download when
+        u"""The check's answer. ⭐ RUNBOOK 12c: one a PERSON asked for is held until
+        *checking…* has been on screen `CHECK_HOLD` -- an instant answer looked like a
+        press that did nothing -- and then applied."""
+        manual = getattr(self, u"_check_manual", False)
+        began = getattr(self, u"_check_began", None)
+        hold = (updating.CHECK_HOLD - (self._mono() - began)
+                if manual and began is not None else 0)
+        if hold > 0:
+            self._later(int(hold * 1000) + 1, lambda: self._apply_check(events, manual))
+            return None
+        return self._apply_check(events, manual)
+
+    def _apply_check(self, events, manual=False):
+        u"""The answer, applied. ⭐ And what it sets going: the quiet download when
         updating is automatic, and a critical release's card -- once."""
         from hato import update
         u = self.state.updates
         u.checking = False
+        self._check_manual = False
         answers = [e for e in events if isinstance(e, dict) and e.get(u"type") == u"update"]
+        blind = bool(answers) and answers[-1].get(u"kind") == updating.NONE and not (
+            answers[-1].get(u"version"))
+        if blind and updating.offered(u):
+            # ⚠ A CHECK THAT COULD NOT TELL ERASES NOTHING KNOWN (the Layer 12 pass,
+            # L12-15): since 12b the day's check runs in an OPEN window, and offline it
+            # took *"hato 1.0.5 is out"* off the screen -- the release had gone nowhere.
+            # The command does not remember such an answer either. (*Check now* shows
+            # only while nothing is on offer, so a press still says *could not check*.)
+            answers = []
         if answers:
             u.decision = answers[-1]
             at = update.load_state().get(u"checked_at")
             u.checked_at = at if isinstance(at, (int, float)) else u.clock()
-            if updating.downloads_by_itself(u):
+            # ⭐ RUNBOOK 12a: the DISK first -- the tray may have downloaded it
+            # already, and a stale memory fetched all 77 MB a second time
+            self.refresh_staged()
+            if manual and u.decision.get(u"kind") == updating.NONE \
+                    and u.decision.get(u"version"):
+                # ⭐ 12c: *"✓ you have the newest"*, then the plain line again
+                u.confirmed_at = u.clock()
+                self._later(int(updating.CONFIRM_SECONDS * 1000) + 50,
+                            self._refresh_update_line)
+            # ⛔ L12-4: never once handed off -- the swapper is emptying the folder
+            if updating.downloads_by_itself(u) and not self._handed_off:
                 self.stage_update()
             self._maybe_open_critical()
         self.render()
@@ -4656,8 +4918,19 @@ class HatoWindow(Styled):
         draws the splash and opens the new window.
         ⛔ Never under a run: it waits for the run's end (`after_run`)."""
         u = self.state.updates
+        shown = u.card is not None
+        # ⭐ RUNBOOK 12a: what the tray downloaded is not downloaded again
+        self.refresh_staged()
         version = updating.offered(u)
         if not updating.installable(u):
+            # 🚨 THE LAYER 12 PASS, L12-3: this returned in silence -- a press nobody
+            # could see do anything. A card that closed under the press (its download
+            # left the disk: `refresh_staged`) hands over to Settings -> Updates, which
+            # says why beside *Check now*.
+            if shown and u.card is None:
+                self.open_updates()
+            else:
+                self.render()
             return None
         if u.staged != version:
             return self.stage_update(restart=True)
@@ -6422,6 +6695,9 @@ def main(argv=None):
     # ⭐ So a run started from the tray, the scheduler or a terminal shows up
     # here without anybody pressing anything.
     window.follow_other_runs()
+    # ⭐ RUNBOOK 12a/12b -- and a release the TRAY downloaded, and the day's check,
+    # while this window stays open
+    window.keep_updates_fresh()
     # ⭐ RUNBOOK 8e -- what hato REMEMBERS needs a person, whichever run last
     # looked (4a), the blacklist it actually holds (D5), and whether the tray is
     # there to keep a promised retry (8h). Read, never assumed.
