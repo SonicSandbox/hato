@@ -123,7 +123,7 @@ except ImportError as _exc:                               # pragma: no cover
         "works without a window (%s)" % _exc)
 
 from hato import formats
-from hato.gui import branding, theme
+from hato.gui import branding, theme, updating
 from hato.gui import run as gui_run
 
 #: ⭐ ONE PLACE, because it is now in three. The repository hato came from --
@@ -425,6 +425,15 @@ class State(object):
         #: ⭐ HANDOFF 4c -- video key -> the retry date the person chose to wait
         #: for (`run.apply_waits`). Kept in hato's folder by the window.
         self.waits = {}
+        # ---- ⭐ LAYER 11: updating hato itself ----
+        #: Everything the update screens say comes from this, through
+        #: `gui/updating.py` -- ⛔ no Qt there, so it is asserted without a display.
+        self.updates = updating.Updates()
+        #: False when a tray IS running that cannot read `auto_update` (1.0.3 and
+        #: before) -- read from its pid file, like `tray_reads_formats`.
+        self.tray_reads_updates = True
+        #: config.toml carries `auto_update` -- which an older hato REFUSES.
+        self.update_key_in_file = False
 
     def daily(self):
         u"""⭐ D2 -- the daily run's time while one is REGISTERED, else None.
@@ -794,6 +803,13 @@ def episode_name(row):
     parts = [row.get(u"title") or row.get(u"name") or u"",
              episode_text(row.get(u"episode"))]
     return u" ".join(p for p in parts if p)
+
+
+#: ⭐ RUNBOOK 10b -- the footer's line after an error the window caught. RULED on a
+#: picture (Sonic, 2026-09-24: *"I want to include the logging in this next
+#: update"*). ⛔ No exception name: build-ui's frozen rule, the engine's vocabulary
+#: is for the log.
+ERROR_LINE = u"something went wrong — it is written in hato.log"
 
 
 def footer_status(state):
@@ -2068,6 +2084,152 @@ class ClearDialog(QDialog):
         return bool(self._blacklist is not None and self._blacklist.isChecked())
 
 
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 11 -- updating hato (gui-mock/mock-update.html, mechanism A, ruled)
+# ---------------------------------------------------------------------------
+
+def plain(text, name=None, parent=None, wrapped=False):
+    u"""A label that can only ever be TEXT. -> QLabel
+
+    ⛔ A release's notes come from GitHub: remote text never reaches a widget
+    that could read it as markup (`05-interface.md`'s rule for engine prose, and
+    the manifest's parser already refuses control characters)."""
+    widget = QLabel(safe(text), parent)
+    widget.setTextFormat(Qt.TextFormat.PlainText)
+    if name:
+        widget.setObjectName(name)
+    if wrapped:
+        widget.setWordWrap(True)
+        widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+    return widget
+
+
+class UpdatePill(Clickable):
+    u"""*hato 1.0.5 is ready · Restart*, on the tab line. ⭐ There only while an update
+    is on offer -- `updating.pill()` decides; this only paints what it says. The dot
+    pulses because something waits on a person, and for no other reason."""
+
+    #: ⚠ FIXED, and the sheet's radius is under HALF of it: LOOKED 2026-09-24 --
+    #: laid out at ~22 px its 12 px radius was over half, and Qt dropped the
+    #: rounding entirely, so the pill drew as a box (theme.py's `#info` note).
+    HEIGHT = 26
+
+    def __init__(self, parent=None):
+        super().__init__(parent, u"upill")
+        self.setFixedHeight(self.HEIGHT)
+        box = QHBoxLayout(self)
+        box.setContentsMargins(8, 0, 12, 0)
+        box.setSpacing(7)
+        self.dot = PulseDot(self)
+        box.addWidget(self.dot)
+        self.text = label(u"", u"upilltext", self)
+        box.addWidget(self.text)
+        box.addWidget(label(u"·", u"upillsep", self))
+        self.go = label(u"", u"upillgo", self)
+        box.addWidget(self.go)
+        self.action = None
+        self.hide()
+
+    def paint_answer(self, answer):
+        u"""`answer`: `updating.pill()`'s -- None hides the pill."""
+        if answer is None:
+            self.action = None
+            self.dot.set_running(False)
+            self.hide()
+            return
+        text, go, self.action = answer
+        self.text.setText(text)
+        self.go.setText(go)
+        self.dot.set_running(True)
+        self.show()
+
+
+class UpdateVeil(QWidget):
+    u"""The window dimmed under the update card.
+
+    ⚠ OVER THE WHOLE WINDOW, not the body -- the mock's own first shot dimmed only
+    the rows and left *Run now* bright and clickable behind a card about closing
+    the window. ⛔ Every click that misses the card is swallowed."""
+
+    WIDTH = 470                               #: the mock's card width, logical px
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setObjectName(u"uveil")
+        self.card = None
+        self.hide()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(theme.VEIL))
+
+    def mousePressEvent(self, event):
+        event.accept()
+
+    def place(self, card):
+        u"""Show `card` centred over the window, replacing any card there.
+
+        ⚠ POLISHED BEFORE IT IS MEASURED -- LOOKED 2026-09-24: measured first, its
+        wrapped lines were sized in the default font rather than the sheet's, and
+        the card stood taller than its words, with empty bands inside it."""
+        self.take()
+        self.card = card
+        card.setParent(self)
+        self.setGeometry(self.parentWidget().rect())
+        self.raise_()
+        self.show()
+        card.ensurePolished()
+        card.show()
+        self.centre()
+        QTimer.singleShot(0, self.centre)
+
+    def take(self):
+        u"""Remove the card, and the veil with it."""
+        if self.card is not None:
+            self.card.setParent(None)
+            self.card.deleteLater()
+            self.card = None
+        self.hide()
+
+    def centre(self):
+        if self.card is None:
+            return
+        width = min(self.WIDTH, max(200, self.width() - 40))
+        layout = self.card.layout()
+        if layout is not None:
+            layout.activate()
+        height = (layout.totalHeightForWidth(width) if layout is not None
+                  and layout.hasHeightForWidth() else self.card.sizeHint().height())
+        self.card.setGeometry((self.width() - width) // 2,
+                              max(10, (self.height() - height) // 2), width, height)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.centre()
+
+
+class UpdateBar(Styled):
+    u"""The progress card's ONE bar. ⚠ The fill is placed on RESIZE as well as on
+    change: its width is a fraction of a width the layout only decides later."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent, u"utrack")
+        self.setFixedHeight(4)
+        self.fill = Styled(self, u"utrackfill")
+        self.fraction = 0.0
+
+    def set_fraction(self, value):
+        self.fraction = max(0.0, min(1.0, float(value)))
+        self._place()
+
+    def _place(self):
+        self.fill.setGeometry(0, 0, int(round(self.width() * self.fraction)), self.height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place()
+
+
 class HatoWindow(Styled):
     u"""hato's window.
 
@@ -2085,6 +2247,7 @@ class HatoWindow(Styled):
         self.spawn = self._spawn
         self._runner = None
         self._timer = None
+        self._error_net = None        # 10b -- set by `main()`, never by a check
         self._accordions = {}
         self._details = {}
         # ⭐ RUNBOOK 8e -- children the window READS (a pick's verdict, what hato
@@ -2120,9 +2283,25 @@ class HatoWindow(Styled):
         outer.addWidget(self._build_tabs())
         outer.addWidget(self._build_body(), 1)
         outer.addWidget(self._build_footer())
+        # ⭐ LAYER 11 -- the card's veil, over everything. ⚠ `quit_app` and the
+        # hand-off are SEAMS, like `spawn`: a check about *Restart now* must never
+        # quit the suite's own application.
+        self.update_veil = UpdateVeil(self)
+        self._update_card_shown = None
+        self._handed_off = False
+        self._stage_then_restart = False
+        self._swapper = None                  # the swapper this window started
+        self._tray_stopped = False            # ...and whether it stopped the tray to
+        self.quit_app = self._quit_app
 
         self.setStyleSheet(theme.qss())
         self.render()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        veil = getattr(self, u"update_veil", None)
+        if veil is not None and veil.isVisible():
+            veil.setGeometry(self.rect())
 
     # -- title bar ---------------------------------------------------------
 
@@ -2173,7 +2352,14 @@ class HatoWindow(Styled):
         self.run_now.setToolTip(wrap(
             u"Scans every watched folder now for videos with no Japanese "
             u"subtitle, and works through whatever it finds."))
-        self.run_now.clicked.connect(self.start_run)
+        # 🚨 THROUGH A LAMBDA, AND 1.0.2 AND 1.0.3 CLOSED THE WINDOW WITHOUT ONE
+        # (D12). `clicked` carries `checked`, and PyQt hands it to the slot's
+        # first positional parameter: once Layer 8 gave `start_run` its
+        # `argv=None`, every click arrived as `start_run(False)` --
+        # `Runner(argv=False)` raised out of the slot, and PyQt6 aborts the
+        # process on that. ⛔ Every check called `start_run()`, the function
+        # under the button, so none of them could see it.
+        self.run_now.clicked.connect(lambda _checked=False: self.start_run())
         box.addWidget(self.run_now)
         return bar
 
@@ -2204,6 +2390,12 @@ class HatoWindow(Styled):
         # `TabButton`, no underline, no badge: a person scanning this row must
         # not read them as a fourth and fifth place to go inside hato.
         box.addStretch(1)
+        # ⭐ LAYER 11 -- THE PILL sits with the other things about hato itself
+        # (feedback, GitHub), never among the things about a person's subtitles.
+        self.update_pill = UpdatePill(strip)
+        self.update_pill.clicked.connect(self._pill_clicked)
+        box.addWidget(self.update_pill, 0, Qt.AlignmentFlag.AlignVCenter)
+        box.addSpacing(16)
         for text, url in ((u"Send feedback", ISSUES_URL),
                           (u"Star on GitHub", REPO_URL)):
             box.addWidget(link_label(text, url, u"tablink", strip))
@@ -2353,8 +2545,15 @@ class HatoWindow(Styled):
             self._render_pick()
         else:
             self._render_settings()
+        self._render_update()
 
         self.live_label.setText(footer_status(state))
+        # ⭐ 10b -- the line says WHERE, on hover: the substance, not commentary.
+        # ⚠ The path on a line of its own, NOT through `wrap()`: that broke it at
+        # a hyphen inside a folder name (LOOKED, 2026-09-24).
+        self.live_label.setToolTip(
+            u"hato.log is at\n%s" % ErrorNet.log_path()
+            if state.live == ERROR_LINE else u"")
         self.dot.set_running(state.running)
         need = tallies[gui_run.NEEDS_YOU]
         self.tally_labels[0].setText(u"%d added" % tallies[gui_run.ADDED])
@@ -2387,6 +2586,12 @@ class HatoWindow(Styled):
         clear(column)
         self._details = {}
         state = self.state
+
+        # ⭐ LAYER 11 -- WHAT THE LAST UPDATE CAME TO, once, above everything: a
+        # note, not a dialog -- the person opened hato to see their subtitles.
+        note = updating.banner(state.updates)
+        if note is not None:
+            column.addWidget(self._update_banner(note))
 
         # ⭐ NO FOLDERS IS ITS OWN STATE, and it is the only one that gets the
         # whole pane. Nothing else can be on this tab -- there is nothing to
@@ -3112,6 +3317,8 @@ class HatoWindow(Styled):
         # settings."* An integration most people will not use sits under the
         # settings everybody does.
         stack.addWidget(self._card_surasura(holder))
+        # ⭐ LAYER 11 -- Updates, the very last card (the ruled mock's order).
+        stack.addWidget(self._card_updates(holder))
         stack.addStretch(1)
         holder.setFixedWidth(COL_SET + 2 * PAD)
 
@@ -3851,6 +4058,9 @@ class HatoWindow(Styled):
                        or reads != self.state.tray_reads_formats)
             self.state.watching, self.state.old_tray = watching, old
             self.state.tray_reads_formats = reads
+            updates = self.tray_reads_updates()                 # LAYER 11
+            changed = changed or updates != self.state.tray_reads_updates
+            self.state.tray_reads_updates = updates
             # ⭐ A DATE PASSES WITH NOTHING ELSE CHANGING (ADVERSARY 2026-09-22
             # A16). An open window held a waited row hidden past its date, and
             # *"retrying in 30m"* read the same five hours later. Once a minute,
@@ -3861,6 +4071,13 @@ class HatoWindow(Styled):
                 changed = changed or self._anything_dated()
             if changed:
                 self.render()
+            # ⭐ LAYER 11 -- a run the TRAY started holds the lock and tells this
+            # window nothing when it ends: *Restart after this run* is kept here.
+            if self.state.updates.after_run and not self.state.running:
+                self.update_after_run()
+            # ⭐ LAYER 11 -- and the swapper's result, which lands after this
+            # window has opened (see `poll_update_result`).
+            self.poll_update_result()
             if self.state.running:
                 return                        # ⛔ our own run owns the rows
             stamp = gui_run.last_run_stamp()
@@ -3887,6 +4104,714 @@ class HatoWindow(Styled):
         timer.start(int(every_ms or self.OTHERS_MS))
         self._others_timer = timer
         return timer
+
+    # ------------------------------------------------------------------
+    # ⭐ LAYER 11 -- updating hato. `gui/updating.py` decides every word; these
+    # methods paint it, and drive `hato update` through the one spawn seam.
+    # ------------------------------------------------------------------
+
+    def _run_is_going(self):
+        u"""A run in THIS window, or one the tray or the daily task started. ⚠ Both
+        count: the swapper waits for every hato process, a run's included."""
+        if self.state.running:
+            return True
+        try:
+            from hato import runlock
+            return runlock.run_in_flight()
+        except Exception:                     # noqa: BLE001 -- a lock unread is not a run
+            return False
+
+    def _render_update(self):
+        u"""The pill, and the card when one is open -- from `state.updates` only."""
+        u = self.state.updates
+        self.update_pill.paint_answer(updating.pill(u))
+        if u.card is None:
+            if self.update_veil.card is not None or self.update_veil.isVisible():
+                self.update_veil.take()
+            self._update_card_shown = None
+            return
+        if u.card == u"progress":
+            content = updating.progress(u)
+            if self._update_card_shown == (u"progress", None):
+                self._paint_progress(content)        # ⭐ in place: no rebuild per byte
+                return
+            key = (u"progress", None)
+        else:
+            content = (updating.back_card(u) if u.card == u"back"
+                       else updating.card(u, running=self._run_is_going()))
+            key = (u.card, repr(sorted(content.items())))
+        if key != self._update_card_shown:
+            self._update_card_shown = key
+            self.update_veil.place(self._update_card(u.card, content))
+
+    def _update_card(self, which, content):
+        u"""The card itself -> a widget the veil centres. ⛔ Every word from `content`."""
+        card = Styled(self.update_veil, u"ucard")
+        column = QVBoxLayout(card)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+
+        top = QWidget(card)
+        line = QHBoxLayout(top)
+        line.setContentsMargins(22, 20, 22, 16)
+        line.setSpacing(14)
+        logo = QLabel(top)
+        logo.setFixedSize(48, 48)
+        pixmap = branding.mark_pixmap(48, self.devicePixelRatioF())
+        if pixmap is not None and not pixmap.isNull():
+            logo.setPixmap(pixmap)
+        line.addWidget(logo, 0, Qt.AlignmentFlag.AlignTop)
+        words = QWidget(top)
+        stack = QVBoxLayout(words)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.setSpacing(2)
+        title = QWidget(words)
+        pair = QHBoxLayout(title)
+        pair.setContentsMargins(0, 0, 0, 0)
+        pair.setSpacing(0)
+        # ⚠ THE SPACES ARE THE LAYOUT'S, measured in the title's own font, and
+        # only where `content` has one: a label drops its leading and trailing
+        # blanks, and the first shot read "hato1.0.5is ready" (LOOKED, 2026-09-24).
+        gap = None
+        for text, name in zip(content[u"title"], (u"ucardt1", u"ucardv", u"ucardt1")):
+            if not text.strip():
+                continue
+            part = plain(text.strip(), name, title)
+            if gap is None:
+                part.ensurePolished()
+                gap = part.fontMetrics().horizontalAdvance(u" ")
+            if text[:1].isspace() and pair.count():
+                pair.addSpacing(gap)
+            pair.addWidget(part)
+            if text[-1:].isspace():
+                pair.addSpacing(gap)
+        pair.addStretch(1)
+        stack.addWidget(title)
+        stack.addWidget(plain(content[u"sub"], u"ucardt2", words, wrapped=True))
+        line.addWidget(words, 1)
+        column.addWidget(top)
+
+        for key, name in ((u"critical", u"ucardwhy"), (u"said", u"keybad")):
+            if content.get(key):
+                holder = QWidget(card)
+                box = QVBoxLayout(holder)
+                box.setContentsMargins(22, 0, 22, 14)
+                box.addWidget(plain(content[key], name, holder, wrapped=True))
+                column.addWidget(holder)
+
+        if which == u"progress":
+            steps = QWidget(card)
+            row = QHBoxLayout(steps)
+            row.setContentsMargins(22, 4, 22, 12)
+            row.setSpacing(0)
+            self._ucard_steps = []
+            for index, (name, _status) in enumerate(content[u"steps"]):
+                if index:
+                    row.addStretch(1)
+                one = QWidget(steps)
+                pair = QHBoxLayout(one)
+                pair.setContentsMargins(0, 0, 0, 0)
+                pair.setSpacing(7)
+                dot = label(u"", u"ustepdot", one)
+                dot.setFixedSize(16, 16)
+                dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                word = label(name, u"ustep", one)
+                pair.addWidget(dot)
+                pair.addWidget(word)
+                row.addWidget(one)
+                self._ucard_steps.append((dot, word))
+            column.addWidget(steps)
+            holder = QWidget(card)
+            box = QVBoxLayout(holder)
+            box.setContentsMargins(22, 2, 22, 6)
+            self._ucard_bar = UpdateBar(holder)
+            box.addWidget(self._ucard_bar)
+            column.addWidget(holder)
+            self._paint_progress(content)
+
+        notes, link = content.get(u"notes") or [], content.get(u"link")
+        if notes or (link and link[1]):
+            sect = Styled(card, u"ucardsect")
+            box = QVBoxLayout(sect)
+            box.setContentsMargins(22, 12, 22, 14)
+            box.setSpacing(5)
+            box.addWidget(label(u"WHAT'S NEW", u"ucardh4", sect))
+            for note in notes:
+                box.addWidget(self._bullet(sect, plain(note, u"ucardnote", sect, wrapped=True)))
+            if link and link[1]:
+                box.addWidget(self._bullet(sect, link_label(link[0], link[1], u"tablink", sect)))
+            column.addWidget(sect)
+
+        foot = Styled(card, u"" if which == u"progress" else u"ucardsect")
+        box = QVBoxLayout(foot)
+        box.setContentsMargins(22, 10 if which == u"progress" else 12, 22, 0)
+        box.addWidget(plain(content[u"footer"], u"ucardfoot", foot, wrapped=True))
+        column.addWidget(foot)
+
+        buttons = content.get(u"buttons") or []
+        row = QWidget(card)
+        line = QHBoxLayout(row)
+        line.setContentsMargins(22, 13, 22, 18)
+        line.setSpacing(9)
+        line.addStretch(1)
+        for text, action, accent in buttons:
+            go = button(text, row, accent=accent)
+            if not accent:
+                go.setObjectName(u"btnQuiet")
+            go.clicked.connect(lambda _checked=False, a=action: self.update_action(a))
+            line.addWidget(go)
+        column.addWidget(row)
+        return card
+
+    def _bullet(self, parent, widget):
+        u"""A what's-new line: the coral dot, then the words. -> the row"""
+        row = QWidget(parent)
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(8)
+        line.addWidget(label(u"•", u"ucardbul", row), 0, Qt.AlignmentFlag.AlignTop)
+        line.addWidget(widget, 1)
+        return row
+
+    def _paint_progress(self, content):
+        u"""The steps and the bar, IN PLACE -- a download reports many times a second."""
+        for (dot, word), (name, status) in zip(getattr(self, u"_ucard_steps", ()),
+                                               content[u"steps"]):
+            dot.setText(u"✓" if status == u"done" else u"●" if status == u"now" else u"")
+            # ⚠ THE NAME TOO -- "Downloading 30%" moves; painted in place without
+            # it, the first step said "Downloaded" for the whole download.
+            word.setText(name)
+            mark(dot, u"st", status)
+            mark(word, u"st", status)
+        bar = getattr(self, u"_ucard_bar", None)
+        if bar is not None:
+            bar.set_fraction(content[u"bar"])
+
+    def _update_banner(self, note):
+        u"""*Updated to 1.0.5 ✓*, or *put 1.0.4 back* -- `updating.banner()`'s words."""
+        ok = note[u"kind"] == u"ok"
+        holder = QWidget(self.panes[TAB_SUBS].widget())
+        outer = QVBoxLayout(holder)
+        outer.setContentsMargins(PAD, 14, PAD, 4)
+        box = Styled(holder, u"unote" if ok else u"ufail")
+        outer.addWidget(box)
+        column = QVBoxLayout(box)
+        column.setContentsMargins(12, 9, 12, 10 if note[u"notes"] else 9)
+        column.setSpacing(4)
+        head = QWidget(box)
+        line = QHBoxLayout(head)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(10)
+        if ok:
+            tick = label(u"✓", u"unoteck", head)
+            tick.setFixedSize(18, 18)
+            tick.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            line.addWidget(tick)
+        words = QWidget(head)
+        stack = QVBoxLayout(words)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.setSpacing(1)
+        first = QWidget(words)
+        pair = QHBoxLayout(first)
+        pair.setContentsMargins(0, 0, 0, 0)
+        pair.setSpacing(0)
+        lead = plain(note[u"lead"], u"unotelead", first)
+        pair.addWidget(lead)
+        if note[u"rest"][:1].isspace():
+            # ⚠ a label drops its leading blank -- "1.0.5· just now" (LOOKED)
+            lead.ensurePolished()
+            pair.addSpacing(lead.fontMetrics().horizontalAdvance(u" "))
+        pair.addWidget(plain(note[u"rest"], u"unoterest", first), 1)
+        stack.addWidget(first)
+        if note.get(u"detail"):
+            stack.addWidget(plain(note[u"detail"], u"hint", words, wrapped=True))
+        line.addWidget(words, 1)
+        for text, action, accent in note[u"actions"]:
+            go = button(text, head, accent=accent)
+            go.clicked.connect(lambda _checked=False, a=action: self.update_action(a))
+            line.addWidget(go)
+        if ok:
+            shut = QPushButton(u"✕", head)
+            shut.setObjectName(u"x")
+            shut.setCursor(Qt.CursorShape.PointingHandCursor)
+            shut.setToolTip(u"Dismiss")
+            shut.clicked.connect(lambda _checked=False: self.update_action(updating.DISMISS))
+            line.addWidget(shut, 0, Qt.AlignmentFlag.AlignTop)
+        column.addWidget(head)
+        for text in note[u"notes"]:
+            row = self._bullet(box, plain(text, u"unoteitem", box, wrapped=True))
+            row.setContentsMargins(28, 0, 0, 0)
+            column.addWidget(row)
+        if note.get(u"link") and note[u"link"][1]:
+            row = self._bullet(box, link_label(note[u"link"][0], note[u"link"][1],
+                                                u"tablink", box))
+            row.setContentsMargins(28, 0, 0, 0)
+            column.addWidget(row)
+        return holder
+
+    def _card_updates(self, parent):
+        u"""⭐ LAYER 11 -- Settings -> Updates, the last card. Every word from
+        `updating.settings()`. ⛔ From source: no switch, no *Go back* -- the
+        `git pull` line instead (controls vanish where they would be meaningless)."""
+        card, body = self._card(u"Updates", parent)
+        said = updating.settings(self.state.updates, running=self._run_is_going())
+        top = QWidget(card)
+        line = QHBoxLayout(top)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(8)
+        dot = label(u"●", u"udot", top)
+        mark(dot, u"tone", said[u"dot"])
+        line.addWidget(dot)
+        line.addWidget(plain(said[u"lead"], u"uver", top))
+        line.addWidget(plain(said[u"rest"], u"hint", top), 1)
+        if said[u"link"] and said[u"link"][1]:
+            line.addWidget(link_label(said[u"link"][0], said[u"link"][1], u"tablink", top))
+        if said[u"button"]:
+            text, action = said[u"button"]
+            go = button(text, top, accent=action in (updating.RESTART, updating.INSTALL))
+            go.clicked.connect(lambda _checked=False, a=action: self.update_action(a))
+            line.addWidget(go)
+        body.addWidget(top)
+        if said[u"git"]:
+            row = QWidget(card)
+            line = QHBoxLayout(row)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(10)
+            line.addWidget(label(said[u"git"][0], u"ucmd", row))
+            line.addWidget(plain(said[u"git"][1], u"hint", row), 1)
+            text, action = said[u"copy"]
+            copy = button(text, row)
+            copy.clicked.connect(lambda _checked=False, a=action: self.update_action(a))
+            line.addWidget(copy)
+            body.addWidget(row)
+        if said[u"auto"]:
+            body.addWidget(hrule(card))
+            row = QWidget(card)
+            line = QHBoxLayout(row)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(10)
+            switch = Switch(row)
+            switch.setChecked(self.state.updates.auto)
+            switch.clicked.connect(lambda checked=False: self.set_auto_update(checked))
+            self.update_switch = switch
+            line.addWidget(switch)
+            line.addWidget(label(said[u"auto"][0], None, row))
+            line.addWidget(plain(said[u"auto"][1], u"hint", row), 1)
+            line.addWidget(info_dot(said[u"auto"][2], row))
+            body.addWidget(row)
+            if not self.state.tray_reads_updates and self.state.update_key_in_file:
+                # 🚨 THE FORMAT CARD'S TRAP, AGAIN: a 1.0.3 tray -- left running
+                # from another folder -- REFUSES `auto_update`, which is written
+                # only once switched off, and every run it starts stops at the
+                # file. Said here, with the same one fix.
+                old = QWidget(card)
+                pair = QHBoxLayout(old)
+                pair.setContentsMargins(0, 2, 0, 0)
+                pair.setSpacing(8)
+                note = label(u"The hato in your tray is an older version and cannot read "
+                             u"this setting — its runs stop until it is restarted.",
+                             u"hint", old)
+                note.setWordWrap(True)
+                pair.addWidget(note, 1)
+                restart = button(u"Restart the tray", old)
+                restart.clicked.connect(self.restart_watcher)
+                pair.addWidget(restart)
+                body.addWidget(old)
+        if said[u"kept"]:
+            row = QWidget(card)
+            line = QHBoxLayout(row)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(10)
+            line.addWidget(plain(said[u"kept"][0], u"hint", row), 1)
+            text, action = said[u"kept"][1]
+            back = button(text, row)
+            back.clicked.connect(lambda _checked=False, a=action: self.update_action(a))
+            line.addWidget(back)
+            body.addWidget(row)
+        if said[u"said"]:
+            body.addWidget(plain(said[u"said"], u"keybad", card, wrapped=True))
+        body.addWidget(paragraph(said[u"note"], card))
+        return card
+
+    def _pill_clicked(self):
+        action = self.update_pill.action
+        if action == updating.TO_SETTINGS:
+            self.show_tab(TAB_SET)
+        elif action == updating.TO_CARD:
+            self.state.updates.card = u"ready"
+            self.render()
+
+    def update_action(self, action):
+        u"""What a card, a banner or the Updates card asked for. ⭐ ONE dispatcher,
+        checked against `updating.ACTIONS` -- a button whose action lands nowhere
+        renders perfectly and does nothing (doctrine/architecture)."""
+        u = self.state.updates
+        if action == updating.RESTART:
+            return self.restart_to_update()
+        if action == updating.GO_BACK:
+            return self.go_back()
+        if action == updating.AGAIN:
+            return self.try_update_again()
+        if action == updating.CHECK:
+            return self.check_updates(force=True)
+        if action == updating.LATER:
+            # ⛔ C1 (ADVERSARY 2026-09-24): it REPLACES *Restart after this run* -- left
+            # set, the run's end restarted hato anyway, and that choice, once pressed,
+            # could never be taken back
+            u.when_closed = True
+            u.after_run = False
+            u.card = None
+        elif action == updating.CLOSE:
+            u.card = None
+            u.said = u""
+        elif action == updating.PAGE:
+            QDesktopServices.openUrl(QUrl(updating.page(u)))
+        elif action == updating.DISMISS:
+            u.result = None
+        elif action == updating.INSTALL:
+            u.card = u"ready"
+        elif action == updating.ASK_BACK:
+            u.card = u"back"
+        elif action == updating.COPY:
+            QApplication.clipboard().setText(u"git pull")
+        else:
+            raise ValueError(u"no update action %r" % (action,))
+        self.render()
+        return action
+
+    def read_updates(self, frozen=None):
+        u"""⭐ What the disk says about updating: this copy, what is staged, what is
+        kept, what was turned away, the last answer -- and what the last swap came
+        to, read ONCE (the window shows it; the file is then gone).
+        ⛔ Never raises: a window that cannot read its update state still opens."""
+        import hato
+        from hato import update
+        from hato.commands import update as command
+        u = self.state.updates
+        u.current = hato.__version__
+        u.frozen = bool(getattr(sys, "frozen", False)) if frozen is None else bool(frozen)
+        u.folder = os.path.dirname(os.path.dirname(os.path.abspath(hato.__file__)))
+        try:
+            install = command.install_dir()
+            if u.frozen:
+                u.result = update.reconcile(install, consume=True)
+                u.staged = update.staged_version(install, u.current)
+                u.kept = update.kept_version(install, u.current)
+            saved = update.load_state()
+            decision = saved.get(u"decision")
+            if isinstance(decision, dict):
+                decision = dict(decision)
+                # ⚠ judged against THIS copy, as `hato update --if-due` does: an
+                # answer saved before an update would offer the version now running
+                if decision.get(u"kind") != updating.NONE and not update.is_newer(
+                        decision.get(u"version"), u.current):
+                    decision[u"kind"] = updating.NONE
+                u.decision = decision
+            at = saved.get(u"checked_at")
+            u.checked_at = at if isinstance(at, (int, float)) and not isinstance(at, bool) \
+                else None
+            u.skipped = update.skipped()
+        except Exception as exc:              # noqa: BLE001
+            sys.stderr.write(u"hato: the update state could not be read: %s\n" % exc)
+        return u
+
+    def poll_update_result(self):
+        u"""The swapper's result, when it lands AFTER this window opened -- which,
+        after an update, is always: it is written once the swapper has SEEN this
+        window. 🚨 Read only at start, *"Updated to 1.0.5"* could never show.
+        ⭐ A `stat` a look; read -- and taken away -- once. ⛔ Never raises."""
+        u = self.state.updates
+        if not u.frozen or u.result is not None:
+            return None
+        try:
+            from hato import update
+            from hato.commands import update as command
+            install = command.install_dir()
+            if not os.path.exists(os.path.join(str(update.stage_root(install)),
+                                               update.RESULT_NAME)):
+                return None
+            u.result = update.reconcile(install, consume=True)
+            u.skipped = update.skipped()
+            u.kept = update.kept_version(install, u.current)
+            u.staged = update.staged_version(install, u.current)
+        except Exception:                     # noqa: BLE001
+            return None
+        self.render()
+        return u.result
+
+    def check_updates(self, force=False):
+        u"""`hato update --check`: once a day, unless `force` (*Check now*). -> the
+        reader, or None when nothing was started."""
+        u = self.state.updates
+        if u.checking:
+            return None
+        u.checking = True
+        flags = [u"--check"] + ([] if force else [u"--if-due"])
+        runner = self._read(gui_run.argv_for_update(*flags), self._update_checked)
+        if runner is None:
+            u.checking = False
+        self.render()
+        return runner
+
+    def _update_checked(self, finished, events):
+        u"""The check's answer. ⭐ And what it sets going: the quiet download when
+        updating is automatic, and a critical release's card -- once."""
+        from hato import update
+        u = self.state.updates
+        u.checking = False
+        answers = [e for e in events if isinstance(e, dict) and e.get(u"type") == u"update"]
+        if answers:
+            u.decision = answers[-1]
+            at = update.load_state().get(u"checked_at")
+            u.checked_at = at if isinstance(at, (int, float)) else u.clock()
+            if updating.downloads_by_itself(u):
+                self.stage_update()
+            self._maybe_open_critical()
+        self.render()
+
+    def _maybe_open_critical(self):
+        u"""A release marked critical opens its card by itself -- ONCE per version,
+        remembered in hato's own update state. ⛔ Never over another card."""
+        from hato import update
+        u = self.state.updates
+        version = updating.offered(u)
+        if not (version and u.staged == version and u.card is None
+                and (u.decision or {}).get(u"critical")):
+            return False
+        state = update.load_state()
+        if state.get(u"critical_shown") == version:
+            return False
+        state[u"critical_shown"] = version
+        try:
+            update.save_state(state)
+        except OSError:
+            pass
+        u.card = u"ready"
+        return True
+
+    def stage_update(self, restart=False):
+        u"""`hato update --stage --progress`: download it and prove it while hato
+        keeps running. `restart`: a person asked -- the card shows the progress and
+        the hand-off follows; otherwise it is quiet."""
+        u = self.state.updates
+        u.said = u""
+        if restart:
+            u.step = u"download"
+            u.card = u"progress"
+            self._stage_then_restart = True
+        if u.downloading is not None:
+            self.render()
+            return None
+        u.downloading = (0, 0)
+        self._stage_pct = -1
+        runner = self._read(gui_run.argv_for_update(u"--stage", u"--progress"),
+                            self._update_staged, each=self._update_progress)
+        if runner is None:
+            u.downloading = None
+        self.render()
+        return runner
+
+    def _update_progress(self, event):
+        u"""One `{"type": "progress"}` line. ⚠ The PANE re-renders only when the
+        whole percent moves: Settings rebuilding at every block is the flicker
+        Sonic reported in 1.0.0 (*"the settings tab glitches HARD"*)."""
+        if not (isinstance(event, dict) and event.get(u"type") == u"progress"):
+            return
+        done, total = event.get(u"done"), event.get(u"total")
+        if not (isinstance(done, int) and isinstance(total, int)):
+            return
+        u = self.state.updates
+        u.downloading = (done, total)
+        pct = 100 * done // total if total else 0
+        if pct != getattr(self, u"_stage_pct", -1):
+            self._stage_pct = pct
+            self.render()
+        else:
+            self._render_update()
+
+    def _update_staged(self, finished, events):
+        u = self.state.updates
+        u.downloading = None
+        staged = [e for e in events if isinstance(e, dict) and e.get(u"type") == u"staged"]
+        errors = [e for e in events if isinstance(e, dict) and e.get(u"type") == u"error"]
+        restart = getattr(self, u"_stage_then_restart", False)
+        self._stage_then_restart = False
+        if staged:
+            u.staged = staged[-1].get(u"version")
+            if restart:
+                return self.restart_to_update()
+            self._maybe_open_critical()
+        else:
+            u.said = safe(errors[-1].get(u"reason") if errors else u"") or \
+                u"the download did not finish"
+            u.step = None
+            if u.card == u"progress":
+                u.card = u"ready"
+        self.render()
+        return None
+
+    def restart_to_update(self):
+        u"""*Restart now*: the tray stopped and remembered, the NEW version's swapper
+        started from outside hato's folder, and this window closes -- the swapper
+        draws the splash and opens the new window.
+        ⛔ Never under a run: it waits for the run's end (`after_run`)."""
+        u = self.state.updates
+        version = updating.offered(u)
+        if not updating.installable(u):
+            return None
+        if u.staged != version:
+            return self.stage_update(restart=True)
+        if self._run_is_going():
+            u.after_run = True
+            u.card = None
+            self.render()
+            return None
+        u.after_run = False
+        u.step = u"install"
+        u.card = u"progress"
+        self.render()
+        if not self._hand_off_update(window=True, quiet=False):
+            u.step = None
+            u.card = u"ready"
+            self.render()
+            return None
+        self._handed_off = True
+        self.quit_app()
+        return True
+
+    def update_after_run(self):
+        u"""A run ended: *Restart now* asked during it happens now."""
+        u = self.state.updates
+        if u.after_run and not self._run_is_going():
+            return self.restart_to_update()
+        return None
+
+    def go_back(self):
+        u"""*Go back to X*: the kept version swapped in by the CURRENT swapper, the
+        version left kept in its place -- so going back can itself be undone."""
+        from hato import update
+        from hato.commands import update as command
+        u = self.state.updates
+        if self._run_is_going():
+            # ⛔ C2b: handed off under a run, this window's close then TERMINATED it,
+            # and a run over a minute outlasted the swapper's wait. Asked again after.
+            u.said = u"hato can go back once this run has finished"
+            self.render()
+            return None
+        install = command.install_dir()
+        try:
+            pending = update.go_back_pending(install, u.current)
+        except update.StageError as exc:
+            u.said = u"%s" % exc
+            u.card = None
+            self.render()
+            return None
+        if not self._hand_off_update(window=True, quiet=False, pending=pending,
+                                     swapper=os.path.join(install, update.SWAPPER_NAME)):
+            u.card = None
+            self.render()
+            return None
+        self._handed_off = True
+        self.quit_app()
+        return True
+
+    def try_update_again(self):
+        u"""*Try again*, after a failed update: the manual choice, one click away --
+        the version is no longer turned away, and it is fetched and put in place."""
+        from hato import update
+        u = self.state.updates
+        try:
+            update.skip(None)
+        except OSError:
+            pass
+        u.skipped = None
+        u.result = None
+        if updating.installable(u):
+            return self.restart_to_update()
+        return self.check_updates(force=True)
+
+    def set_auto_update(self, on):
+        u"""The *Update automatically* switch -- through the CLI, the one writer."""
+        u = self.state.updates
+        u.auto = bool(on)
+        self.spawn(gui_run.argv_for_config(u"--set", u"auto_update=%s"
+                                           % (u"true" if on else u"false")))
+        # ⚠ written only while switched OFF (`config.NEWER_THAN_1_0_3`)
+        self.state.update_key_in_file = not on
+        if on and updating.downloads_by_itself(u):
+            self.stage_update()
+        self.render()
+
+    def _hand_off_update(self, window, quiet, pending=None, swapper=None):
+        u"""Start the swapper -> True. ⛔ A failed hand-off costs nothing: the tray
+        this stopped is started again, and the card says why."""
+        import hato
+        from hato import update
+        from hato import watch as _watch
+        from hato.commands import update as command
+        u = self.state.updates
+        install = command.install_dir()
+        pending = pending or os.path.join(str(update.stage_root(install)), update.PENDING_NAME)
+        stopped = _watch.stop_running_watcher()
+        try:
+            # ⛔ this copy, named: a hand-off not written by it, not newer than it, or
+            # made for another copy's folder is refused (ADVERSARY 2026-09-24, A3/A6)
+            self._swapper = update.hand_off(pending, window=window, tray=stopped is not None,
+                                            tray_pid_file=_watch.pid_file_path(),
+                                            quiet=quiet, swapper=swapper,
+                                            current=hato.__version__, install=install)
+        except Exception as exc:              # noqa: BLE001 -- said, never raised
+            if stopped is not None:
+                self.start_watcher()
+            u.said = (u"%s" % exc if isinstance(exc, update.StageError)
+                      else u"the update could not start (%s)" % type(exc).__name__)
+            return False
+        self._tray_stopped = stopped is not None
+        return True
+
+    #: How long this window waits, after handing off, for the swapper's splash to
+    #: cover it -- the swapper is a onefile exe that unpacks itself before it can
+    #: draw. ⚠ A cap, not a wait: a swapper that cannot draw still swaps.
+    SPLASH_WAIT = 8.0
+    SPLASH_POLL_MS = 100
+
+    def _quit_app(self):
+        u"""Close this window so the swapper can put the new one in its place -- ⭐ once
+        the swapper's SPLASH is on screen, so there is never a moment with nothing:
+        the card says *Installing* until the splash covers it. ⚠ Never longer than
+        SPLASH_WAIT. ⛔ And never over a swapper that has DIED: nothing would ever
+        bring hato back, so the window stays and says so."""
+        from hato import splash
+        started = time.monotonic()
+
+        def look():
+            process = self._swapper
+            poll = getattr(process, "poll", None)
+            # ⚠ B2: the splash of THIS updater (or the onefile child it started) --
+            # another process's card on the desktop is no cover for this window
+            if splash.on_screen(of=getattr(process, "pid", None)) \
+                    or time.monotonic() - started >= self.SPLASH_WAIT:
+                self.close()
+            elif poll is not None and poll() is not None:
+                self._swapper_gone()
+            else:
+                QTimer.singleShot(self.SPLASH_POLL_MS, look)
+
+        QTimer.singleShot(250, look)
+
+    def _swapper_gone(self):
+        u"""The swapper closed before it drew anything -- hato stays, its tray comes
+        back, and the card says so, with *Restart now* one click away again."""
+        u = self.state.updates
+        self._handed_off = False
+        self._swapper = None
+        if self._tray_stopped:
+            self._tray_stopped = False
+            self.start_watcher()
+        u.step = None
+        u.card = u"ready"
+        u.said = u"the update could not start -- the updater closed as it opened"
+        self.render()
 
     def closeEvent(self, event):
         u"""Let go of everything this process was holding, then go.
@@ -3923,6 +4848,19 @@ class HatoWindow(Styled):
             try:
                 runner.stop()
             except Exception:                 # noqa: BLE001
+                pass
+        # ⭐ LAYER 11 -- *When I close hato*: now. Quiet -- no splash promising a
+        # window the person just closed -- and the tray comes back by itself.
+        updates = self.state.updates
+        # ⛔ NOT UNDER A RUN (C2a): handed off anyway, it stopped the tray and the
+        # swapper waited a minute on the run -- then gave up. The tray installs it
+        # the moment nothing of hato is busy (`watch.install_when_idle`).
+        if updates.when_closed and not self._handed_off and updates.staged \
+                and updates.staged == updating.offered(updates) \
+                and not self._run_is_going():
+            try:
+                self._handed_off = self._hand_off_update(window=False, quiet=True)
+            except Exception:                 # noqa: BLE001 -- closing regardless
                 pass
         super().closeEvent(event)
         application = QApplication.instance()
@@ -4451,9 +5389,12 @@ class HatoWindow(Styled):
     #: How often a child being read is polled. A `poll()`, so it costs nothing.
     READ_MS = 150
 
-    def _read(self, argv, done):
+    def _read(self, argv, done, each=None):
         u"""Start `argv` through the ONE spawn seam and call `done(run, events)`
         once it has exited and both pipes are drained. Never blocks.
+
+        `each(event)`: called for every event AS IT ARRIVES -- the update's
+        download progress (LAYER 11); every other reader waits for the end.
 
         ⚠ The suite's `spawn` returns no process: nothing is read, and a check
         drives `done`'s effect directly (`finish_pick`, `apply_problems`).
@@ -4462,7 +5403,7 @@ class HatoWindow(Styled):
         if process is None or getattr(process, u"stdout", None) is None:
             return None
         runner = gui_run.Runner.adopt(process, argv)
-        self._reading.append((runner, done, []))
+        self._reading.append((runner, done, [], each))
         if self._read_timer is None:
             self._read_timer = QTimer(self)
             self._read_timer.setInterval(self.READ_MS)
@@ -4473,11 +5414,18 @@ class HatoWindow(Styled):
 
     def _poll_reads(self):
         still = []
-        for runner, done, events in self._reading:
-            events.extend(runner.drain())
+        for runner, done, events, each in self._reading:
+            fresh = runner.drain()
+            events.extend(fresh)
+            for event in (fresh if each is not None else ()):
+                try:
+                    each(event)
+                except Exception as exc:      # noqa: BLE001 -- never take the window down
+                    sys.stderr.write(u"hato: a child's progress could not be used: %s\n"
+                                     % exc)
             finished = runner.finished()
             if finished is None:
-                still.append((runner, done, events))
+                still.append((runner, done, events, each))
                 continue
             events.extend(runner.drain())
             try:
@@ -4696,6 +5644,17 @@ class HatoWindow(Styled):
             return False
 
     @staticmethod
+    def tray_reads_updates():
+        u"""-> False when a tray IS running that cannot read `auto_update` (LAYER
+        11): every hato before 1.0.4. No tray, or one saying `updates`, -> True."""
+        try:
+            from hato import watch as _watch
+            caps = _watch.watching_capabilities()
+            return caps is None or u"updates" in caps
+        except Exception:                     # noqa: BLE001 -- a guess must not crash
+            return True
+
+    @staticmethod
     def tray_reads_formats():
         u"""-> False when a tray IS running whose runs cannot read the format
         settings (9a). No tray, or one that says `formats`, -> True.
@@ -4717,6 +5676,7 @@ class HatoWindow(Styled):
         argv = self.start_watcher()
         self.state.old_tray = False
         self.state.tray_reads_formats = True
+        self.state.tray_reads_updates = True          # LAYER 11
         self.render()
         return argv
 
@@ -4749,23 +5709,14 @@ class HatoWindow(Styled):
         its creation stamp, because a pid alone is recycled.
         """
         from hato import watch as _watch
-        pid = _watch.watching_pid()
-        if pid is None:
-            return None
-        try:
-            import signal
-            os.kill(pid, signal.SIGTERM)
-        except (OSError, ValueError, AttributeError):
-            return None
-        _watch.clear_pid_file()
         # ⚠ NO `self.render()` HERE, DELIBERATELY. There was an unreachable one
-        # after this return -- dead since it was written, and sitting in the
+        # after the return -- dead since it was written, and sitting in the
         # method being repaired while the pid-liveness bug was fixed (found by
-        # the adversarial pass, 2026-09-18, F-B12). ⛔ Every exit from this
-        # function is a bare return, so the CALLER repaints: `_toggle_watch`
-        # renders once after calling either half. Adding one here would paint
-        # twice on the only path that uses it.
-        return pid
+        # the adversarial pass, 2026-09-18, F-B12). ⛔ The CALLER repaints:
+        # `_toggle_watch` renders once after calling either half. Adding one here
+        # would paint twice on the only path that uses it.
+        # ⭐ The one copy lives in watch.py -- the update hand-off stops the tray too.
+        return _watch.stop_running_watcher()
 
     def _toggle_recurse(self):
         self.state.recurse = not self.state.recurse
@@ -5035,7 +5986,38 @@ class HatoWindow(Styled):
             self._others_seen = gui_run.last_run_stamp()
             if self._timer is not None:
                 self._timer.stop()
+            if self.state.updates.after_run:
+                # ⭐ LAYER 11 -- *Restart now* asked during this run happens now
+                QTimer.singleShot(0, self.update_after_run)
         self.render()
+
+    def error_caught(self):
+        u"""⭐ RUNBOOK 10b -- the net caught an error: the footer says so, and a
+        run the error cut off before its child existed is over.
+
+        ⚠ WHETHER A RUN IS STILL GOING IS ASKED OF ITS CHILD, not of the object.
+        D12's error was raised inside `Runner()`, so `_runner` still held the
+        PREVIOUS run -- finished, its process long gone -- and a check on the
+        object alone would have left `running` true and Run now dead for the
+        life of the window. ⛔ A child that IS running is left to finish: the
+        error was the window's, not the run's.
+        """
+        runner = self._runner
+        process = getattr(runner, u"_process", None) if runner is not None else None
+        if self.state.running and (process is None or process.poll() is not None):
+            self.state.running = False
+        self.state.live = ERROR_LINE
+        QTimer.singleShot(0, self._render_after_error)
+
+    def _render_after_error(self):
+        u"""⛔ ITS OWN ERROR IS CAUGHT HERE, never handed back to the net: a repaint
+        that fails while reporting a failure would report itself on every turn of
+        the event loop for as long as the window lives. Written down, once."""
+        try:
+            self.render()
+        except Exception:                     # noqa: BLE001 -- see the docstring
+            if self._error_net is not None:
+                self._error_net.write_current()
 
     def _spawn(self, argv, stdin_text=None, detached=False):
         u"""The real one. Replaced in tests, which is why it is one method.
@@ -5268,6 +6250,8 @@ def settings_from_disk(state=None):
         state.surasura_dir = cfg.surasura_dir
         state.prefer_format = cfg.prefer_format
         state.format_fallback = cfg.format_fallback
+        state.updates.auto = cfg.auto_update          # ⭐ LAYER 11
+        state.update_key_in_file = cfg.origin(u"auto_update") == u"config.toml"
         # ⭐ 9a -- whether the FILE carries either key, which is what an older
         # hato refuses, whatever the value (ADVERSARY 2026-09-23 #1).
         state.format_keys_in_file = any(cfg.origin(name) == u"config.toml"
@@ -5301,9 +6285,106 @@ def settings_from_disk(state=None):
     return state
 
 
+class ErrorNet(object):
+    u"""⭐ RUNBOOK 10b -- an error inside the window is WRITTEN DOWN, and the
+    window STAYS.
+
+    🚨 PyQt6 answers an exception that leaves a slot with `qFatal`: the process
+    aborts (`0xC0000409`), and a windowed exe has nowhere to say why. D12 reached
+    Sonic as a window vanishing without a word -- four records in his event log,
+    none in hato's. ⭐ A replaced `sys.excepthook` is how PyQt is told to carry
+    on: it calls the hook instead of aborting.
+
+    The hook writes the traceback to hato.log through `watch.complain` -- the file
+    every run writes and the tray complains into, so there is one place to look
+    -- and hands the window one line for its footer (`error_caught`).
+    ⛔ NOTHING HERE MAY RAISE: a reporter that can fail is a second way to die
+    while explaining the first (`watch.complain`'s own rule).
+    ⚠ THE SAME ERROR AGAIN IS WRITTEN ONCE. An error inside a timer slot repeats
+    every tick, and would append a block to the log every 120 ms for as long as
+    the window lives.
+    """
+
+    def __init__(self, say=None):
+        self.window = None
+        #: what writes a block to the log; the suite hands in a recorder
+        self.say = say
+        #: the last traceback written, so an identical one is not written again
+        self.seen = None
+        self.previous = None
+
+    @staticmethod
+    def log_path():
+        u"""Where `watch.complain` writes. -> text (never raises)"""
+        try:
+            from hato import paths as _paths
+            return u"%s" % _paths.default_log_path()
+        except Exception:                     # noqa: BLE001
+            return u"in hato's own folder"
+
+    def install(self):
+        u"""Take over `sys.excepthook` (and a thread's). -> self"""
+        import threading
+        self.previous = sys.excepthook
+        sys.excepthook = self.hook
+        threading.excepthook = self.thread_hook
+        return self
+
+    def write(self, text):
+        u"""One block in hato.log. -> True when it got there (never raises)."""
+        try:
+            if self.say is not None:
+                self.say(text)
+            else:
+                from hato import watch as _watch
+                _watch.complain(text, who=u"window")
+            return True
+        except Exception:                     # noqa: BLE001 -- see the class note
+            return False
+
+    def write_current(self):
+        u"""The exception being handled right now, written down."""
+        self.hook(*sys.exc_info(), paint=False)
+
+    def hook(self, kind, value, tb, paint=True):
+        if kind is not None and issubclass(kind, KeyboardInterrupt):
+            # ⚠ Ctrl-C in a console that started a source window still ends it.
+            return self.previous(kind, value, tb) if self.previous else None
+        try:
+            import traceback
+            text = u"".join(traceback.format_exception(kind, value, tb))
+        except Exception:                     # noqa: BLE001
+            text = u"%s: %s\n" % (getattr(kind, u"__name__", kind), value)
+        # ⚠ WRITTEN once, SAID every time: the footer may have moved on (a run
+        # finished and said "done") before the same error came round again.
+        if text != self.seen:
+            self.seen = text
+            self.write(text)
+        if paint and self.window is not None:
+            try:
+                self.window.error_caught()
+            except Exception:                 # noqa: BLE001
+                pass
+        return None
+
+    def thread_hook(self, args):
+        u"""A reader thread's error: WRITTEN, never painted -- ⛔ a thread must
+        never touch Qt."""
+        try:
+            import traceback
+            self.write(u"".join(traceback.format_exception(
+                args.exc_type, args.exc_value, args.exc_traceback)))
+        except Exception:                     # noqa: BLE001
+            pass
+
+
 def main(argv=None):
     u"""Open the window. -> an exit code."""
     argv = list(sys.argv if argv is None else argv)
+    # ⭐ RUNBOOK 10b -- FIRST, before anything that can fail: from here on an
+    # error is written to hato.log instead of leaving with the window. The
+    # window is handed to it the moment it exists, so the footer can say it.
+    net = ErrorNet().install()
     app = QApplication.instance() or QApplication(argv)
     # 🚨 ONE WINDOW. ⛔ Before anything is built -- a second instance that got
     # as far as constructing a window would flash one and then have to destroy
@@ -5315,10 +6396,15 @@ def main(argv=None):
     if icon is not None:
         app.setWindowIcon(icon)
     window = HatoWindow()
+    net.window = window
+    window._error_net = net
     # ⛔ AFTER construction and BEFORE showing: the window paints from `state`,
     # so loading into the one it already has is what makes the round trip real
     # rather than a second state object nobody renders.
     settings_from_disk(window.state)
+    # ⭐ LAYER 11 -- what the last update came to (read ONCE, then shown), what is
+    # staged and what is kept -- from the disk, before anything paints.
+    window.read_updates()
     # 🚨 A TICKED BOX WHOSE PROCESS IS NOT RUNNING IS A LIE. Sonic, 2026-09-18:
     # *"if they have the hato option for watch for new videos and run, but they
     # close it out. Then reopen hato (its still checked), the tray icon doesn't
@@ -5342,17 +6428,22 @@ def main(argv=None):
     window.state.watching = window.tray_is_watching()
     window.state.old_tray = window.tray_is_old()       # V1 -- an older tray keeps nothing
     window.state.tray_reads_formats = window.tray_reads_formats()   # 9a #1
+    window.state.tray_reads_updates = window.tray_reads_updates()   # LAYER 11
     window.state.waits = gui_run.load_waits()          # 4c -- the waits chosen before
     window.refresh_problems()
     window.refresh_blacklist()
     window.refresh_memory()                  # 8g -- what a clear would take
+    # ⭐ LAYER 11 -- is a newer hato out? Once a day (`--if-due`); a critical one
+    # already staged opens its card by itself, once.
+    window._maybe_open_critical()
+    window.check_updates()
     window.render()
     window.show()
     return app.exec()
 
 
-__all__ = ["Accordion", "CandidateCard", "Check", "Elide", "HatoWindow",
-           "KeyDialog",
+__all__ = ["Accordion", "CandidateCard", "Check", "ERROR_LINE", "Elide", "ErrorNet",
+           "HatoWindow", "KeyDialog", "UpdateBar", "UpdatePill", "UpdateVeil", "plain",
            "PickHead", "PulseDot", "State", "SubRow", "Switch", "TabButton",
            "TAB_PICK", "TAB_SET", "TAB_SUBS", "TABS", "LOCKED",
            "build_state_from", "candidate_path", "candidates", "ease",

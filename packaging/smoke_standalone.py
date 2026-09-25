@@ -34,9 +34,19 @@ guard out here.
   6. the window is VISIBLE                   -- ⛔ not "the process survived":
                                                 a SW_HIDE'd window survives
                                                 perfectly and shows nothing
+  6b. ⭐ Run now, PRESSED, runs              -- 1.0.2 and 1.0.3 closed the
+                                                window on that press (D12)
+                                                while 6 was green
   7. the tray watcher starts
   8. ⭐ the CLI and the WATCHER never load Qt -- the 13.4-vs-30.6 MB argument,
                                                 asserted rather than assumed
+  11. ⭐ LAYER 11: the onefile swapper       -- carries swap + splash and its
+      starts, carries nothing else of hato,     mark, nothing else; an installed
+      and the REHEARSAL: a real install         hato updated by the REAL swapper,
+      updated both ways                         put back when it cannot start,
+                                                and its SPLASH seen on screen,
+                                                composed, and gone as the new
+                                                window came
 """
 from __future__ import print_function
 
@@ -71,6 +81,9 @@ EXE = ".exe" if IS_WINDOWS else ""
 GUI_NAME = "hato" + EXE
 CLI_NAME = "hato-cli" + EXE
 WATCH_NAME = "hato-watch" + EXE
+#: ⭐ LAYER 11 -- the fourth, onefile: the swapper `hato/update.py` copies out of a
+#: staged release by this name (`update.SWAPPER_NAME`).
+UPDATE_NAME = "hato-update" + EXE
 
 _results = []
 
@@ -335,7 +348,8 @@ def main(argv=None):
     watch = os.path.join(bundle, WATCH_NAME)
 
     # -- 1 · layout -------------------------------------------------------
-    for name, path in ((CLI_NAME, cli), (GUI_NAME, gui), (WATCH_NAME, watch)):
+    for name, path in ((CLI_NAME, cli), (GUI_NAME, gui), (WATCH_NAME, watch),
+                       (UPDATE_NAME, os.path.join(bundle, UPDATE_NAME))):
         size = os.path.getsize(path) / 1024.0 if os.path.isfile(path) else 0
         check(u"exists: %s" % name, os.path.isfile(path),
               u"%.0f KB" % size if size else u"MISSING")
@@ -507,6 +521,9 @@ def _drive(bundle, cli, gui, watch, env, store):
     # -- 6 · the WINDOW is visible, not merely alive ----------------------
     window_mb = _window(gui, env)
 
+    # -- 6b · ⭐ D12 -- RUN NOW, PRESSED IN THE BUILT WINDOW --------------
+    _run_now(gui, cli)
+
     # -- 7 · THE TRAY'S OWN SPAWN FLAGS, against the frozen exe -----------
     _window_as_the_tray_starts_it(gui, env)
 
@@ -525,6 +542,10 @@ def _drive(bundle, cli, gui, watch, env, store):
           _archived(gui, u"hato.schedule"),
           u"in %s's archive" % GUI_NAME if _archived(gui, u"hato.schedule")
           else u"MISSING -- the switch would die on its first click")
+
+    # -- 11 · ⭐ LAYER 11 -- THE SWAPPER, AND THE REHEARSAL ------------------
+    _swapper(bundle, store)
+    _rehearsal(bundle, cli)
 
     failed = [n for n, ok, _ in _results if not ok]
     print(u"\n  %d checks, %d failed\n" % (len(_results), len(failed)))
@@ -571,6 +592,139 @@ def _window(gui, env):
                 proc.kill()
             except Exception:                             # noqa: BLE001
                 pass
+
+
+#: ⭐ D12. The press, as UI Automation makes it: the button's accessible press is
+#: `QAbstractButton.click()`, which emits `clicked(checked)` exactly as a mouse
+#: does -- and no pointer moves on the desktop the smoke runs on. ⛔ ASCII only,
+#: and sent as `-EncodedCommand`, so no shell quoting sits between this file and
+#: PowerShell.
+_UIA = u"""
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$AE = [System.Windows.Automation.AutomationElement]
+$Scope = [System.Windows.Automation.TreeScope]
+$mine = New-Object System.Windows.Automation.PropertyCondition($AE::ProcessIdProperty, __PID__)
+$windows = $AE::RootElement.FindAll($Scope::Children, $mine)
+if ('__MODE__' -eq 'read') {
+  foreach ($w in $windows) {
+    $all = $w.FindAll($Scope::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+    foreach ($e in $all) { if ($e.Current.Name) { Write-Output ('TEXT ' + $e.Current.Name) } }
+  }
+  exit 0
+}
+$named = New-Object System.Windows.Automation.PropertyCondition($AE::NameProperty, '__NAME__')
+foreach ($w in $windows) {
+  $button = $w.FindFirst($Scope::Descendants, $named)
+  if ($button -ne $null) {
+    $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Write-Output 'PRESSED'
+    exit 0
+  }
+}
+Write-Output 'NOT FOUND'
+exit 3
+"""
+
+
+def _uia(pid, mode, name=u"Run now"):
+    u"""-> PowerShell's stdout: `PRESSED` / `NOT FOUND` (press), or one `TEXT`
+    line per named element (read) -- the words the window is showing."""
+    import base64
+    script = (_UIA.replace(u"__PID__", str(int(pid))).replace(u"__MODE__", mode)
+              .replace(u"__NAME__", name))
+    shell = os.path.join(os.environ.get("SystemRoot", u"C:\\Windows"), u"System32",
+                         u"WindowsPowerShell", u"v1.0", u"powershell.exe")
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    _code, out, _err = run([shell, u"-NoProfile", u"-NonInteractive",
+                            u"-EncodedCommand", encoded], dict(os.environ), timeout=60)
+    return out or u""
+
+
+def _run_now(gui, cli):
+    u"""⭐ D12 -- RUN NOW, PRESSED IN THE BUILT WINDOW.
+
+    🚨 1.0.2 AND 1.0.3 CLOSED THE WINDOW ON THIS PRESS, on two machines --
+    `0xC0000409` in Qt6Core, four times in Sonic's event log -- while every check
+    here was green: the window was VISIBLE (6), a run COMPLETED from the command
+    line (5b), and nothing ever pressed a control. The fault was a wiring in the
+    window's source, so `tests/` catches it now; this is the BUILT BYTES' witness,
+    and it drives the whole chain a person does: the press, `hato-cli.exe`
+    spawned by the window, the run's own record, and the footer's word.
+
+    ⭐ Its own store, so no other check sees its folder. A stand-in key, as 5b's:
+    a keyless window refuses before the press reaches the run, and
+    `HATO_NO_NETWORK` means nothing is ever sent. ⭐ Proven two-arm: the 1.0.3
+    zip dies on it; the build it was written for survives it.
+    """
+    if not IS_WINDOWS:
+        return
+    store = tempfile.mkdtemp(prefix="hato-smoke-run-now-")
+    env = child_env(store)
+    env["HATO_JIMAKU_KEY"] = "not-a-real-key"
+    folder = os.path.join(store, "watched")
+    os.makedirs(folder)
+    record = os.path.join(store, "last-run.json")
+    proc = None
+    try:
+        code, out, err = run([cli, "config", "--add-folder", folder], env, timeout=120)
+        if not check(u"Run now: a folder is configured", code == 0,
+                     u"exit %d%s" % (code, u"" if code == 0 else u" :: " + (err or out)[-160:])):
+            return
+        proc = subprocess.Popen([gui], env=env)
+        seen, waited = 0, 0.0
+        while waited < 30.0 and not seen:
+            time.sleep(1.0)
+            waited += 1.0
+            if proc.poll() is not None:
+                break
+            seen = visible_windows(proc.pid)
+        pressed = u""
+        for _ in range(10):                   # the tree is built after the paint
+            if not seen or proc.poll() is not None:
+                break
+            pressed = _uia(proc.pid, u"press").strip()
+            if pressed != u"NOT FOUND":
+                break
+            time.sleep(1.0)
+        said, waited = u"", 0.0
+        while pressed == u"PRESSED" and waited < 45.0:
+            time.sleep(1.5)
+            waited += 1.5
+            if proc.poll() is not None:
+                break
+            if os.path.isfile(record):
+                words = [line[5:].strip() for line in _uia(proc.pid, u"read").splitlines()
+                         if line.startswith(u"TEXT ")]
+                if u"done" in words:
+                    said = u"done"
+                    break
+        died = proc.poll()
+        if died is not None:
+            detail = u"the WINDOW DIED on the press, exit 0x%08X" % (died & 0xFFFFFFFF)
+        elif pressed != u"PRESSED":
+            detail = u"could not press it: %s" % (pressed or u"no window to press in")
+        elif not os.path.isfile(record):
+            detail = u"pressed, and no run wrote its record in %.0fs" % waited
+        elif said != u"done":
+            detail = u"the run wrote its record; the footer never said done"
+        else:
+            detail = u"pressed; the run wrote its record, the footer says done"
+        check(u"Run now, pressed in the window, runs",
+              died is None and pressed == u"PRESSED" and said == u"done"
+              and os.path.isfile(record), detail)
+    finally:
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=15)
+            except Exception:                             # noqa: BLE001
+                try:
+                    proc.kill()
+                except Exception:                         # noqa: BLE001
+                    pass
+        shutil.rmtree(store, ignore_errors=True)
 
 
 def _window_as_the_tray_starts_it(gui, env):
@@ -692,6 +846,371 @@ def _watcher(watch, env, store, window_mb=None):
                 proc.kill()
             except Exception:                             # noqa: BLE001
                 pass
+
+
+def _swapper(bundle, store):
+    u"""⭐ LAYER 11 -- the fourth executable on the BUILT bytes: it starts, and it
+    carries `hato.swap` and the splash and NOTHING else of hato -- it runs from
+    outside the folder it empties. ⚠ A windowed program has nowhere to print, so
+    `--selftest` writes what it loaded to a file."""
+    exe = os.path.join(bundle, UPDATE_NAME)
+    out = os.path.join(store, u"swapper-selftest.json")
+    code, _out, err = run([exe, u"--selftest", out], child_env(store), timeout=120)
+    said = {}
+    try:
+        with open(out, encoding="utf-8") as handle:
+            said = json.load(handle)
+    except (OSError, ValueError):
+        pass
+    loaded = said.get(u"hato") or []
+    check(u"the swapper starts, frozen", code == 0 and said.get(u"frozen") is True,
+          u"exit %s%s" % (code, u" :: " + err.strip()[-160:] if err.strip() else u""))
+    check(u"the swapper carries only swap + splash",
+          loaded and set(loaded) <= {u"hato", u"hato.swap", u"hato.splash"},
+          u", ".join(loaded) or u"loaded nothing it said")
+    check(u"the swapper carries its splash", said.get(u"splash") is True,
+          u"%s" % said.get(u"splash"))
+    # ⭐ The splash's picture of hato, found INSIDE the onefile: a spec that forgot
+    # the data would draw a card with a hole where the mark belongs, silently.
+    mark = said.get(u"mark")
+    check(u"the swapper's splash finds its mark",
+          isinstance(mark, list) and len(mark) == 3 and mark[1] >= 40,
+          u"%s" % (mark,))
+
+
+def _print_window(hwnd, width, height):
+    u"""What Windows composed for `hwnd` -> BGRA bytes, top down.
+    ⭐ PrintWindow(PW_RENDERFULLCONTENT) reads a LAYERED window's own surface -- a
+    plain BitBlt of the screen leaves it out."""
+    import ctypes
+    from ctypes import wintypes as W
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    user32.GetDC.restype, user32.GetDC.argtypes = W.HDC, [W.HWND]
+    user32.ReleaseDC.argtypes = [W.HWND, W.HDC]
+    user32.PrintWindow.argtypes = [W.HWND, W.HDC, W.UINT]
+    gdi32.CreateCompatibleDC.restype, gdi32.CreateCompatibleDC.argtypes = W.HDC, [W.HDC]
+    gdi32.CreateCompatibleBitmap.restype = W.HBITMAP
+    gdi32.CreateCompatibleBitmap.argtypes = [W.HDC, ctypes.c_int, ctypes.c_int]
+    gdi32.SelectObject.restype, gdi32.SelectObject.argtypes = W.HANDLE, [W.HDC, W.HANDLE]
+    gdi32.GetDIBits.argtypes = [W.HDC, W.HBITMAP, W.UINT, W.UINT, ctypes.c_void_p,
+                                ctypes.c_void_p, W.UINT]
+    gdi32.DeleteObject.argtypes = [W.HANDLE]
+    gdi32.DeleteDC.argtypes = [W.HDC]
+
+    class Header(ctypes.Structure):
+        _fields_ = [("size", W.DWORD), ("width", W.LONG), ("height", W.LONG),
+                    ("planes", W.WORD), ("bits", W.WORD), ("compression", W.DWORD),
+                    ("image", W.DWORD), ("xppm", W.LONG), ("yppm", W.LONG),
+                    ("used", W.DWORD), ("important", W.DWORD)]
+
+    screen = user32.GetDC(None)
+    mem = gdi32.CreateCompatibleDC(screen)
+    bmp = gdi32.CreateCompatibleBitmap(screen, width, height)
+    old = gdi32.SelectObject(mem, bmp)
+    buf = ctypes.create_string_buffer(width * height * 4)
+    try:
+        user32.PrintWindow(hwnd, mem, 2)
+        gdi32.SelectObject(mem, old)
+        old = None
+        header = Header(ctypes.sizeof(Header), width, -height, 1, 32, 0, 0, 0, 0, 0, 0)
+        gdi32.GetDIBits(mem, bmp, 0, height, buf, ctypes.byref(header), 0)
+    finally:
+        if old:
+            gdi32.SelectObject(mem, old)
+        gdi32.DeleteObject(bmp)
+        gdi32.DeleteDC(mem)
+        user32.ReleaseDC(None, screen)
+    return buf.raw
+
+
+def _png(path, width, height, bgra):
+    u"""A capture, as a PNG anyone can open -- stdlib only."""
+    import struct
+    import zlib
+    rows = b"".join(b"\x00" + bytes(bytearray(
+        c for i in range(y * width * 4, (y + 1) * width * 4, 4)
+        for c in (bgra[i + 2], bgra[i + 1], bgra[i]))) for y in range(height))
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(
+            ">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+
+    with open(path, "wb") as handle:
+        handle.write(b"\x89PNG\r\n\x1a\n"
+                     + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+def _parent_of(pid):
+    u"""The process that started `pid` -> its pid, or None."""
+    try:
+        import psutil
+        return psutil.Process(pid).ppid()
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def _watch_splash(proc, timeout=240.0):
+    u"""⭐ 11e ON THE BUILT BYTES. While the swapper runs: when its splash showed
+    (s after the hand-off) and whose it is, the card's colour as Windows COMPOSED
+    it, when it went, and when the swapper finished. `HATO_SMOKE_SHOTS`: the
+    capture is kept there, to be looked at.
+    -> {at, pid, pixel, want, gone_at, done_at}"""
+    import ctypes
+    from ctypes import wintypes as W
+    from hato import splash
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.FindWindowW.restype = W.HWND
+    user32.FindWindowW.argtypes = [W.LPCWSTR, W.LPCWSTR]
+    user32.GetWindowThreadProcessId.restype = W.DWORD
+    user32.GetWindowThreadProcessId.argtypes = [W.HWND, ctypes.POINTER(W.DWORD)]
+    user32.GetDpiForWindow.restype, user32.GetDpiForWindow.argtypes = W.UINT, [W.HWND]
+    start = time.monotonic()
+    seen = {u"at": None, u"pid": None, u"parent": None, u"pixel": None, u"want": None,
+            u"gone_at": None, u"done_at": None}
+    while proc.poll() is None and time.monotonic() - start < timeout:
+        now = time.monotonic() - start
+        hwnd = user32.FindWindowW(splash.CLASS_NAME, None)
+        if hwnd and seen[u"at"] is None:
+            seen[u"at"] = now
+            owner = W.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            seen[u"pid"] = owner.value
+            # 🚨 MEASURED 2026-09-24: a ONEFILE exe is TWO processes -- the bootloader
+            # Popen started unpacks the runtime and runs the Python code in a CHILD, so
+            # the splash belongs to the child. Asked while it is alive.
+            seen[u"parent"] = _parent_of(owner.value)
+        elif hwnd and seen[u"pixel"] is None and now - seen[u"at"] > 0.4:
+            geo = splash.Geometry(user32.GetDpiForWindow(hwnd))
+            shot = _print_window(hwnd, geo.width, geo.height)
+            x, y = geo.right - 40, geo.top + geo.card_h // 2
+            seen[u"pixel"] = tuple(bytearray(shot[(y * geo.width + x) * 4:
+                                                  (y * geo.width + x) * 4 + 3]))
+            seen[u"want"] = tuple(bytearray(splash._opaque(splash.Card(geo).fill(y))[:3]))
+            folder = os.environ.get(u"HATO_SMOKE_SHOTS")
+            if folder and os.path.isdir(folder):
+                _png(os.path.join(folder, u"frozen-splash.png"), geo.width, geo.height, shot)
+        elif not hwnd and seen[u"at"] is not None and seen[u"gone_at"] is None:
+            seen[u"gone_at"] = now
+        time.sleep(0.05)
+    seen[u"done_at"] = time.monotonic() - start
+    return seen
+
+
+def _version_of(cli):
+    code, out, _err = run([cli, u"--version"], dict(os.environ), timeout=120)
+    found = re.search(r"hato (\d+\.\d+\.\d+)", out or u"")
+    return found.group(1) if code == 0 and found else None
+
+
+def _previous_release(below):
+    u"""The newest RELEASED zip older than `below`, from this repository's `dist/`
+    -> its path, or None. ⭐ The truest rehearsal installs over what a person has."""
+    from hato import update
+    folder = os.path.join(_ROOT, u"dist")
+    best = None
+    for name in (os.listdir(folder) if os.path.isdir(folder) else ()):
+        found = re.match(r"^hato-(\d+\.\d+\.\d+)-windows-x64\.zip$", name)
+        if found and update.is_newer(below, found.group(1)) and (
+                best is None or update.is_newer(found.group(1), best[0])):
+            best = (found.group(1), os.path.join(folder, name))
+    return best[1] if best else None
+
+
+def _swap_said(store):
+    u"""The swapper's last line in hato.log -- its own reason, in its own words."""
+    try:
+        with open(os.path.join(store, u"hato.log"), encoding="utf-8") as handle:
+            lines = [l.strip() for l in handle if l.strip()]
+    except OSError:
+        return u"no hato.log"
+    said = [l for l in lines if u" -> " in l]
+    return said[-1] if said else u"nothing in hato.log"
+
+
+def _hato_windows(install, swap):
+    u"""-> the pids of hato WINDOWS running from `install` (by program file)."""
+    ops = swap.WinOps()
+    return [pid for pid in ops.processes_in(install)
+            if os.path.basename(ops.image(pid) or u"").lower() == GUI_NAME.lower()]
+
+
+def _stop_all(install, swap):
+    u"""Stop what runs from `install` -- ⛔ by the PROGRAM FILE, inside the
+    rehearsal's own folder, never by name: the person's own hato may be running."""
+    import signal
+    ops = swap.WinOps()
+    for pid in ops.processes_in(install):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    swap.wait_gone(install, ops, 20.0)
+
+
+def _rehearsal(bundle, cli):
+    u"""⭐ LAYER 11h -- THE REHEARSAL: an installed hato updated by the REAL swapper
+    from THIS bundle, on the built bytes, both ways.
+
+    The installed copy is the newest RELEASED zip older than this bundle (what a
+    person has), else a copy of this bundle -- every step still runs, only the
+    number stays. The payload is this bundle zipped as a release is, staged through
+    `hato.update.stage` from a local file: the same manifest, hashes and version
+    check a real install makes.
+
+      arm 1  a new version whose WINDOW cannot start -- its Qt removed after staging,
+             so its command line still answers -- is PUT BACK, and the old window
+             comes back. 🚨 Its crash dialog is a visible window too: the proof is
+             hato's own window, by title.
+      arm 2  the new version goes in WITH ITS TRAY, its window opens and SAYS it was
+             updated, and the old version is kept for Go back. ⭐ Watching is on, so
+             the new window's own start-up would start a tray too: exactly ONE tray
+             may run afterwards, the one the swapper started and proved first
+             (ADVERSARY 2026-09-24, S3). `HATO_ALLOW_MANY` is set here, so a second
+             tray would not refuse itself -- it would run, and be counted.
+
+    ⛔ Its own store, under a Japanese-named folder, and every process it started is
+    stopped by the program file it runs -- never by name."""
+    if not IS_WINDOWS:
+        return
+    from hato import swap, update
+    from hato.dev import signing
+    import package_standalone
+    version = _version_of(cli)
+    if not check(u"rehearsal: the bundle says its version", bool(version),
+                 u"%s" % version):
+        return
+    previous = _previous_release(version)
+    work = tempfile.mkdtemp(prefix=u"hato-rehearse-")
+    base = os.path.join(work, u"ツール置き場")
+    store = os.path.join(work, u"store")
+    os.makedirs(store)
+    install = os.path.join(base, u"hato")
+    saved = dict(os.environ)
+    try:
+        # ⚠ The swapper, and the window it starts, inherit THIS environment.
+        os.environ.update(child_env(store))
+        if previous:
+            package_standalone.extract(previous, base)
+        else:
+            shutil.copytree(bundle, install)
+        was = _version_of(os.path.join(install, CLI_NAME))
+        if not check(u"rehearsal: the installed copy says its version", bool(was),
+                     u"%s, from %s" % (was, os.path.basename(previous) if previous
+                                       else u"a copy of this bundle")):
+            return
+        payload = os.path.join(work, u"hato-%s-windows-x64.zip" % version)
+        package_standalone.build_zip(bundle, payload)
+        # ⚠ `min_from` = what is installed: a release's floor is not what this is
+        # about, and a floor above the payload's own number is refused -- measured,
+        # the first rehearsal of an unstamped 1.0.3 met the 1.0.4 default.
+        manifest = signing.build_manifest(payload, notes=[u"the rehearsal"], min_from=was)
+        decision = update.Decision(update.READY, manifest.version, manifest=manifest,
+                                   zip_url=u"local", notes=manifest.notes)
+
+        def get(_url):
+            with open(payload, "rb") as handle:
+                for block in iter(lambda: handle.read(1 << 20), b""):
+                    yield block
+
+        root = update.stage_root(install)
+
+        # -- arm 1 · a new version that cannot start is PUT BACK -------------
+        pending = update.stage(decision, was, install, get=get,
+                               version_of=update.installed_version)
+        with open(pending, encoding="utf-8") as handle:
+            staged = json.load(handle)[u"staged"]
+        core = os.path.join(staged, u"_internal", u"PyQt6", u"Qt6", u"bin", u"Qt6Core.dll")
+        broken = os.path.isfile(core)
+        if broken:
+            os.remove(core)
+        proc = update.hand_off(pending, window=True, tray=False, quiet=True)
+        code = proc.wait(240)
+        back = _version_of(os.path.join(install, CLI_NAME))
+        # ⚠ The swapper starts the old window and goes: nothing proves a version it
+        # PUT BACK, so the window gets its own seconds to appear here.
+        windows, waited = [], 0.0
+        while not windows and waited < 30.0:
+            windows = [pid for pid in _hato_windows(install, swap)
+                       if visible_windows(pid) > 0]
+            if not windows:
+                time.sleep(1.0)
+                waited += 1.0
+        why = _swap_said(store)
+        check(u"rehearsal: a version that cannot start is put back",
+              broken and code == 1 and back == was and windows,
+              u"swapper exit %s · installed says %s (was %s) · %d old window(s) back · %s"
+              % (code, back, was, len(windows), why) if broken
+              else u"no Qt6Core.dll to break")
+        _stop_all(install, swap)
+
+        # -- arm 2 · the new version goes in, with its tray, and says so ------
+        from hato import watch
+        watched = os.path.join(work, u"watched")
+        os.makedirs(watched)
+        with open(os.path.join(store, u"config.toml"), "w", encoding="utf-8") as fh:
+            fh.write(u"folders = [%s]\nwatch = true\n" % json.dumps(watched))
+        pending = update.stage(decision, was, install, get=get,
+                               version_of=update.installed_version)
+        proc = update.hand_off(pending, window=True, tray=True,
+                               tray_pid_file=watch.pid_file_path(), quiet=False)
+        card = _watch_splash(proc)
+        code = proc.wait(240)
+        # ⭐ 11e: drawn by THIS swapper, the card's own colour where no words are, and
+        # gone as the new window came -- seconds before the swapper's settle ended
+        check(u"rehearsal: the swapper drew its splash",
+              card[u"at"] is not None and proc.pid in (card[u"pid"], card[u"parent"])
+              and card[u"pixel"]
+              and all(abs(a - b) <= 3 for a, b in zip(card[u"pixel"], card[u"want"])),
+              u"on screen %s s after the hand-off · by pid %s, started by %s (the swapper "
+              u"%s) · composed %s, the card %s"
+              % (u"%.1f" % card[u"at"] if card[u"at"] is not None else u"never",
+                 card[u"pid"], card[u"parent"], proc.pid, card[u"pixel"], card[u"want"]))
+        check(u"rehearsal: the splash went as the new window came",
+              card[u"gone_at"] is not None
+              and card[u"done_at"] - card[u"gone_at"] >= 2.0,
+              u"gone at %s s, the swapper done at %.1f s"
+              % (u"%.1f" % card[u"gone_at"] if card[u"gone_at"] is not None else u"never",
+                 card[u"done_at"]))
+        now = _version_of(os.path.join(install, CLI_NAME))
+        opened = [pid for pid in _hato_windows(install, swap) if visible_windows(pid) > 0]
+        said, waited = [], 0.0
+        while opened and waited < 20.0 and not any(u"Updated to" in w for w in said):
+            time.sleep(1.0)
+            waited += 1.0
+            said = [line[5:].strip() for line in _uia(opened[0], u"read").splitlines()
+                    if line.startswith(u"TEXT ")]
+        check(u"rehearsal: the new version goes in",
+              code == 0 and now == version and opened,
+              u"swapper exit %s · installed says %s · %d window(s) open"
+              % (code, now, len(opened)))
+        check(u"rehearsal: the new window says it was updated",
+              any((u"Updated to %s" % version) in w for w in said) if was != version
+              else any(u"Updated to" in w for w in said),
+              u"it said: %s" % (u" | ".join(w for w in said if u"pdate" in w) or u"nothing"))
+        check(u"rehearsal: the old version is kept for Go back",
+              os.path.isdir(os.path.join(str(root), u"previous", was or u"?")),
+              u"%s" % os.path.join(str(root), u"previous", was or u"?"))
+        # ⭐ S3, in the built bytes: counted seconds after the window came up
+        ops = swap.WinOps()
+        trays = [pid for pid in ops.processes_in(install)
+                 if os.path.basename(ops.image(pid) or u"").lower() == WATCH_NAME.lower()]
+        named = watch.watching_pid()
+        check(u"rehearsal: one tray -- the swapper's -- and the new window started none",
+              len(trays) == 1 and named == trays[0],
+              u"%d tray(s) running from the install %s · the pid file names %s"
+              % (len(trays), trays, named))
+    except Exception as exc:                  # noqa: BLE001 -- a failure is a FAIL line
+        check(u"rehearsal ran to the end", False, u"%s: %s" % (type(exc).__name__, exc))
+    finally:
+        try:
+            _stop_all(install, swap)
+        except Exception:                     # noqa: BLE001
+            pass
+        os.environ.clear()
+        os.environ.update(saved)
+        shutil.rmtree(work, ignore_errors=True)
 
 
 if __name__ == "__main__":

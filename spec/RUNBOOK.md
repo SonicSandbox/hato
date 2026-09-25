@@ -142,7 +142,27 @@ LAYER 9 — WHICH FORMAT, AND WHAT COUNTS AS ALREADY THERE. Added 2026-09-23
   └── 9z  ✅ THE ADVERSARIAL PASS — ADVERSARY-2026-09-23.md: 22 fixed · 5 dropped ·
            2 deferred; m9za 48 + m9zb 3 + 14 re-aimed, all killed. Closed on 9a;
            ⚠ PARTIAL on 9b + 9c (that agent was stopped before it reported)
-           ▶ Layer 9 ships as hato 1.0.3 (Sonic's "Your leans, go", 2026-09-23)
+           ✅ RELEASED as hato v1.0.3, tag 59a1561, 2026-09-23 (Step 6)
+
+LAYER 10 — D12: RUN NOW CLOSED THE WINDOW (1.0.2, 1.0.3). Added 2026-09-24
+  ├── 10a ✅ Run now runs — wired through `lambda _checked=False`; a real click in the
+           suite, the CLASS read off the source, and the smoke PRESSES it (6b)
+           M10a 3/3 · ⏸ release 1.0.4 waits on Sonic's go (IRREVERSIBLE)
+  └── 10b ✅ an error inside the window is written to hato.log and the window stays
+           (RULED 2026-09-24: in the next release) · M10b 12/12
+
+LAYER 11 — AUTO-UPDATE. RULED 2026-09-24 (gui-mock/mock-update.html, mechanism A)
+  ├── 11a ✅ the release contract: the signed manifest        M11a 13/13
+  ├── 11b ✅ the check                                        M11b 14/14
+  ├── 11c ✅ staging, while hato runs                         M11c 14/14
+  ├── 11d ✅ the swapper + the hand-off                       M11d 42/42
+  ├── 11e ✅ the native splash, measured against Chrome's render of the mock   M11e 31/31
+  ├── 11f ✅ the window: pill · card · progress · banners · Settings → Updates   M11f 35/35
+  ├── 11g ✅ the tray and the 03:00 run install while nothing is open   M11g 24/24
+  ├── 11h ✅ the fourth exe, the smoke's REHEARSAL (+ the frozen splash), verify-release   M11h 12/12
+  └── 11z ✅ the adversarial pass -- ADVERSARY-2026-09-24.md: 27 fixed · 0 dropped ·
+           3 deferred; m11z 58 + 16 older re-aimed · THE GATE 245: 243 killed,
+           2 survived -> both closed (G1, G2)
 
 LAYER 6 — release
 ```
@@ -1575,7 +1595,258 @@ lines).
 
 ---
 
-## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.2`, 2026-09-23 (`v1.0.1`, 2026-09-19). ⛔ NO PyPI, RULED
+## 🚨 LAYER 10 — D12: RUN NOW CLOSED THE WINDOW. Added 2026-09-24
+
+> **From Sonic's report on 1.0.3, 2026-09-24:** *"it crashes gui on 'run' button is clicked.
+> Reproduced on 2 machines. The automatic detection and run still seems to work great."*
+>
+> | # | Found | Evidence |
+> | --- | --- | --- |
+> | D12 | 🚨 **Pressing Run now closes the window — in 1.0.2 and 1.0.3.** `clicked` carries `checked`, and PyQt hands it to the slot's first positional parameter. 8e (2026-09-22) gave `start_run` an `argv=None` for the look-again, and the title bar's button was wired straight to the method — so every press arrived as `start_run(False)`: `Runner(argv=False)` → `list(False)` → a `TypeError` out of a slot, which PyQt6 answers with `qFatal`. 1.0.0 and 1.0.1 had `start_run(self)`, and were fine. ⭐ **Why the rest kept working:** the tray, the 03:00 run, a dropped folder and *Look again* start runs by other roads, none through this button | ⭐ **Sonic's own event log:** `Desktop\hato\hato.exe` — the released 1.0.3 bytes, by hash — died **four times** (09-24 00:38 ×3, 13:59), `0xc0000409` in `Qt6Core.dll` 6.11.2. **Two arms, source:** a real click → `Runner` handed `False` → the process dies `0xC0000409` (offscreen and the real desktop alike); the direct `start_run()` every check made → a real command, the run finishes. **Two arms, the released 1.0.3 zip unpacked outside the repo:** Run now pressed through UI Automation → dies `0xC0000409`; the Settings tab pressed the same way → alive, so the instrument is clean. A hook arm (an `excepthook` stops PyQt aborting) shows the text: `TypeError: 'bool' object is not iterable` at `app.py` `start_run` → `run.py` `Runner.__init__` |
+>
+> ⛔ **Why every check was green:** `test_run_now_builds_the_argv_run_py_owns` is named for
+> the button and calls `start_run()` — the function under it — exactly
+> `doctrine/verification`'s first row: *"a sign-out test called the library function instead
+> of clicking the control."* And the smoke drove the built window only to ask whether it was
+> VISIBLE; nothing anywhere pressed a control.
+
+### Step 10a — Run now runs
+
+**surfaces:** `ui` `harness` `delivery`
+
+| | |
+| --- | --- |
+| **Build** | `gui/app.py`: the button wired through the file's own idiom — `lambda _checked=False: self.start_run()` — with the reason at the site. ⛔ `start_run` keeps its signature: the look-again passes `argv=` and `targeted=` by name, and a second guard beside the lambda would witness neither |
+| **Test** | `test_gui_widgets.py` `test_CLICKING_run_now_starts_the_run_it_names` — a real click through Qt's event path: the command `run.py` owns, and *starting…* on the footer · ⭐ `test_no_method_wired_to_a_signal_has_a_default_a_click_would_fill` — the CLASS, read off the source of every `hato/gui` module: every `.connect(self.<method>)` whose method takes a DEFAULTED positional parameter is refused, with a control proving the reader finds the shipped shape. ⚠ It cannot see a lambda's own default; the `_c=False` idiom guards those on real buttons, and the three without it sit on `Clickable`s, whose `clicked` carries nothing · ⭐ `packaging/smoke_standalone.py` **6b** — Run now PRESSED in the built window through UI Automation (no pointer moves): the window stays up, the run writes `last-run.json`, the footer says *done* |
+| ✅ **Proof, 2026-09-24** | the baseline before any edit: the full runner **29 suites / 2,055 checks GREEN** · the two new checks green; each red with the wiring put back, and the message names it (*"handed the run False … the click's `checked` flag reached `start_run`"*, *"line 2183: self.start_run(argv, targeted)"*) · **M10a 3/3** killed (`--scratch`, 15 s), the anchor preflight **946** mutants, 0 problems · `gui_widgets` **291** + `gui_run` 60 GREEN · LOOKED: a real click in the real window → *starting…* → *done*, *last run 14:23* · ⭐ smoke **6b** against the RELEASED 1.0.3 zip: **30/31, the one failure *"the WINDOW DIED on the press, exit 0xC0000409"*** · ⭐ the fixed tree frozen into `%TEMP%` (PyInstaller 6.18, Qt 6.11.2 — the release's toolchain), zipped by `build_zip()` outside the vault: **smoke 31/31** on the unpacked copy, 6b *"pressed; the run wrote its record, the footer says done"* · LOOKED at the built window after the press: *done*, *last run 14:31* · the full runner over the fixed tree **29 suites / 2,057 checks GREEN**, `EXIT=0` (`_runs/20260924-143221`) · then, the reader widened to every `hato/gui` module: `gui_widgets` **291** GREEN, the preflight 946/0, **M10a 3/3** again |
+| ⏸ **Release** | `1.0.4` is **IRREVERSIBLE** (a public tag and asset) and the release NUMBER is declared by a human (`hato/dev/stamp.py`) — Sonic's go. Nothing was stamped: `package_standalone.py` names its zip from the source version, so a zip made before the stamp would have overwritten the released 1.0.3 artifact. ⭐ The fixed tree was frozen into `%TEMP%` instead |
+| ⭐ **RULED 2026-09-24 (Sonic)** | *"Don't publish 1.0.4 yet, I want to include the logging in this next update AND one more thing"* — the logging is **10b** below; the one more thing is **LAYER 11**, auto-update |
+
+### Step 10b — An error inside the window is written down, and the window stays
+
+**surfaces:** `ui` `harness`
+**Ruled (Sonic, 2026-09-24):** *"I want to include the logging in this next update."* The picture
+it was ruled on: D12's own crash with a prototype net — the window stays up and the footer says
+*"something went wrong — it is written in hato.log"* (`%TEMP%\hato-runbtn\safety-net.png`).
+
+| | |
+| --- | --- |
+| **Why** | PyQt6 aborts the process on any exception that leaves a slot (`qFatal`, `0xC0000409`), and the windowed exe has no console, so the traceback goes nowhere: D12 reached Sonic as a window vanishing with no word, twice a release |
+| **Build** | `gui/app.py` `ErrorNet`, put up FIRST in `main()` (before Qt), the window handed to it the moment it exists: it takes `sys.excepthook` (PyQt's documented way to carry on instead of aborting) and `threading.excepthook`; writes the traceback to hato.log through `watch.complain(text, who="window")` — the tray's own never-raising writer, now naming its caller, so one file holds runs, the tray and the window; the footer says `ERROR_LINE` and its tooltip names the file · `HatoWindow.error_caught`: a run whose CHILD never started is over (⚠ asked of the child, not the object: after D12's shape `_runner` still held the previous run) · `_render_after_error` catches its own error, so a failing repaint can never report itself for ever · the same traceback is WRITTEN once and SAID every time |
+| **Test** | `test_gui_widgets.py` §10b, 9 checks (8, one run for two shapes), each with a SENTINEL hook put in first — a net that failed to install FAILS its check instead of aborting the suite: an error in a real click · D12's shape with no earlier run and with a finished one · a live child left alone · the repaint cannot loop · once written, always said · a thread's error written, never painted · the real block in the real log, never counted as a run · `main()` puts the net up before Qt |
+| ✅ **Proof, 2026-09-24** | ⭐ **two arms through the REAL `main()`**, a scratch copy with D12 put back: without the net the press killed the process `0xC0000409` (above); with it the window STAYED — `running` reset, the footer *"something went wrong — it is written in hato.log"*, and hato.log holds `=== hato window 15:40:21 ===` with the full traceback. LOOKED. · **M10b 12/12** (M10b-12 re-aimed when LOOKING moved the tooltip off `wrap()`, and re-killed) · the preflight 958/0 · ⚠ **measured and dropped:** the frozen window's `sys.stderr.write` on a refused config does NOT raise (two arms on the built bytes: the window opened and showed the error) — the stream exists and nobody reads it, which is why the log is the channel · the full runner **29 suites / 2,066 checks GREEN**, `EXIT=0` (`_runs/20260924-154117`; `gui_widgets` 291 → 300) |
+
+---
+
+## ⭐ LAYER 11 — AUTO-UPDATE. RULED 2026-09-24 (*"I take all your leans"*) · BUILT 11a–11h the same day · 1.0.4 AUTHORIZED once green
+
+> **Asked by Sonic, 2026-09-24:** *"I have another python app ... surasura ... they have an auto
+> update feature ... tell me if you think this would be worth implementing and how you would
+> suggest implementing it ... super high quality ... follow our design language and be in a nice
+> spot ... The dialog or whatever needs to be pretty as it auto-updates. It needs to show that it's
+> updating. It needs to automatically restart ... Some users will still be using this on Linux."*
+> The reference, read in full: `InfiniteVoid/SonicInfinite/Auto_Update_Architecture.md` (surasura
+> v2.2 — stage while running, a separate swapper exe, back up / swap / verify / roll back, never
+> loop). ▶ **The picture: `gui-mock/mock-update.html`** (click through 8 states, A/B toggle) and
+> `gui-mock/shots-update/` (12 shots, every one LOOKED at).
+>
+> ⭐ **MEASURED BEFORE ANY DESIGN** (probes in `%TEMP%\hato-runbtn\`, on a copy of the fixed build
+> installed under `…\ツール置き場\hato`, its own store):
+>
+> | Fact | Measured |
+> | --- | --- |
+> | What can be renamed while hato runs | a running **exe: yes**; **`_internal/`: no**, nor the install folder (`WinError 5`) — while the window OR the tray runs |
+> | 🚨 Who holds the folder after the window closes | **the tray** — `main()` starts it whenever watching is on, and it outlives the window by design. Nothing else: a folder never run, or run only by the CLI, renames freely |
+> | Frozen window, start → visible | **0.89 · 1.23 · 1.68 s** — the gap a restart leaves on screen |
+> | Download sizes | full zip **67.4 MB** · the three exes alone **19.0 MB** · `_internal` unpacked **121.8 MB** |
+> | Integrity for free | GitHub's API gives each asset's sha256: 1.0.3's zip reads `sha256:adc8f136…ef0f` — the hash recorded at release. Unauthenticated limit **60/h** |
+> | Authenticity for free | the bundle already carries PyCryptodome **3.23.0** with a native **Ed25519** (`_ed25519.pyd`, via py7zr): sign + verify works, a changed byte is refused |
+>
+> **Recommendation: YES — for the Windows exe.** D12 is the case for it: the fix exists and
+> reaches nobody until each person notices, downloads 67 MB, stops the tray (the folder is locked
+> while it runs — measured), unzips over the running folder and restarts. Four releases in five
+> days. And hato is BETTER placed than surasura: everything of the person's already lives in
+> `%LOCALAPPDATA%\hato`, so the program folder can be replaced wholesale.
+>
+> **What changes from surasura's design, and why:**
+>
+> | surasura | hato | Why |
+> | --- | --- | --- |
+> | a small "app package" (exe + templates) + a full zip when the runtime changes; `runtime_baseline` + a requirements tripwire | ⭐ **the whole program, every time** | the installed bytes are then EXACTLY the bytes the release gate smoke-tested unpacked; no baseline to forget; a tsubasa, Qt or Python bump just works. Cost: 67 MB a release instead of 19 |
+> | one exe to swap; the helper waits on ONE pid | **four exes + the tray**; the swapper waits for EVERY process whose image lives in the install folder | the tray holds the folder (measured); a run the tray started holds it too |
+> | files swapped by copy (`copytree` a `.new`, then rename) | **every top-level entry renamed** on one volume — old → `previous\`, staged → in place | instant and atomic per entry; 122 MB never copied twice. Staging lives on the install's own VOLUME (`%LOCALAPPDATA%\hato\update\` when it is the same volume, so a synced Desktop never uploads it) |
+> | `updater.exe` ships once and can never update itself | ⭐ **the NEW version's swapper** runs, copied out of the staged payload | a fix to the swapper travels with the release that needs it |
+> | verified by the new exe's sha256 | sha256 ✓ **and** the new window must become VISIBLE (EnumWindows + IsWindowVisible) within 20 s — else roll back and start the old one | LEDGER-HOT: never verify a spawn by asking whether it survived |
+> | sha256 from `update.json`, both on GitHub | + **an Ed25519 signature** from a key kept in `InfiniteVoid/keystore/`, checked with hato's own public key | auto-update turns "whoever can publish a release" into "whoever can run code on every install" — and a GitHub token is live today (HANDOFF §4) |
+> | "the user decides": nothing downloads until a click | ⭐ downloads and checks quietly; the WINDOW never restarts under a person (pill → card → *Restart now*, or *When I close hato*); with no window open, the tray / the 03:00 run installs it when nothing is running | Sonic: *"as it auto-updates … automatically restart"*; the frozen rule: the decision gets a surface, the manual choice stays one click away |
+> | status-bar text; the app vanishes during the swap | the pill / card / steps / progress, a **native splash** while no window exists (drawn by the swapper, the tray's ctypes technique), *"Updated to 1.0.5 ✓"* with what's new, *"put back"* on failure, a Settings card with *Check now* and *Go back to 1.0.4* | Sonic: *"pretty … show that it's updating"* |
+> | a source checkout refuses | ⭐ **any OS, from source: tell, never touch** — *"hato 1.0.5 is out · `git pull`"* in the same spot; `hato update --check` in a terminal; nothing at import time | it may be somebody's working tree; the library API stays side-effect free |
+>
+> **The pieces:** `hato/update.py` (check · stage · the two JSON contracts; stdlib + requests +
+> Cryptodome) · `hato update --check/--stage --progress/--apply/--rollback` (the window drives it
+> through the Runner and its NDJSON progress, exactly as it drives a run; the tray calls the same
+> command) · `hato-update.exe` (onefile, windowless, stdlib + ctypes — a static check that it
+> imports nothing from hato, as the tray has) · the window's pill / card / notes / Settings card ·
+> the tray's idle install · the packager's `update.json` + `update.json.sig` from the SAME zip ·
+> ⭐ **the smoke's REHEARSAL: unpack the previous release, stage the new build from a local
+> source, apply it through the real swapper, assert the new window is visible and reports the new
+> version — then force a failure and assert 1.0.x is back.**
+>
+> **What it can never do:** update a **1.0.3** install (no updater inside it — everyone installs
+> 1.0.4 by hand once, as surasura's 1.9 users did) · update a source checkout (by design) · update
+> a folder it cannot write (a Program Files install is told to download instead) · survive BOTH
+> GitHub and the signing key being compromised.
+>
+> ✅ **RULED 2026-09-24 (Sonic): *"I take all your leans"*** — 1 **A**, the pill + the card ·
+> 2 **automatic**: download and check quietly, the window never restarts under a person, the
+> tray or the 03:00 run installs while no window is open and nothing runs · 3 **signed** — and his
+> question answered first: the PRIVATE key stays on his machine (`InfiniteVoid/keystore/`), only
+> the PUBLIC half ships inside hato, so other people's installs need nothing and hold nothing ·
+> 4 **the whole folder** · 5 **the native splash** · 6 **the previous version kept** for *Go back*.
+>
+> **The steps, in dependency order.** Each ships with its checks, its mutant list (`m11x.mjs`)
+> and, where anything is drawn, a shot that is LOOKED at.
+>
+> | Step | surfaces | What | Its proof |
+> | --- | --- | --- | --- |
+> | **11a** | `data` `delivery` | ⭐ **The release contract.** `hato/update.py`: the manifest (`update.json` — version, the zip's name / size / sha256, `min_from`, `critical`, the short notes, the bundle's top-level entries with each exe's sha256), its strict parser (anything missing or odd → refused), X.Y.Z comparison, and the Ed25519 check against `PUBLIC_KEYS` (a tuple, so a key can be rotated). `hato.dev update-manifest` builds + signs one from a zip; `hato.dev keygen` writes the PRIVATE key to the keystore (⛔ refuses any path inside TheForge) and prints the public half | parse / sign / verify / refuse checks; a flipped byte, a wrong key, a missing signature each refused |
+> | **11b** | `logic` | **The check.** `releases/latest` (one metered-free call; `HATO_NO_NETWORK` → silent NONE), the manifest + signature, the zip's GitHub `digest` must EQUAL the manifest's sha256 → `NONE` · `READY` (frozen on Windows, a writable folder, newer, signed, `min_from` met) · `TELL` (newer, but this install cannot apply it — from source, another OS, an unwritable folder: say it, never touch) · at most once a day unless *Check now*; the answer kept in `update-state.json` | recorded fixtures of the real API shape; offline, 403, 404, unsigned, a bad signature, a digest that disagrees, equal / older / newer, source mode |
+> | **11c** | `logic` `data` | **Staging, while hato runs.** Download with progress, sha256 against BOTH, extract through `archives.py`'s escape guard, the manifest's entries present and each exe's sha256 right, the staged `hato-cli.exe --version` equal to the manifest's (frozen) · staged on the install's own VOLUME · `pending.json` written temp-plus-rename · `hato update --check/--stage --progress/--apply/--rollback` (NDJSON, the Runner's grammar) | a local source; a corrupt download, an escaping member, a missing entry, a wrong version — each leaves nothing behind |
+> | **11d** | `logic` `delivery` | ⭐ **The swapper.** `hato/swap.py` (stdlib + ctypes ONLY — a static check, as the tray has) frozen ONEFILE as `hato-update.exe`, and the NEW version's copy is the one that runs: waits for every process whose image is in the install folder (≤ 60 s, else aborts untouched), renames every entry old → `previous\`, staged → in place, checks each exe's sha256, restarts the tray if it was running, starts the window if asked and waits for it to be VISIBLE (≤ 20 s) — any failure renames everything back and starts the old one · `result.json` · a person's own files in the folder are never touched | as plain Python under `…\ツール置き場\`: swap, each failure rolled back, a live process → untouched, unknown files kept, the relaunch asserted by window, not by survival |
+> | **11e** | `ui` | **The splash** — drawn by the swapper in Win32 (the tray's technique): the mark, *"Updating hato to X"*, a moving accent line; gone when the new window is on screen | a PrintWindow shot, LOOKED at against `mock-update.html` state 4 |
+> | **11f** | `ui` | **The window.** The pill; the card (what's new — ⛔ remote text, so `safe()` and never rich text — *When I close hato* / *Restart now*); the progress (four steps, one bar) driven by `--stage --progress`; the hand-off (the tray stopped and remembered, the swapper started from the staged copy, then the window quits); *Updated to X ✓* and *put back* from `result.json`; a `critical` release opens the card once; Settings → **Updates**, LAST (version, *checked*, *Check now*, *Update automatically* — `auto_update`, written only once changed, the 1.0.2 rule — *Go back to X* only while `previous\` exists); from source, the instruction and no switch | real clicks for every control; LOOKED at against the mock, state by state |
+> | **11g** | `logic` | **The tray and the 03:00 run** check and stage daily when automatic, and install while NO window is open and NO run holds the lock | a fake clock; a window open, a lock held → nothing installed |
+> | **11h** | `delivery` | The fourth exe in the bundle and the smoke (present · `--selftest` · imports nothing from hato) · ⭐ **the REHEARSAL**: a copy of 1.0.3 as the "installed" folder, the new build as the payload, the REAL new swapper → the new window visible and `--version` new; then a broken payload → rolled back, 1.0.3's window back · the release sequence gains: manifest + signature from the SAME zip, verified the way a client verifies, three assets, and the published three downloaded and verified again | the smoke green on the unpacked zip; the rehearsal both ways |
+> | **11z** | — | the adversarial pass over LAYER 11, split by surface (check+stage · swapper · window+tray), before the release | a register: fixed / dropped / deferred |
+>
+> ✅ **1.0.4 AUTHORIZED (Sonic, 2026-09-24):** *"Once you have everything working properly, all
+> of it tested as normal, if thre is nothing in the way you are free to upload it as the next
+> hato update to github. The important one is going to be the updater"* — released after
+> 11z and the full gates, never before.
+>
+> ✅ **11a BUILT 2026-09-24.** `hato/update.py` (the contract) · `hato/dev/signing.py`
+> (`keygen`, `update-manifest`, registered in `hato.dev`) · `paths.signing_key_file` +
+> `keystore.signingRelative` · the `update` extra (pycryptodomex, named in the notices) ·
+> `scan-secrets` gained `no_private_key_block`. ⭐ **The real key was made**:
+> `InfiniteVoid/keystore/hato-update-signing.pem`, outside every work tree (git asked, not
+> assumed), its public half in `PUBLIC_KEYS` and a check that the keystore key IS one hato trusts.
+> Proof: suite `update` 61 · devtools +2 · **M11a 13/13** — ⚠ M11a-06 SURVIVED first: the
+> `'..'` case carried an empty hash, so the FILE rule refused it and the NAME rule could be
+> deleted unseen; the case now carries a valid hash (LEDGER.md: a check another guard rescued)
+> · and the packaging suite caught three honest gaps before they shipped (the import-name map,
+> the notice, an unguarded import in `signing.py`).
+>
+> ✅ **11b BUILT 2026-09-24** — `update.check` + the once-a-day state, against a fake GitHub
+> serving the RECORDED answer's shape (`tests/fixtures/update/releases_latest_1.0.3.json`,
+> captured with one unauthenticated GET; every synthetic asset is a copy of the recorded one).
+> The real 1.0.3 release reads as *up to date* on 1.0.3 and as TELL(no manifest) on 1.0.2 — the
+> first real case this code meets. **M11b 14/14.**
+> ✅ **11c BUILT 2026-09-24** — `update.stage` (download counted and hashed, members judged by
+> `archives.unsafe_name` — now public, ONE copy of the rules — links refused, the unpacked
+> program exactly the manifest's, `pending.json` temp-plus-rename, a failure leaves nothing) and
+> `hato update --check [--if-due] / --stage [--progress] [--json]` in `cli.COMMANDS`. Suite
+> `update` 110. **M11c 14/14** — ⚠ found by thinking the mutants through BEFORE running them:
+> deleting the download's size cap would have survived (the final size check refuses the file
+> too, AFTER reading all of it), so the cap's check now counts the bytes READ.
+>
+> ✅ **11d BUILT 2026-09-24** — `hato/swap.py` (stdlib + ctypes; an `ast` walk holds it to
+> that), frozen ONEFILE as `hato-update.exe` · the hand-off: `update.hand_off` copies the NEW
+> version's swapper to the staging root and starts it detached; `go_back_pending`,
+> `kept_version`, `staged_version`, `skip`, `reconcile` · `hato update --apply / --rollback /
+> --auto` · `watch.stop_running_watcher`, one copy for the window and the tray. Proof: suite
+> `swap` under a Japanese-named folder with the operating system handed in, the REAL
+> Toolhelp32 listing driven once · **M11d 42/42**. ⚠ Found by reading before running, each now
+> with its check: Go back's tidy deleted the version it went back to · a program started
+> through its 8.3 SHORT path was missed (two-arm) · ways out that could raise · an install
+> with no window had no proof (the new `hato-cli --version` must say `to`) · a window that
+> opens and dies passed (a 3 s settle) · staging never swept its leftovers.
+>
+> ✅ **11e BUILT 2026-09-24** — by the orchestrator: the builder was stopped by an interrupt
+> and, per the rule, not relaunched. `hato/splash.py`: a layered window with per-pixel alpha
+> on its own thread; every pixel but the words computed in plain Python (the shadow, the
+> gradient, anti-aliased corners, hato's mark read from its own PNG and scaled by area, the
+> sweep), the words by GDI on the opaque card. ⭐ **Measured against the mock's own
+> renderer:** headless Chrome drew the mock's `.splash` CSS; its shadow fits a gaussian of
+> sigma 35 over the inset rect (rms 0.004) and is the check's reference; a side-by-side of
+> the two cards matched to the row. **The two hand-offs around it:** the swapper takes it
+> down at FIRST SIGHT of the new window, not after the 3 s settle; the window keeps itself,
+> saying *Installing*, until the splash is up (at most 8 s) — and stays open, restarting its
+> tray, if the swapper has already exited. Go back says *Going back to hato X*. Proof: suite
+> `splash` 28 — pixels without a window, then the REAL window: its styles, focus, DPI,
+> placement, what Windows composed, close — `swap` +3 · `gui_updates` +3 · `packaging` +1 ·
+> **M11e 31/31** (⚠ M11e-02 SURVIVED first: the corner check's bar sat inside the card's own
+> gradient) · paint 0.26 s, a frame 0.6 ms, 1.6 % of a core at DPI 240 · LOOKED on the real
+> desktop and beside Chrome's render.
+>
+> ✅ **11f BUILT 2026-09-24** — `hato/gui/updating.py` (the view, no Qt) + the window's
+> wiring: the pill, the card, the four-step progress, the banners, Settings → **Updates**
+> (last), from source the instruction and no switch; the `auto_update` key, written only once
+> switched off (`config.NEWER_THAN_1_0_3`), and an older tray that would refuse it SAID, with
+> its fix. Proof: suite `gui_updates`, real clicks for every control · **M11f 35/35** · 12
+> shots LOOKED — four defects found only by looking (Qt dropped a pill radius over half its
+> height; a QLabel dropped the spaces in *"hato 1.0.5 is"*; a card measured before polish;
+> *Downloaded* while downloading) · and the remembered answer offered the version already
+> running (fixed in the command AND the view).
+>
+> ✅ **11g BUILT 2026-09-24** — the tray's `UpdateKeeper` (an hourly `hato update --auto`
+> child; install when no window is open and no run holds the lock), `window_open` by the
+> program file, `install_when_idle`, and the 03:00 run's `update_now` when no tray watches;
+> the tray's pid line carries `updates`. **M11g 24/24** — ⚠ M11g-04 SURVIVED first: its
+> check let time pass and read a stale timer; split into two.
+>
+> ✅ **11h BUILT 2026-09-24** — the fourth exe (ONEFILE, copied into the folder AFTER the
+> COLLECT) and `entry_update.py --selftest` · ⭐ **the REHEARSAL** in `smoke_standalone.py`:
+> the newest released zip installed under `…\ツール置き場\`, this build staged from a local
+> copy through the real `update.stage`, the REAL frozen swapper both ways — a new version
+> that cannot start is put back and the old window returns; the new one goes in, its window
+> SAYS *Updated to X*, the old one is kept for Go back, and the splash is seen on screen,
+> composed in the card's colour, and gone as the new window came (smoke over the unpacked
+> zip, 2026-09-24: **44 checks, 43 green** — the one red was the CHECK: a onefile exe runs
+> its code in a CHILD process, so the splash is not the pid `Popen` returned; fixed, and
+> proven at the next smoke) · `hato.dev
+> verify-release` downloads the three published assets and verifies them the way a client
+> does. ⚠ **Three defects found by designing the rehearsal, each fixed with a check:** *Updated
+> to X* could never show (the result lands after the window looked — the window now polls) ·
+> the new version's CRASH DIALOG is a visible window of its pid (the proof asks for hato's
+> title) · an earlier swap's result was shown by the next swap's window (removed at the start
+> of every swap) · and zipping an unpacked release wrote the licence twice. **M11h 12/12.**
+>
+> ✅ **11z RUN 2026-09-24 — `ADVERSARY-2026-09-24.md`: 27 fixed · 0 dropped · 3 deferred.**
+> Three adversaries by surface (A check + stage · B swapper + splash · C window + tray),
+> read-only on the vault; the fixes built in a private copy and PORTED by a script that
+> refused any file the vault had moved (22 files, no drift). ⭐ The worst were SEAMS: the
+> window's own start-up starting a second tray while the swapper started its own — two
+> trays, or a rollback the window's tray made impossible (S3, found by the orchestrator's
+> review and reproduced by C) · `verify-release` asking the TAG's release while every install
+> asks `latest` (A4) · a person closing the new window read as a crash (C7). Also: a
+> nested `update.json` switched every check off (A1) · `--apply` could DOWNGRADE (A3) · two
+> installs shared one staging folder (A6) · the swapper trusted every path it was handed
+> (B1). And the FULL runner caught what no Layer 11 suite could: `auto_update` unregistered
+> in the library API's schema check (R1). `m11z` 58 mutants + 16 older re-aimed.
+> ⭐ **The gate** (`--scratch`, every Layer 11 list + the re-aimed): **245 — 243 killed, 2
+> SURVIVED, both closed** — G1: a stage listing NO entries read as waiting (`all()` of
+> nothing is true; now refused, M11z-A5b — and M11f-29 retired, equivalent once it is) ·
+> G2: the check that closed C9 stopped at *Restart now*'s NAME, and the mutant made the
+> button do nothing — it PRESSES it now. ⚠ **Read for TRAVEL before the push:** two
+> checks would have failed on the Linux and macOS jobs, on the platform and not on hato
+> (Windows-spelled paths in a fake listing; `--auto`'s fixture faking a frozen build but
+> not Windows) — fixed. The register's §*The gate*.
+
+---
+
+## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.3`, 2026-09-23 (`v1.0.2` the same day, `v1.0.1` 2026-09-19). ⛔ NO PyPI, RULED
+
+> ⭐ **`v1.0.3` IS LIVE AND EVERY GATE IS GREEN** — Layer 9. **tsubasa `v0.1.8` first**
+> (`5be457c`; CI 16/16, release 4/4, verified from its published bytes and two-arm against
+> 0.1.7), because hato's floor rose to it and CI installs the engine from PyPI. Then the
+> sequence in `LEDGER.md` §delivery, unchanged: stamp `1.0.3` (`sha256:444c550d…`, 77 files) →
+> the full runner **29 suites / 2,055 checks** over the stamped tree → freeze → smoke **29/29**
+> on the zip unpacked outside the repo → sync `59a1561` → `tests` **12/12 jobs on the FIRST
+> push** → tag `v1.0.3` = `59a1561` → `release` **2/2** → the **published asset downloaded and
+> hash-verified** (`sha256 adc8f136…ef0f`, 70,689,311 bytes). Then, on Sonic's go, the full
+> mutation gate over the released tree: **943/943** (66 min, `EXIT=0`). ⚠ Found on the way, both in
+> `LEDGER.md` §harness: the new `.jp` check folded its own casings on Windows' case-blind
+> paths, and its first witness patched a table tsubasa had already merged at import.
 
 > ⭐ **`v1.0.2` IS LIVE AND EVERY GATE IS GREEN** — Layer 8, its adversarial pass and D2.
 > Tag `6a2cf25`: `tests` **12/12 jobs**, `release` **2/2**, suite 29 suites / 1,982 checks,

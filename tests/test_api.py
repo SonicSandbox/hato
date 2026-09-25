@@ -891,7 +891,10 @@ def test_settings_defaults_match_configs_documented_schema():
     #: has to ignore -- which is how a setting comes to look honoured.
     #: ⛔ Named here rather than skipped silently, so adding a second one is a
     #: decision somebody writes down.
-    not_a_run_setting = {u"watch", u"schedule"}
+    #: ⭐ `auto_update` (LAYER 11) too: whether hato updates ITSELF, nothing about a run
+    #: -- written down here the day it joined the schema, which the full runner caught
+    #: (ADVERSARY 2026-09-24, R1)
+    not_a_run_setting = {u"watch", u"schedule", u"auto_update"}
     for name, (_kind, schema_default) in sorted(config_module.SCHEMA.items()):
         if name == u"folders":
             continue                        # required on both roads

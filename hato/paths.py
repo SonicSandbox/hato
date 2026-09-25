@@ -233,6 +233,23 @@ def key_file_candidates(start=None):
     return found
 
 
+def signing_key_file(start=None):
+    """-> (Path, source) for the RELEASE SIGNING key (RUNBOOK 11a), or (None, reason).
+
+    ⛔ A RELEASE-MACHINE THING. It signs `update.json`; nothing a person runs ever
+    reads it -- installs carry only the public half (`hato.update.PUBLIC_KEYS`).
+    $HATO_SIGNING_KEY (absolute) first, else `keystore.signingRelative` in
+    hato.config.json -- beside the jimaku key, outside every repository."""
+    override = _absolute_from_env("HATO_SIGNING_KEY")
+    if override is not None:
+        return override, "HATO_SIGNING_KEY"
+    cfg, path = project_config(start)
+    rel = ((cfg or {}).get("keystore") or {}).get("signingRelative")
+    if not rel:
+        return None, "no HATO_SIGNING_KEY and no keystore.signingRelative in hato.config.json"
+    return (path.parent / rel).resolve(), "keystore (hato.config.json)"
+
+
 def keystore_file(start=None):
     """-> (Path, source) for the key file to READ, or (None, reason).
 

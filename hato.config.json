@@ -14,7 +14,9 @@
 
   "keystore": {
     "//": "Where the jimaku key is read from in a SOURCE CHECKOUT. Order: $HATO_JIMAKU_KEY, then $HATO_KEYFILE, then this path resolved relative to this file. It points OUTSIDE the vault by construction (InfiniteVoid/keystore). The key itself is never here, never printed beyond its last 4 characters, never logged.",
-    "fileRelative": "../../../keystore/hato-jimaku.txt"
+    "fileRelative": "../../../keystore/hato-jimaku.txt",
+    "//signing": "RUNBOOK 11a -- the PRIVATE key that signs each release's update.json. Release machine only; $HATO_SIGNING_KEY overrides. Made once by `python -m hato.dev keygen`, which refuses any path inside a git work tree and never overwrites. Installs never read it: they carry only the public half (hato/update.py PUBLIC_KEYS).",
+    "signingRelative": "../../../keystore/hato-update-signing.pem"
   },
 
   "test": {
@@ -200,6 +202,30 @@
         "cmd": ["-m", "pytest", "tests/test_api.py", "-q", "--no-header"],
         "default": true,
         "why": "Step R1. The PUBLIC library API (spec/05-interface.md): the four published names exist and Result carries every field the spec lists, under the spec's own names quoted into the suite; scan() makes ZERO metered calls, reads no key and writes nothing, with the socket guard proven able to fail in the same check; a bare str is ONE folder, not one folder per character; junk is ignored silently; both the subs_dir and the --out door are refused at scan; identify() costs a call for an unresolved show and nothing for a cached one, and RAISES past a 401 instead of swallowing it per show; fetch() defaults to writing nothing; tsubasa's Result is the same OBJECT the pipeline carried, never re-wrapped; a run cut short says so; nothing prints a character; and Settings' defaults agree with config.py's schema. Cannot cover whether the fetch loop is right (that is `pipeline`), whether jimaku still answers this way (`doctor`, `live`), whether the names are reachable on the PACKAGE (`wiring`), or any per-video api_calls figure -- metered calls are spent per show and no per-video number exists."
+      },
+      {
+        "name": "update",
+        "cmd": ["-m", "pytest", "tests/test_update.py", "-q", "--no-header"],
+        "default": true,
+        "why": "LAYER 11, auto-update (ruled 2026-09-24). 11a: X.Y.Z only (surasura's 2.2-vs-2.2.0 offered a copy itself); the manifest's strict parser, one refusal per case against an accepted control; the Ed25519 signature with THROWAWAY keys -- a changed byte, a stranger's key, garbage, no key and no PyCryptodome all refused, a second key is how one rotates; keygen never overwrites and refuses a git work tree; the manifest is read out of the published zip and the written pair checked the way an install checks it. Cannot cover whether GitHub still answers in the recorded shape, or whether a FROZEN build carries PyCryptodome -- the smoke drives the built bytes for that (11h)."
+      },
+      {
+        "name": "gui_updates",
+        "cmd": ["-m", "pytest", "tests/test_gui_updates.py", "-q", "--no-header"],
+        "default": true,
+        "why": "LAYER 11f, the window's half of auto-update, to the ruled mock (gui-mock/mock-update.html, mechanism A). The VIEW (gui/updating.py, no Qt): nothing is ever offered that is not newer than the running copy (LOOKED: a saved answer offered 1.0.5 beside 'Updated to 1.0.5'); the pill, the card, the four-step progress and the banners say what each state is; hato downloads by itself only when automatic, not turned away, not already here; a release page that is not hato's own is never linked; a checkout gets git pull and no switch. The WINDOW, by REAL CLICKS: the pill opens the card; Restart now stops the tray, hands off with window and tray set, and closes -- or waits for a run's end; When I close hato hands off quietly on close; a failed hand-off brings the tray back and says why on the card; Download and restart fetches with progress painted IN PLACE, then hands off; a failed download is said where it was asked; an automatic answer downloads quietly; a critical release opens its card once; the banners' buttons reach the checked page and Try again; Check now asks now; the switch writes through the CLI; Go back asks first and runs the CURRENT swapper; remote notes are plain text; the last swap's result is read once and forgotten. Cannot cover how it LOOKS (the shots, LOOKED against the mock) or a real swap (the swap suite, the smoke's rehearsal)."
+      },
+      {
+        "name": "swap",
+        "cmd": ["-m", "pytest", "tests/test_swap.py", "-q", "--no-header"],
+        "default": true,
+        "why": "LAYER 11d, the swapper (hato/swap.py, frozen as hato-update.exe), as plain Python under a Japanese-named folder with the operating system handed in: it waits until NOTHING runs from the install before a byte moves (asserted at every poll), renames hato's entries out and the new ones in, keeps ONE previous version, never moves a person's own file, and proves the result by what a person would see -- the new hato-cli says its version, the window is VISIBLE and still alive after a settle, the tray names itself in its pid file. Every way out starts hato again, every failure after a move puts every move back (a bad hash, a program that will not run, a window that never shows or dies once open, a tray that never watches, a rename failing half way, a window that will not start after the tray did), a malformed hand-off or a failing listing is a result, never a crash, and Go back keeps the version it just put aside. The REAL Toolhelp32 listing is driven once, with a real program copied under the Japanese folder. Stdlib + ctypes only, held by an ast walk. Cannot cover a real frozen window or the splash's pixels -- the smoke's rehearsal (11h) and tests/test_splash.py (11e) do."
+      },
+      {
+        "name": "splash",
+        "cmd": ["-m", "pytest", "tests/test_splash.py", "-q", "--no-header"],
+        "default": true,
+        "why": "LAYER 11e, the update splash (hato/splash.py) the swapper draws while no hato window exists, to the ruled mock (gui-mock/mock-update.html state 4). The picture is plain Python, so its PIXELS are read with no window: premultiplied everywhere (UpdateLayeredWindow adds anything brighter than its alpha to the desktop), the gradient and the border, anti-aliased corners that mirror, the SHADOW against Chrome's own measured pixels for the mock's CSS, the sweep on the ruled curve and clipped by the corners, a frame that repaints only the run line (the words are drawn once), the mark read from hato's own PNG (every filter) and made smaller by area, premultiplied; through GDI into a bitmap, the words where the mock puts them, Go back's own wording, and a face Windows lacks never used quietly. Then the REAL window: layered, click-through, topmost, no taskbar, never takes the focus, sized for its monitor's DPI and centred on its work area, what Windows composed equal to the canvas, and close() taking it away. Never raises; a card closed before it was up never shows. Stdlib + ctypes only, and its colours pinned to theme.py. Cannot cover the FROZEN swapper drawing it (the smoke's rehearsal watches for it) or how it looks (the shot, LOOKED)."
       },
       {
         "name": "live",

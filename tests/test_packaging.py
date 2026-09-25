@@ -93,7 +93,9 @@ NOTICES = os.path.join(ROOT, u"THIRD_PARTY_LICENSES.md")
 #: rule the window's toolkit read as *declared nowhere* AND as *imported
 #: nowhere* at the same time -- two checks disagreeing with each other about
 #: one package, which is the tell that the mapping and not the code was wrong.
-PROVIDES = {u"tsubasa-sync": (u"tsubasa",), u"pyqt6": (u"PyQt6",)}
+PROVIDES = {u"tsubasa-sync": (u"tsubasa",), u"pyqt6": (u"PyQt6",),
+            # RUNBOOK 11a -- the distribution and its import name differ
+            u"pycryptodomex": (u"Cryptodome",)}
 
 #: What a declared requirement's EXTRA installs, where hato imports it itself.
 #: ONE entry: `tsubasa-sync[parsing]` is how anitopy and guessit reach every
@@ -1263,10 +1265,14 @@ def test_the_three_FROZEN_names_are_exactly_what_the_code_SPAWNS(tmp_path,
     watch.open_window()
     assert spawned, u"open_window spawned nothing"
 
+    from hato import update
     from_code = set([
         os.path.basename(gui_run.cli_argv()[0]),      # hato.exe
         os.path.basename(watch.watch_argv()[0]),      # hato-watch.exe
         os.path.basename(spawned[0][0]),              # hato-gui.exe
+        # ⭐ LAYER 11 -- the hand-off copies THIS name out of a staged release,
+        # and an install refuses a release whose manifest lacks it.
+        update.SWAPPER_NAME if suffix else update.SWAPPER_NAME[:-4],
     ])
     from_spec = set(name + suffix for name in _exe_names_from_spec())
 
@@ -1348,6 +1354,91 @@ def test_Qt_is_EXCLUDED_from_the_CLI_and_the_WATCHER_but_not_the_window():
     assert chosen.get(u"entry_watch.py") == u"NO_QT", chosen
     assert chosen.get(u"entry_gui.py") == u"EXCLUDE", chosen
     assert u'NO_QT = EXCLUDE + ["PyQt6"]' in _spec_source()
+
+
+def _call_assigned(name):
+    u"""The Call assigned to `name` in the spec. -> ast.Call"""
+    for node in ast.walk(ast.parse(_spec_source())):
+        if isinstance(node, ast.Assign) and any(
+                getattr(t, u"id", None) == name for t in node.targets):
+            return node.value
+    raise AssertionError(u"the spec assigns no %s" % name)
+
+
+def test_the_swapper_is_ONEFILE_and_carries_nothing_of_the_other_three():
+    u"""⭐ LAYER 11 -- `hato-update.exe` runs from OUTSIDE the program folder while
+    that folder is renamed away, so it must carry its own runtime (onefile: its
+    binaries and data go INTO the exe, no `exclude_binaries`) and nothing the
+    others need -- starting with the library API `hato/__init__.py` wires lazily.
+    ⛔ And it lands in the program folder only AFTER the COLLECT, which clears it."""
+    exe = _call_assigned(u"update_exe")
+    keywords = dict((k.arg, k.value) for k in exe.keywords)
+    assert u"exclude_binaries" not in keywords, u"the swapper would lean on _internal"
+    assert ast.unparse(exe.args[2]) == u"update.binaries", ast.unparse(exe.args[2])
+    assert getattr(keywords[u"console"], u"value", None) is False
+    analysis = _call_assigned(u"update")
+    assert ast.unparse(analysis.args[0]).endswith(u"'entry_update.py')]")
+    source = _spec_source()
+    for heavy in (u"hato.api", u"tsubasa", u"numpy", u"requests", u"Cryptodome"):
+        assert u'"%s"' % heavy in source.split(u"SWAPPER_EXCLUDE")[1], heavy
+    assert source.index(u"coll = COLLECT(") < source.index(u'"hato", "hato-update.exe")'), \
+        u"the swapper is copied into the folder before the COLLECT clears it"
+
+
+def test_zipping_an_unpacked_release_writes_every_name_once(tmp_path):
+    u"""⚠ The rehearsal zips an UNPACKED release, which already holds the licence, the
+    notices and the README -- and `build_zip` adds the repository's copies after the
+    bundle's. Measured: `UserWarning: Duplicate name: 'hato/LICENSE'`. The repository's
+    copy is the one that ships; the bundle's is skipped, and only at its top."""
+    import importlib.util
+    import zipfile
+    loader = importlib.util.spec_from_file_location(
+        u"hato_package_standalone", os.path.join(PACKAGING_DIR, u"package_standalone.py"))
+    module = importlib.util.module_from_spec(loader)
+    loader.loader.exec_module(module)
+    bundle = tmp_path / u"hato"
+    (bundle / u"_internal" / u"docs").mkdir(parents=True)
+    (bundle / u"hato.exe").write_bytes(b"exe")
+    for name in module.ALONGSIDE:
+        (bundle / name).write_text(u"an old copy", encoding=u"utf-8")
+    (bundle / u"_internal" / u"docs" / u"LICENSE").write_text(u"a package's own", encoding=u"utf-8")
+    out = tmp_path / u"out.zip"
+    module.build_zip(str(bundle), str(out))
+    with zipfile.ZipFile(str(out)) as archive:
+        names = archive.namelist()
+        assert len(names) == len(set(names)), sorted(n for n in names if names.count(n) > 1)
+        assert archive.read(u"hato/LICENSE") != b"an old copy", u"the bundle's copy shipped"
+        assert u"hato/_internal/docs/LICENSE" in names, u"a package's own licence was dropped"
+
+
+def test_the_swapper_carries_the_splashs_picture_of_hato():
+    u"""⭐ The splash reads hato's mark beside `hato/splash.py` -- inside a onefile that
+    is `_MEIPASS/hato/data`, and only if the spec PUT it there. Forgotten, the card
+    draws with a hole where the mark belongs and nothing says so (the smoke's
+    `--selftest` reads which mark the BUILT swapper found)."""
+    analysis = _call_assigned(u"update")
+    keywords = dict((k.arg, k.value) for k in analysis.keywords)
+    assert ast.unparse(keywords[u"datas"]) == u"SPLASH_DATA", ast.unparse(keywords[u"datas"])
+    collected = _call_assigned(u"SPLASH_DATA")
+    assert ast.unparse(collected) == \
+        u"collect_data_files('hato', includes=['data/hato-*.png'])", ast.unparse(collected)
+    marks = [n for n in os.listdir(os.path.join(ROOT, u"hato", u"data"))
+             if re.match(r"^hato-\d+\.png$", n)]
+    assert marks, u"the control: hato/data holds no marks for the pattern to find"
+
+
+def test_the_swappers_entry_imports_nothing_of_hato_but_the_swap_and_its_splash():
+    with io.open(os.path.join(PACKAGING_DIR, u"entry_update.py"), encoding=u"utf-8") as fh:
+        tree = ast.parse(fh.read())
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imported.update(u"%s.%s" % (node.module, a.name) for a in node.names)
+    assert u"hato.swap" in imported, u"the control: the walk found the swapper"
+    ours = sorted(n for n in imported if n.startswith(u"hato"))
+    assert set(ours) <= {u"hato.swap", u"hato.splash"}, ours
 
 
 if __name__ == u"__main__":

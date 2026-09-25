@@ -93,6 +93,19 @@ support is off by default.
 
 ---
 
+## Optional — the `update` extra
+
+Reached through a guarded lazy import (`hato/update.py`), used for one thing:
+checking the Ed25519 signature on a new release before it is installed.
+Absent, hato can still say a release is out and never installs one — which a
+copy run from source never does anyway. The packaged hato carries it.
+
+| Package | Extra | What it does | Licence | Read from |
+| --- | --- | --- | --- | --- |
+| **pycryptodomex** | `update` | Checks the signature on an update (Ed25519) | **BSD, Public Domain** | metadata of 3.23.0 |
+
+---
+
 ## Optional — the `gui` extra
 
 Reached through a guarded import (`hato/gui/app.py`), behind a lazy one

@@ -144,6 +144,13 @@ dependencies = [
 # without it -- an older release is not something this can claim.
 # rarfile at 4.0, the release that introduced tool_setup(); installed 4.5.
 archives = ["py7zr>=1.1.3", "rarfile>=4.0"]
+# ⭐ RUNBOOK 11a -- the update SIGNATURE is checked with PyCryptodome's Ed25519,
+# imported lazily inside `hato.update.verify_signature` and `hato.dev.signing`, so
+# it is an extra and not a dependency: a source install without it can still be
+# TOLD a release is out and can never install one -- which a source install never
+# does anyway. The frozen build carries it. Installed here: 3.23.0; `eddsa` arrived
+# in 3.15, and that is the whole claim the floor makes.
+update = ["pycryptodomex>=3.15"]
 # ⭐ THE WINDOW IS AN EXTRA, NOT A DEPENDENCY (RUNBOOK 7c). hato's whole job is
 # done by the CLI, and Qt is ~70 MB; making every command-line user install a
 # toolkit to fetch subtitles would be the tail wagging the dog. `hato.gui` is

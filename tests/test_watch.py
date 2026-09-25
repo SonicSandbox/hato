@@ -664,6 +664,23 @@ def test_this_process_recognises_itself_as_the_watcher(tmp_path, monkeypatch):
     assert watch.watching_pid() is None
 
 
+def test_stopping_the_running_watcher_ends_it_by_its_pid_and_clears_its_file(tmp_path,
+                                                                             monkeypatch):
+    u"""⭐ ONE copy of *stop the tray*: the window's switch and the update hand-off
+    both call it (RUNBOOK 11d). ⛔ The kill is faked -- a check never stops a real
+    process."""
+    path = tmp_path / "watch.pid"
+    monkeypatch.setattr(watch, "pid_file_path", lambda: path)
+    killed = []
+    monkeypatch.setattr(watch.os, "kill", lambda pid, sig: killed.append(pid))
+    assert watch.stop_running_watcher() is None and killed == [], \
+        u"stopped a tray that is not there: %s" % killed
+    path.write_text(u"4242 - retries,formats", encoding="utf-8")
+    monkeypatch.setattr(watch, "watching_pid", lambda: 4242)
+    assert watch.stop_running_watcher() == 4242
+    assert killed == [4242] and not path.exists(), (killed, path.exists())
+
+
 def test_the_escape_hatch_for_testing_is_named():
     u"""⚠ Sonic asked for one: *"during testing it could be useful to have
     more."* ⛔ It has to be deliberate, so it is an environment variable and
@@ -1836,9 +1853,14 @@ watch.spawn_run([folder], spawner=lambda argv, env: None)
 watch._ico_path(); watch.no_console_kwargs(); watch.gui_spawn_kwargs()
 watch.complain(u"life\\n"); watch.clear_pid_file()
 tray.menu_commands([(u"a", None)]); tray.tick_safely(lambda: None)
+# LAYER 11g -- the tray keeping hato up to date: the network stays in the CHILD
+from hato import update
+watch.window_open(folder); watch.UpdateKeeper(spawn=lambda: None, install=lambda: False).poll()
+update.staged_version(folder, u"1.0.0"); update.skipped(); update.kept_version(folder, u"1.0.0")
+watch.spawn_update(spawner=lambda argv, env: None)
 heavy = sorted(m for m in set(sys.modules) - before
                if m.split(".")[0] in ("PyQt6", "PySide6", "tkinter", "tsubasa", "numpy",
-                                      "guessit", "requests")
+                                      "guessit", "requests", "urllib3", "Cryptodome")
                or m.startswith(("hato.pipeline", "hato.gui", "hato.client", "hato.state")))
 print("HEAVY=" + ",".join(heavy))
 """, encoding="utf-8")
@@ -1850,3 +1872,294 @@ print("HEAVY=" + ",".join(heavy))
     assert line[0] == u"HEAVY=", (
         u"the tray's life loaded %s -- a toolkit or the pipeline in the 13 MB process"
         % line[0][len(u"HEAVY="):])
+
+
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 11g -- the tray, and the daily run, keep hato itself up to date
+# ---------------------------------------------------------------------------
+# RULED 2026-09-24: the window never restarts under a person -- the tray or the
+# daily run puts a staged release in while no window is open and no run holds the
+# lock. ⛔ Nothing here starts a swapper: the hand-off is recorded.
+
+class _Child(object):
+    def __init__(self, done=False):
+        self.done = done
+
+    def poll(self):
+        return 0 if self.done else None
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def _keeper(monkeypatch, installs=False):
+    monkeypatch.setattr(watch, "can_update_itself", lambda: True)
+    clock, spawned, looked = FakeClock(), [], []
+
+    def spawn():
+        child = _Child()
+        spawned.append(child)
+        return child
+
+    keeper = watch.UpdateKeeper(clock=clock, spawn=spawn,
+                                install=lambda: looked.append(clock()) or installs)
+    return keeper, clock, spawned, looked
+
+
+def test_the_tray_asks_after_the_catch_up_run_and_then_hourly(monkeypatch):
+    keeper, clock, spawned, _looked = _keeper(monkeypatch)
+    keeper.poll()
+    assert spawned == [], u"it asked the moment the tray started, over the catch-up run"
+    clock.advance(watch.UPDATE_FIRST)
+    keeper.poll()
+    assert len(spawned) == 1
+    spawned[0].done = True
+    clock.advance(watch.UPDATE_EVERY - 1)
+    keeper.poll()
+    assert len(spawned) == 1, u"asked again inside the hour"
+    clock.advance(1)
+    keeper.poll()
+    assert len(spawned) == 2
+
+
+def test_the_tray_never_looks_while_its_own_check_is_downloading(monkeypatch):
+    keeper, clock, spawned, looked = _keeper(monkeypatch)
+    clock.advance(watch.UPDATE_FIRST)
+    keeper.poll()
+    clock.advance(watch.INSTALL_EVERY * 3)
+    keeper.poll()
+    assert looked == [], u"it looked while its own check was still downloading"
+
+
+def test_the_moment_a_download_ends_the_tray_looks_for_a_quiet_moment(monkeypatch):
+    u"""⚠ MEASURED BY A SURVIVING MUTANT (M11g-04): with time passing during the
+    download, a stale last look made the next one happen anyway. The piece matters
+    when the download ends within a minute of the last look -- so that is the case."""
+    keeper, clock, spawned, looked = _keeper(monkeypatch)
+    clock.advance(watch.UPDATE_FIRST - 30)
+    keeper.poll()                             # a look, 30 s before the ask
+    assert looked == [clock()], u"the control: an idle tray looks each minute"
+    clock.advance(30)
+    keeper.poll()                             # the ask -- a download starts
+    assert len(spawned) == 1
+    clock.advance(10)
+    spawned[0].done = True
+    keeper.poll()
+    assert looked[-1] == clock(), u"a finished download waited out the minute for a look"
+
+
+def test_handed_off_means_the_tray_must_go(monkeypatch):
+    keeper, clock, _spawned, _looked = _keeper(monkeypatch, installs=True)
+    clock.advance(watch.INSTALL_EVERY)
+    assert keeper.poll() is True
+
+
+def test_the_keeper_never_installs_while_a_run_the_tray_started_is_alive(monkeypatch):
+    u"""🚨 C3 (ADVERSARY 2026-09-24): in the tick a run starts, its frozen child has not
+    yet reached the run lock `install_when_idle` asks -- and the tray handed off under
+    it. The keeper asks the tray about ITS runs first."""
+    keeper, clock, _spawned, looked = _keeper(monkeypatch, installs=True)
+    busy = [True]
+    keeper.busy = lambda: busy[0]
+    clock.advance(watch.INSTALL_EVERY)
+    assert keeper.poll() is False and looked == [], u"installed under the tray's own run"
+    busy[0] = False
+    clock.advance(watch.INSTALL_EVERY)
+    assert keeper.poll() is True, u"the control: once the run is over it goes in"
+
+
+def test_the_tray_tells_its_keeper_about_every_run_it_starts():
+    u"""C3's wiring, read off the source like the tick's: the keeper is made with a
+    `busy` question, and `launch` records every run it starts."""
+    tree = ast.parse(open(watch.__file__, encoding="utf-8").read())
+    made = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+            and getattr(node.func, "id", None) == u"UpdateKeeper"]
+    assert made and all(any(k.arg == u"busy" for k in call.keywords) for call in made), \
+        u"the tray's keeper is never told about the tray's runs"
+    launch = [node for node in ast.walk(tree)
+              if isinstance(node, ast.FunctionDef) and node.name == u"launch"]
+    assert launch and u"runs.append" in ast.unparse(launch[0]), u"a launched run goes untold"
+
+
+def test_the_daily_run_gives_the_check_a_quarter_of_an_hour(monkeypatch):
+    u"""C11 (ADVERSARY 2026-09-24): `update_now` waits up to 15 minutes for its check --
+    the fake child ignored its timeout, and a mutant waiting 0 s (so the 03:00 run never
+    installed anything) survived."""
+    waited = []
+
+    class Child(_Child):
+        def wait(self, timeout=None):
+            waited.append(timeout)
+            return 0
+
+    monkeypatch.setattr(watch, "can_update_itself", lambda: True)
+    watch.update_now(spawner=lambda argv, env: Child(True), install=lambda tray=True: True)
+    assert waited and waited[0] >= 15 * 60, waited
+
+
+def test_a_checkout_never_asks_or_installs(monkeypatch):
+    monkeypatch.setattr(watch, "can_update_itself", lambda: False)
+    spawned = []
+    keeper = watch.UpdateKeeper(clock=FakeClock(), spawn=lambda: spawned.append(1),
+                                install=lambda: spawned.append(2) or True)
+    keeper.clock.advance(watch.UPDATE_EVERY * 5)
+    assert keeper.poll() is False and spawned == []
+
+
+class _Listing(object):
+    u"""The swapper's listing, faked: pid -> program file."""
+
+    def __init__(self, images):
+        self.images = images
+
+    def processes_in(self, folder):
+        return list(self.images)
+
+    def image(self, pid):
+        return self.images[pid]
+
+
+def test_the_window_is_found_by_its_program_file():
+    # ⚠ A NATIVE path, as the real listing gives one: on Linux and macOS a backslash is
+    # a filename character, and a Windows-spelled path is its own basename -- the
+    # check would fail there on a fixture, not on hato (read before the 1.0.4 push)
+    def image(name):
+        return os.path.join(os.sep, u"hato", name)
+    assert watch.window_open(u"X", _Listing({7: image(u"hato.exe")}))
+    assert not watch.window_open(u"X", _Listing({7: image(u"hato-watch.exe"),
+                                                  8: image(u"hato-cli.exe")}))
+
+
+@pytest.fixture
+def idle(monkeypatch, tmp_path):
+    u"""A frozen install with 1.0.9 staged beside it, nothing open -> the world to
+    change one thing in, and the hand-offs made."""
+    from hato import config as _config, runlock, update
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    install = tmp_path / u"ツール置き場" / u"hato"
+    install.mkdir(parents=True)
+    monkeypatch.setattr(watch, "can_update_itself", lambda: True)
+    monkeypatch.setattr(watch.sys, "executable", str(install / u"hato-watch.exe"))
+    root = update.stage_root(str(install))
+    staged = root / u"staged" / u"1.0.9" / u"hato"
+    staged.mkdir(parents=True)
+    (staged / u"hato.exe").write_bytes(b"1.0.9's window")
+    # ⚠ THE WIRE'S SHAPE (LEDGER-HOT): a stage names its install and its entries --
+    # 11z made both part of "staged" (A5: whole; A6: this copy's), and a fixture with
+    # neither was a hand-off no stage writes
+    update.save_json(os.path.join(str(root), update.PENDING_NAME),
+                     {u"to": u"1.0.9", u"staged": str(staged), u"install": str(install),
+                      u"entries": {u"hato.exe": u"0" * 64}})
+    world = {u"auto": True, u"run": False, u"window": False, u"handed": []}
+
+    class Cfg(object):
+        pass
+
+    def load():
+        cfg = Cfg()
+        cfg.auto_update = world[u"auto"]
+        return cfg
+
+    monkeypatch.setattr(_config, "load", load)
+    monkeypatch.setattr(runlock, "run_in_flight", lambda path=None: world[u"run"])
+    monkeypatch.setattr(watch, "window_open", lambda install, ops=None: world[u"window"])
+    world[u"install"] = lambda tray=True: watch.install_when_idle(
+        tray=tray, hand_off=lambda pending, **kw: world[u"handed"].append(kw))
+    return world
+
+
+def test_a_staged_release_goes_in_when_nothing_of_hato_is_open(idle):
+    assert idle[u"install"]() is True
+    kw = idle[u"handed"][0]
+    assert (kw[u"window"], kw[u"tray"], kw[u"quiet"]) == (False, True, True), kw
+    assert kw.get(u"current") and kw.get(u"install"), \
+        u"the hand-off was never told which copy hands off (11z A3/A6): %s" % kw
+    assert kw[u"tray_pid_file"] == watch.pid_file_path()
+
+
+@pytest.mark.parametrize("change", [u"auto", u"run", u"window", u"skipped"])
+def test_nothing_goes_in_while_hato_is_busy_or_told_not_to(idle, change):
+    from hato import update
+    if change == u"auto":
+        idle[u"auto"] = False
+    elif change == u"skipped":
+        update.skip(u"1.0.9")
+    else:
+        idle[change] = True
+    assert idle[u"install"]() is False and idle[u"handed"] == [], change
+
+
+def test_an_updater_windows_will_not_start_is_said_and_rested_an_hour(idle, monkeypatch):
+    u"""S1 (the seam review, 2026-09-24): Windows refusing to START the updater -- an
+    antivirus holding an unsigned exe -- escaped `install_when_idle` as *"the tray's
+    tick failed"*, and was tried again every minute, copying 5.6 MB each time. Said
+    in its own words now, then an hour's rest before the same release is tried."""
+    said, tries, now = [], [], [1000.0]
+    monkeypatch.setattr(watch, "complain", lambda text, **kw: said.append(text))
+    monkeypatch.setattr(watch, "_START_FAILED", {})
+
+    def refused(pending, **kw):
+        tries.append(now[0])
+        raise PermissionError(13, u"Access is denied")
+
+    def install():
+        return watch.install_when_idle(hand_off=refused, clock=lambda: now[0])
+
+    assert install() is False
+    assert len(said) == 1 and u"1.0.9" in said[0] and u"could not be started" in said[0] \
+        and u"Access is denied" in said[0], said
+    now[0] += watch.INSTALL_EVERY
+    assert install() is False and len(tries) == 1, u"tried again a minute later"
+    now[0] += watch.UPDATE_EVERY
+    assert install() is False and len(tries) == 2, u"the release was never tried again"
+
+
+def test_the_daily_run_installs_with_no_tray_to_bring_back(monkeypatch):
+    calls = []
+    monkeypatch.setattr(watch, "can_update_itself", lambda: True)
+    done = watch.update_now(spawner=lambda argv, env: calls.append(argv[-2:]) or _Child(True),
+                            install=lambda tray=True: calls.append(tray) or True)
+    assert done and calls == [[u"update", u"--auto"], False], calls
+
+
+@pytest.mark.parametrize("tray_up", [False, True], ids=[u"no-tray", u"a-tray"])
+def test_the_daily_run_leaves_updating_to_a_tray_when_one_is_up(monkeypatch, tray_up):
+    ran = []
+
+    class Done(object):
+        returncode = 0
+
+        def communicate(self):
+            return b"", b""
+
+    monkeypatch.setattr(watch.subprocess, "Popen", lambda *a, **k: Done())
+    monkeypatch.setattr(watch, "can_update_itself", lambda: True)
+    monkeypatch.setattr(watch, "watching_pid", lambda: 4242 if tray_up else None)
+    monkeypatch.setattr(watch, "update_now", lambda: ran.append(u"update"))
+    assert watch.scheduled_run() == 0
+    assert ran == ([] if tray_up else [u"update"]), ran
+
+
+def test_the_tray_tick_keeps_hato_up_to_date_and_goes_when_handed_off():
+    u"""The tick is a closure inside the tray's message loop, which no headless check
+    can run -- so the WIRING is read off the source: `tick` polls the keeper, and a
+    hand-off stops the icon (the loop ends, the process exits, the swapper goes on)."""
+    tree = ast.parse(open(watch.__file__, encoding="utf-8").read())
+    ticks = [node for node in ast.walk(tree)
+             if isinstance(node, ast.FunctionDef) and node.name == u"tick"]
+    assert len(ticks) == 1, u"the control: one tick in the tray"
+    calls = set()
+    for node in ast.walk(ticks[0]):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            owner = node.func.value
+            name = owner.id if isinstance(owner, ast.Name) else (
+                u"icon" if isinstance(owner, ast.Subscript) else u"?")
+            calls.add(u"%s.%s" % (name, node.func.attr))
+    assert u"keeper.poll" in calls, u"the tray never keeps hato up to date: %s" % calls
+    assert u"icon.stop" in calls, u"a hand-off does not end the tray: %s" % calls
+
+
+def test_this_tray_says_it_keeps_hato_up_to_date():
+    u"""⭐ A NEW BUILD NEEDS A NEW TOKEN (CAPABILITIES' own note): a window can tell
+    a tray that updates hato from an older one that does not."""
+    assert u"updates" in watch.CAPABILITIES

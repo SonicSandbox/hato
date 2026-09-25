@@ -836,6 +836,25 @@ def test_hato_s_own_shipping_source_holds_no_key_shaped_literal():
     assert not hits, "hato's own source trips the scanner: %s" % hits[:3]
 
 
+@pytest.mark.parametrize("header", [u"PRIVATE KEY", u"EC PRIVATE KEY", u"OPENSSH PRIVATE KEY",
+                                    u"RSA PRIVATE KEY"])
+def test_a_private_key_block_is_found_whatever_kind_it_is(tmp_path, header):
+    u"""⭐ RUNBOOK 11a -- the update signing key is a PEM file, and this is the wall
+    that keeps any private key out of anything published."""
+    block = u"-----BEGIN %s-----\nMC4CAQAwBQYDK2VwBCIEIFAKEFAKEFAKE=\n-----END %s-----\n" % (header, header)
+    d = dist_with(tmp_path, "notes.txt", block)
+    got = red(scan.scan_secrets(d, NEEDLES, FAKE_HINT), "no_private_key_block")
+    assert u"notes.txt" in got.saw, got.saw
+
+
+def test_a_public_key_is_not_a_private_key_block(tmp_path):
+    u"""The control: a PUBLIC key -- which hato ships on purpose -- is not flagged."""
+    d = dist_with(tmp_path, "public.txt",
+                  u"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAFAKE=\n-----END PUBLIC KEY-----\n")
+    got = by_name(scan.scan_secrets(d, NEEDLES, FAKE_HINT))
+    assert got["no_private_key_block"].state == claims.OK, got["no_private_key_block"].saw
+
+
 def test_no_key_resolved_is_a_loud_skip_and_never_a_tick(tmp_path):
     w = make_wheel(tmp_path / "dist" / "w.whl")
     got = by_name(scan.scan_secrets(w.parent, {}, "(no key)", no_key_reason="no keyfile"))

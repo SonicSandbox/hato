@@ -11,7 +11,7 @@ date: 2026-09-07
 > Part 2 is a fresh agent with only this pack. **Anything not written here is lost.**
 
 `hato` (鳩 — carrier pigeon) takes a downloaded video, works out what it is, fetches the
-matching Japanese subtitle from **jimaku.cc**, hands it to [[tsubasa]] to be retimed, and
+matching Japanese subtitle from **jimaku.cc**, hands it to [[tsubasa/CONTEXT|tsubasa]] to be retimed, and
 leaves it beside the video under a name every media player will load.
 
 It **imports** tsubasa. tsubasa never imports it. That one-way arrow is the whole
@@ -118,5 +118,5 @@ Used by `RUNBOOK.md` to tell the builder which doctrine to load per step.
 
 ## Related
 
-[[tsubasa]] — the engine this imports · `Workshop/jimaku-corpus/jimaku-corpus.md` — prior
+[[tsubasa/CONTEXT|tsubasa]] — the engine this imports · `Workshop/jimaku-corpus/jimaku-corpus.md` — prior
 reconnaissance against the same site · [[Development Doctrine/workflows/dev-build]]

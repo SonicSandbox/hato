@@ -74,6 +74,11 @@ unzip it anywhere, and run **`hato.exe`**.
 
 Nothing to install. Python is already inside it.
 
+**From 1.0.4 on, hato keeps itself up to date.** A new version downloads and is
+checked quietly; a small pill at the top says when it is ready, and it goes in when
+you say — **Restart now**, or **When I close hato**. If only the tray is running, it
+installs itself. If a new version cannot start, the one you had is put back.
+
 ### Any platform — from source
 
 ```bash
@@ -147,6 +152,7 @@ cleanly, the episode goes to **Needs you** instead of being written badly.
 | **Watch for new videos** | Sits in the tray and runs a minute after something appears |
 | **Start with Windows** | hato is already watching when you sit down |
 | **Subtitle format** | `.ass` or `.srt` first. The other kind only if you tick the box — it starts off, so an episode jimaku has only in the other kind waits in **Needs you**, one click from taking it |
+| **Update automatically** | On by default. New versions are signed, downloaded and checked quietly — the window never restarts under you. **Settings → Updates** has *Check now*, and *Go back* to the version before. From source, hato only says a new version is out: `git pull` |
 
 > **A note about airing shows.** For a season still going out, the subtitle is
 > published hours to days *after* the episode. Watching works best on finished shows;

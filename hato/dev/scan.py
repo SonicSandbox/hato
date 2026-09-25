@@ -75,6 +75,13 @@ _KEY_SHAPED = re.compile(
     rb"|access[_\-]?token|auth[_\-]?token|bearer)"
     rb"[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9_\-.]{16,})")
 
+#: ⭐ RUNBOOK 11a -- a PEM PRIVATE KEY block of any kind (PKCS#8, EC, RSA, OpenSSH).
+#: The update signing key is a PEM file in the keystore; this is the wall that keeps
+#: it out of anything published, whatever it was named and wherever it was dropped.
+#: ⚠ This line cannot match itself: after `BEGIN ` comes `(`, which the name part
+#: does not admit, so `PRIVATE KEY` never directly follows.
+_PRIVATE_KEY_BLOCK = re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+
 #: Values that are obviously not a credential. ⛔ Keep this list SHORT: every
 #: entry is a hole, and `abc123`-style fakes are deliberately NOT here -- a fake
 #: key in a shipped file is still a key-shaped string in the artifact, and the
@@ -267,6 +274,7 @@ def scan_secrets(target, needles, hint, no_key_reason=None):
         distinct.setdefault(raw, []).append(codec)
     found = []
     shaped = []
+    blocks = []
     members = 0
     scanned = 0
     for label, data in artifacts(target):
@@ -277,6 +285,7 @@ def scan_secrets(target, needles, hint, no_key_reason=None):
             if at >= 0:
                 found.append((label, "/".join(codecs), at))
         shaped.extend(_shaped_hits(label, data))
+        blocks.extend((label, m.start()) for m in _PRIVATE_KEY_BLOCK.finditer(data))
 
     where = "%d member(s), %d bytes" % (members, scanned)
     if no_key_reason is not None:
@@ -305,6 +314,13 @@ def scan_secrets(target, needles, hint, no_key_reason=None):
     else:
         out.append(ok("no_key_shaped_literal",
                       "no credential-shaped assignment in %s" % where))
+    if blocks:
+        out.append(fail("no_private_key_block",
+                        "%d PRIVATE KEY block(s): %s -- a signing key is one publish from "
+                        "every install" % (len(blocks), "; ".join(
+                            "%s at byte %d" % (l, a) for l, a in blocks[:3]))))
+    else:
+        out.append(ok("no_private_key_block", "no PEM private key in %s" % where))
     return out
 
 

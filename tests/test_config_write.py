@@ -51,13 +51,13 @@ def test_every_schema_key_is_written_so_a_person_can_read_what_is_in_force(tmp_p
     default -- the check below says why. Once set, those are written too."""
     text = config.dumps(load_from(tmp_path))
     for name in config.SCHEMA:
-        if name in config.NEWER_THAN_1_0_2:
+        if name in config.NEWER_KEYS:
             continue
         assert (u"\n%s = " % name) in text, name
     changed = config.with_changes(load_from(tmp_path), prefer_format=u"srt",
-                                  format_fallback=True)
+                                  format_fallback=True, auto_update=False)
     text = config.dumps(changed)
-    for name in config.NEWER_THAN_1_0_2:
+    for name in config.NEWER_KEYS:
         assert (u"\n%s = " % name) in text, name
 
 
@@ -84,6 +84,22 @@ def test_a_file_written_with_the_format_settings_untouched_is_one_1_0_2_can_read
     changed = set(_toml.loads(config.dumps(config.with_changes(fresh, prefer_format=u"srt"))))
     assert untouched <= known_to_1_0_2, untouched - known_to_1_0_2          # arm 1
     assert changed - known_to_1_0_2 == {"prefer_format"}                    # arm 2
+
+
+def test_a_file_written_with_updating_untouched_is_one_1_0_3_can_read(tmp_path):
+    u"""The same rule for LAYER 11's `auto_update` (RUNBOOK 11f): ON by default, and
+    a file that never turned it off must stay one 1.0.3 -- and its tray, or a daily
+    task still pointing at it -- can read. Two arms against 1.0.3's key list."""
+    from hato.config import _toml
+    known_to_1_0_3 = {"folders", "skip_folders", "lang", "out", "subs_dir", "candidates",
+                      "archives", "allow_ai", "recurse", "skip_embedded", "watch",
+                      "schedule", "surasura_dir", "prefer_format", "format_fallback", "log"}
+    fresh = config.with_changes(load_from(tmp_path), folders=[str(tmp_path / "Anime")],
+                                prefer_format=u"srt")
+    untouched = set(_toml.loads(config.dumps(fresh)))
+    changed = set(_toml.loads(config.dumps(config.with_changes(fresh, auto_update=False))))
+    assert untouched <= known_to_1_0_3, untouched - known_to_1_0_3          # arm 1
+    assert changed - known_to_1_0_3 == {"auto_update"}                      # arm 2
 
 
 def test_the_writer_raises_when_the_schema_grows_a_key_it_does_not_carry(tmp_path):

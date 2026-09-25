@@ -291,6 +291,59 @@ gui_exe = EXE(                                            # noqa: F821
     icon=ICON,
 )
 
+# ===========================================================================
+# ⭐ LAYER 11 -- THE FOURTH EXECUTABLE, AND THE ONLY ONEFILE ONE: hato-update.exe
+# ===========================================================================
+# The swapper runs from OUTSIDE the program folder (the hand-off copies it into
+# the staging root) while that folder -- `_internal` included -- is renamed away.
+# ⛔ So it cannot share the COLLECT's payload: ONEFILE, its own runtime inside
+# one file. ⛔ stdlib + ctypes (`tests/test_swap.py` holds `swap.py` to that),
+# plus the splash; everything the other three need is excluded, starting with
+# the library API that `hato/__init__.py` wires lazily.
+# ⭐ The NEW version's copy is the one that runs -- so a fix to the swapper
+# travels with the release that needs it. `smoke_standalone.py` runs it with
+# `--selftest` on the built bytes and reads what it loaded.
+SWAPPER_EXCLUDE = NO_QT + [
+    "numpy", "tsubasa", "requests", "urllib3", "certifi", "charset_normalizer",
+    "idna", "Cryptodome", "guessit", "babelfish", "rebulk", "anitopy", "py7zr",
+    "rarfile", "tomli", "sqlite3", "psutil",
+    "hato.api", "hato.pipeline", "hato.client", "hato.gui", "hato.cli",
+    "hato.commands", "hato.update", "hato.watch", "hato.tray", "hato.dev",
+]
+#: ⭐ The splash's picture of hato -- read beside `hato/splash.py`, which inside a
+#: onefile is `_MEIPASS/hato/`. ⛔ Only the marks (~63 KB): `--selftest` reports
+#: the one it finds and the smoke refuses a swapper that finds none.
+SPLASH_DATA = collect_data_files("hato", includes=["data/hato-*.png"])
+update = Analysis(                                        # noqa: F821
+    [os.path.join(HERE, "entry_update.py")],
+    pathex=[],
+    binaries=[],
+    datas=SPLASH_DATA,
+    hiddenimports=["hato.swap", "hato.splash"],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=SWAPPER_EXCLUDE,
+    noarchive=False,
+)
+update_pyz = PYZ(update.pure, update.zipped_data)         # noqa: F821
+update_exe = EXE(                                         # noqa: F821
+    update_pyz, update.scripts, update.binaries, update.datas, [],
+    name="hato-update",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    runtime_tmpdir=None,
+    # ⛔ FALSE: the splash is what a person sees mid-update, not a console.
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=ICON,
+)
+
 # ⭐ ONE COLLECT, ALL THREE EXECUTABLES, ONE FOLDER. This is the contract at
 # the top of this file expressed as a build: the three exes land as siblings,
 # which is exactly where each one looks for the other two.
@@ -303,3 +356,10 @@ coll = COLLECT(                                           # noqa: F821
     upx_exclude=[],
     name="hato",
 )
+
+# ⭐ AND THE SWAPPER INTO THE FOLDER, AFTER THE COLLECT -- which clears its target
+# first. A release's program folder carries all four; the manifest names each by
+# its hash, and an install refuses a release without `hato-update.exe`.
+import shutil                                             # noqa: E402
+shutil.copy2(os.path.join(DISTPATH, "hato-update.exe"),   # noqa: F821
+             os.path.join(DISTPATH, "hato", "hato-update.exe"))  # noqa: F821

@@ -547,6 +547,147 @@ def spawn_run(folders, spawner=None):
 
 
 # ---------------------------------------------------------------------------
+# ⭐ LAYER 11g -- keeping hato itself up to date while nothing of it is open
+# ---------------------------------------------------------------------------
+# RULED 2026-09-24 (*"I take all your leans"*): a new release is fetched and proven
+# quietly, the WINDOW never restarts under a person, and the tray -- or the daily
+# run -- puts it in place while no window is open and no run holds the lock.
+# ⛔ THE CHECK AND THE DOWNLOAD RUN IN A CHILD (`hato update --auto`): the network
+# and the signature code never load into this 13 MB process.
+
+#: How often the tray asks `hato update --auto` -- which is itself once a day; this
+#: is how soon after a day passes the tray notices.
+UPDATE_EVERY = 3600.0
+#: How often a staged release is looked at for a quiet moment to go in.
+INSTALL_EVERY = 60.0
+#: The first ask waits this long after the tray starts: the catch-up run goes first.
+UPDATE_FIRST = 300.0
+
+
+def can_update_itself():
+    u"""Frozen, on Windows: the only copy that updates itself. ⛔ A checkout is git's."""
+    return bool(getattr(sys, u"frozen", False)) and sys.platform.startswith("win")
+
+
+def spawn_update(spawner=None):
+    u"""`hato update --auto`, hidden, not waited on. -> the Popen, or None."""
+    from hato import paths as _paths
+    argv = run_argv() + [u"update", u"--auto"]
+    env = _paths.child_env()
+    if spawner is not None:                   # the suite's seam
+        return spawner(argv, env)
+    try:
+        return subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                **no_console_kwargs())
+    except OSError as exc:
+        complain(u"hato: the update check could not start (%s: %s)\n"
+                 % (type(exc).__name__, exc))
+        return None
+
+
+def window_open(install, ops=None):
+    u"""Is hato's WINDOW running from `install`? -> bool.
+
+    ⭐ By its PROGRAM FILE, through the swapper's own listing (stdlib + ctypes):
+    the window's single-instance name is Qt's, and this process holds no Qt."""
+    from hato import swap
+    ops = swap.WinOps() if ops is None else ops
+    return any(os.path.basename(ops.image(pid) or u"").lower() == u"hato.exe"
+               for pid in ops.processes_in(install))
+
+
+#: ⭐ A release whose updater would not START -- an antivirus holding an unsigned
+#: exe, say -- is tried again once an hour, not every minute: each try copies the
+#: 5.6 MB swapper and writes a block to hato.log (the seam review, S1).
+_START_FAILED = {}
+
+
+def install_when_idle(tray=True, ops=None, hand_off=None, clock=time.monotonic):
+    u"""A staged release goes in NOW, if nothing of hato is open. -> True once the
+    swapper has it -- the caller then EXITS, since the swapper waits for it.
+
+    ⛔ Not with updating switched off, not a version turned away (one that failed
+    to go in, or one a person went back from), not under a run or a window."""
+    if not can_update_itself():
+        return False
+    from hato import __version__, config as _config, runlock, update
+    try:
+        if not _config.load().auto_update:
+            return False
+    except Exception:                         # noqa: BLE001 -- the window says why
+        return False
+    install = os.path.dirname(os.path.abspath(sys.executable))
+    version = update.staged_version(install, __version__)
+    if version is None or version == update.skipped():
+        return False
+    failed = _START_FAILED.get(version)
+    if failed is not None and clock() - failed < UPDATE_EVERY:
+        return False
+    if runlock.run_in_flight() or window_open(install, ops):
+        return False
+    pending = os.path.join(str(update.stage_root(install)), update.PENDING_NAME)
+    try:
+        (hand_off or update.hand_off)(pending, window=False, tray=tray, quiet=True,
+                                      tray_pid_file=pid_file_path() if tray else None,
+                                      current=__version__, install=install)
+    except (update.StageError, OSError) as exc:
+        # ⛔ OSError too: Windows refusing to START the updater escaped the tray's
+        # tick as "the tray's tick failed" -- and was tried again every minute.
+        _START_FAILED[version] = clock()
+        why = exc if isinstance(exc, update.StageError) else \
+            u"the updater could not be started (%s)" % (exc.strerror or type(exc).__name__)
+        complain(u"hato: the update to %s could not start -- %s\n" % (version, why))
+        return False
+    _START_FAILED.pop(version, None)
+    return True
+
+
+class UpdateKeeper(object):
+    u"""The tray's half of LAYER 11g, on a clock the suite hands in.
+
+    Once an hour it asks `hato update --auto` (a child, not waited on); once a
+    minute -- and the moment that child ends -- it looks for a quiet moment to put
+    a staged release in. ⭐ `poll()` True means the swapper has the folder: the
+    tray must go, and the swapper starts it again and proves it is watching."""
+
+    def __init__(self, clock=time.monotonic, spawn=None, install=None, busy=None):
+        self.clock = clock
+        self.spawn = spawn or spawn_update
+        self.install = install or install_when_idle
+        #: -> True while a run THIS tray started is alive (C3)
+        self.busy = busy
+        now = clock()
+        self.asked = now - UPDATE_EVERY + UPDATE_FIRST
+        self.looked = now
+        self.child = None
+
+    def poll(self):
+        if not can_update_itself():
+            return False
+        now = self.clock()
+        if self.child is not None:
+            if self.child.poll() is None:
+                return False                  # still checking or downloading
+            self.child = None
+            self.looked = now - INSTALL_EVERY  # ⭐ a download may just have finished
+        if now - self.asked >= UPDATE_EVERY:
+            self.asked = now
+            self.child = self.spawn()
+            return False
+        if now - self.looked >= INSTALL_EVERY:
+            self.looked = now
+            # ⛔ C3 (ADVERSARY 2026-09-24): not while a run THIS tray started is
+            # alive -- in the same tick one starts, its frozen child has not yet
+            # reached the run lock `install_when_idle` asks, and the tray handed off
+            # under it. A run over a minute then outlasted the swapper's wait.
+            if self.busy is not None and self.busy():
+                return False
+            return bool(self.install())
+        return False
+
+
+# ---------------------------------------------------------------------------
 # the Win32 half -- thin, and every call checked
 # ---------------------------------------------------------------------------
 
@@ -771,8 +912,13 @@ def open_window():
                                               # window is still a working tray
 
 
-def complain(message):
+def complain(message, who=u"watcher"):
     u"""Report a refusal where somebody can actually find it. -> None
+
+    ⭐ `who` names the block: `=== hato watcher …` from the tray, `=== hato window
+    …` from the window's error net (RUNBOOK 10b) -- one writer for both, so the
+    log has one shape. ⛔ Never a digit first: `=== hato <digit>` is how a RUN's
+    block is counted (`smoke_standalone._log_blocks`).
 
     🚨 A DETACHED `pythonw.exe` HAS NO STANDARD STREAMS AT ALL. Measured on
     this machine 2026-09-18: started from a Windows Run key -- or by any
@@ -806,8 +952,8 @@ def complain(message):
         path = _paths.default_log_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(str(path), "a", encoding="utf-8") as handle:
-            handle.write(u"=== hato watcher %s ===\n%s"
-                         % (time.strftime("%Y-%m-%d %H:%M:%S"), message))
+            handle.write(u"=== hato %s %s ===\n%s"
+                         % (who, time.strftime("%Y-%m-%d %H:%M:%S"), message))
     except Exception:                         # noqa: BLE001
         pass
 
@@ -852,7 +998,28 @@ def scheduled_run(spawner=None):
         said = (err or b"").decode(u"utf-8", u"replace").strip().splitlines()
         complain(u"hato: the daily run exited %d%s\n"
                  % (child.returncode, (u" -- %s" % said[-1]) if said else u""))
+    # ⭐ LAYER 11g -- and hato itself kept up to date, the way the tray does it,
+    # when there is no tray to do it. ⛔ Never raises: the run's code is the result.
+    try:
+        if can_update_itself() and watching_pid() is None:
+            update_now()
+    except Exception as exc:                  # noqa: BLE001
+        complain(u"hato: the daily update check failed (%s: %s)\n"
+                 % (type(exc).__name__, exc))
     return child.returncode
+
+
+def update_now(spawner=None, install=None):
+    u"""The daily run's update: `hato update --auto`, WAITED on this time (a download
+    is minutes at most), then the quiet install -- with no tray to bring back.
+    -> True when handed off (this process then ends, and the swapper goes on)."""
+    child = spawn_update(spawner)
+    if child is not None:
+        try:
+            child.wait(15 * 60)
+        except Exception:                     # noqa: BLE001 -- a hung child costs the install
+            return False
+    return bool((install or install_when_idle)(tray=False))
 
 
 def main(argv=None):
@@ -924,6 +1091,14 @@ def main(argv=None):
             said[key] = message
             complain(message)
 
+    #: ⭐ C3 -- every run this tray started, alive or not: the keeper never installs
+    #: while one is alive, even in the moment before it has taken the run lock.
+    runs = []
+
+    def running():
+        runs[:] = [p for p in runs if p.poll() is None]
+        return bool(runs)
+
     def launch():
         u"""A full run over the watched folders, now. -> the Popen, or None.
 
@@ -934,6 +1109,8 @@ def main(argv=None):
         """
         started = spawn_run(folders)
         retry.cover()
+        if started is not None:
+            runs.append(started)
         return started
 
     def go(names):
@@ -1123,13 +1300,22 @@ def main(argv=None):
     # ⭐ Spawned with `--wait` like every run here (`spawn_run`), so a run already
     # holding the lock as the tray starts delays this one instead of voiding it
     # -- the dates just marked covered are then really kept (ADVERSARY R11).
-    spawn_run(folders)
+    first = spawn_run(folders)
+    if first is not None:
+        runs.append(first)
+
+    #: ⭐ LAYER 11g -- hato itself, kept up to date while nothing of it is open.
+    keeper = UpdateKeeper(busy=running)
 
     def tick():
         reread()
         revive()
         timer.poll()
         retry.poll()
+        if keeper.poll() and icon_box:
+            # ⭐ The swapper has the folder, and waits for THIS process: go. It
+            # starts the tray again and proves it is watching (the pid file).
+            icon_box[0].stop()
 
     def failed(exc):
         u"""⛔ A tick that raises is said, and the tray goes on (ADVERSARY 2026-09-22
@@ -1232,7 +1418,7 @@ def watching_pid():
 #: 🚨 A NEW BUILD NEEDS A NEW TOKEN: 1.0.2 already wrote `retries`, so a window
 #: asking only for that took a 1.0.2 tray for a current one, and said nothing
 #: while every run it started died on `prefer_format` (ADVERSARY 2026-09-23 #1).
-CAPABILITIES = (u"retries", u"formats")
+CAPABILITIES = (u"retries", u"formats", u"updates")
 
 
 def watching_capabilities():
@@ -1272,6 +1458,27 @@ def clear_pid_file():
         pid_file_path().unlink()
     except OSError:
         pass
+
+
+def stop_running_watcher():
+    u"""Stop the watcher that is running. -> its pid, or None when none runs.
+
+    ⭐ ONE COPY, for the window's *watch for new videos* switch and for the update
+    hand-off (`hato update --apply`): found through the pid file and its creation
+    stamp, because neither holds a handle to a tray that outlives them.
+    ⚠ `os.kill` on Windows is TerminateProcess -- the tray's own `finally` never
+    runs, so its pid file is cleared here, and its icon stays drawn until the
+    pointer passes over it (Windows' doing; the next tray adds its own)."""
+    pid = watching_pid()
+    if pid is None:
+        return None
+    try:
+        import signal
+        os.kill(pid, signal.SIGTERM)
+    except (OSError, ValueError, AttributeError):
+        return None
+    clear_pid_file()
+    return pid
 
 
 # ---------------------------------------------------------------------------

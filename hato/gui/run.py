@@ -434,6 +434,13 @@ def memory_summary(answer):
         videos, u"" if videos == 1 else u"s", waiting, shows, u"" if shows == 1 else u"s")
 
 
+def argv_for_update(*flags):
+    u"""⭐ RUNBOOK 11f -- `hato update`, the ONE implementation the window, the
+    tray and a person share. -> [unicode]. `--json` always: the window reads the
+    `{"type": "update" | "progress" | "staged" | "error"}` objects, never prose."""
+    return list(cli_argv()) + [u"update"] + [str(f) for f in flags] + [u"--json"]
+
+
 def argv_for_config(*flags):
     u"""⭐ SETTINGS WRITES THROUGH THE CLI (RUNBOOK 7a). -> [unicode]
 
@@ -1197,7 +1204,8 @@ __all__ = ["ADDED", "NEEDS_YOU", "NOT_YET", "FAILED", "SKIPPED",
            "PICK_OVERRIDES_TIMING", "PAIRED", "FORCED", "PICK_REFUSED", "PICK_FAILED",
            "PICK", "WAITING", "TROUBLE",
            "Run", "Runner", "apply_waits", "argv_for", "argv_for_blacklist",
-           "argv_for_clear", "argv_for_config", "blacklist_entries", "load_waits",
+           "argv_for_clear", "argv_for_config", "argv_for_update", "blacklist_entries",
+           "load_waits",
            "memory_summary", "save_waits", "waits_path",
            "argv_for_pair", "argv_for_problems", "argv_for_retry",
            "candidates_of", "child_env", "cli_argv", "counts", "found_on_retry",

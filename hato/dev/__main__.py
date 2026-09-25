@@ -33,6 +33,14 @@ COMMANDS = (
      "no third-party subtitle BODY in the artifact (fixtures are metadata)"),
     ("verify-install", "hato.dev.install", "main",
      "a clean venv outside every checkout; --no-unrar proves the degradation path"),
+    # ⭐ RUNBOOK 11a -- the update signature's release half.
+    ("keygen", "hato.dev.signing", "main_keygen",
+     "make the update signing key ONCE, in the keystore; prints the public half"),
+    ("update-manifest", "hato.dev.signing", "main_manifest",
+     "update.json + update.json.sig beside the zip, built from it, then verified"),
+    # ⭐ RUNBOOK 11h -- after publishing: the three assets, downloaded and checked.
+    ("verify-release", "hato.dev.signing", "main_verify_release",
+     "download the PUBLISHED zip + update.json + .sig; bytes, digest, signature"),
 )
 
 _BY_NAME = dict((name, (module, func)) for name, module, func, _ in COMMANDS)

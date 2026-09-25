@@ -101,6 +101,11 @@ SCHEMA = {
     # an srt but the toggle is off, it won't download"*.
     "prefer_format": (str, formats.DEFAULT_PREFERENCE),
     "format_fallback": (bool, False),
+    # ⭐ RUNBOOK LAYER 11, RULED BY SONIC 2026-09-24 (*"I take all your leans"*):
+    # AUTOMATIC -- a new release is downloaded and proven quietly, the window never
+    # restarts under a person, and the tray or the daily run installs it while
+    # nothing of hato is open. Off: hato only SAYS a release is out.
+    "auto_update": (bool, True),
 }
 
 #: 🚨 KEYS AN OLDER hato HAS NEVER HEARD OF -- written only once set away from
@@ -112,6 +117,12 @@ SCHEMA = {
 #: default to protect. ⭐ Leave the setting alone and the file stays readable by
 #: every earlier hato; change it and the window says the tray must be restarted.
 NEWER_THAN_1_0_2 = ("prefer_format", "format_fallback")
+#: The same rule for 1.0.4's own key. ⚠ Its own tuple, not appended above: the
+#: window reads NEWER_THAN_1_0_2 as *"the FORMAT keys are in the file"*, and an
+#: update switch there would put a format warning on the format card.
+NEWER_THAN_1_0_3 = ("auto_update",)
+#: Every key written only once set away from its default.
+NEWER_KEYS = NEWER_THAN_1_0_2 + NEWER_THAN_1_0_3
 
 #: ⚠ `schedule` is HH:MM, 24-hour. A free string here would be written happily
 #: and refused later by whatever registers the task -- somewhere the person is
@@ -220,7 +231,7 @@ class Config(object):
     __slots__ = ("folders", "skip_folders", "lang", "out", "subs_dir",
                  "candidates", "archives", "allow_ai", "recurse", "skip_embedded",
                  "watch", "schedule", "surasura_dir", "prefer_format",
-                 "format_fallback", "log_path", "log_keep",
+                 "format_fallback", "auto_update", "log_path", "log_keep",
                  "path", "path_source", "file_exists", "_set")
 
     def origin(self, name):
@@ -249,6 +260,7 @@ class Config(object):
             "surasura_dir": self.surasura_dir,
             "prefer_format": self.prefer_format,
             "format_fallback": self.format_fallback,
+            "auto_update": self.auto_update,
             "log": {"path": self.log_path, "path_resolved": str(self.log_path_resolved),
                     "keep": self.log_keep},
             "data_root": str(paths.data_root()),
@@ -367,6 +379,7 @@ def parse(text, path=None):
             % (where, prefer, " or ".join("'%s'" % p for p in formats.PREFERENCES)))
     cfg.prefer_format = prefer
     cfg.format_fallback = values["format_fallback"]
+    cfg.auto_update = values["auto_update"]
     cfg.log_path = _absolute(log_values["path"], "log.path")
     cfg.log_keep = log_values["keep"]
     cfg._set = frozenset(set_names)
@@ -516,6 +529,7 @@ def _writable(cfg):
         "surasura_dir": cfg.surasura_dir,
         "prefer_format": cfg.prefer_format,
         "format_fallback": cfg.format_fallback,
+        "auto_update": cfg.auto_update,
     }
 
 
@@ -526,8 +540,8 @@ def dumps(cfg):
     every setting is a file a person can read to learn what is in force -- the
     same argument `hato config --show` already makes -- and it means a default
     that CHANGES between versions cannot silently change an existing install.
-    ⚠ Except `NEWER_THAN_1_0_2` at its default: an older hato refuses a key it
-    has never heard of, and would stop reading this file.
+    ⚠ Except `NEWER_KEYS` at their defaults: an older hato refuses a key it has
+    never heard of, and would stop reading this file.
     """
     values = _writable(cfg)
     missing = set(SCHEMA) - set(values)
@@ -538,7 +552,7 @@ def dumps(cfg):
             "carry every key in SCHEMA." % ", ".join(sorted(missing)))
     out = [_WRITTEN_HEADER]
     for name in SCHEMA:
-        if name in NEWER_THAN_1_0_2 and values[name] == SCHEMA[name][1]:
+        if name in NEWER_KEYS and values[name] == SCHEMA[name][1]:
             continue                       # ⚠ see NEWER_THAN_1_0_2
         out.append(u"%s = %s" % (name, _toml_value(values[name])))
     out.append(u"")

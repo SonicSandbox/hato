@@ -92,6 +92,12 @@ def build_zip(bundle, out_path):
                          compresslevel=9) as archive:
         for folder, _dirs, names in os.walk(bundle):
             for name in names:
+                # ⚠ The repository's copies below are the ones that ship. A bundle
+                # that already holds them -- an UNPACKED release, which is what the
+                # smoke's rehearsal zips -- would write each name TWICE (measured:
+                # `UserWarning: Duplicate name: 'hato/LICENSE'`).
+                if name in ALONGSIDE and os.path.samefile(folder, bundle):
+                    continue
                 full = os.path.join(folder, name)
                 # ⚠ `hato/` prefix, then the path RELATIVE to the bundle --
                 # never the absolute one, which would bake this machine's

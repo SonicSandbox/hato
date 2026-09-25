@@ -121,6 +121,27 @@ GO_HOVER = u"#2a2024"       #: the accent button under the pointer
 BL_LINE = u"#1e2228"        #: the hairline between blacklist rows
 SHADOW = u"#000000"         #: the window's own drop shadow
 
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 11 -- updating hato. Every value is `gui-mock/mock-update.html`'s own
+# (ruled 2026-09-24), never re-chosen here.
+# ---------------------------------------------------------------------------
+
+#: The card over the window: its gradient's two stops -- the splash's too.
+CARD_TOP = u"#242831"
+CARD_BOTTOM = u"#1f2329"
+#: What dims the window behind the card. ⚠ #AARRGGBB -- QColor's own order,
+#: painted by app.py, since a QSS background cannot be translucent over siblings.
+VEIL = u"#b80b0c0f"
+#: The border of the critical line and the pill's ground is CARD_ON's.
+WHY_LINE = u"#4a2c2c"
+#: "Updated to 1.0.5" -- the success green's own ground, border and fill.
+OK_GROUND = u"#1b2421"
+OK_LINE = u"#2f4a3c"
+OK_FILL = u"#244a37"
+#: "put 1.0.4 back" -- amber, the worth-a-look hue: nothing is broken.
+LOOK_GROUND = u"#221f19"
+LOOK_LINE = u"#5a4a2a"
+
 #: The credit link. [*] Deliberately outside the coral family: a hyperlink
 #: that is the accent colour reads as an accent, not as something to click.
 #: ⚠ LIGHTENED 2026-09-18. Sonic: *"the purple used for github is too dark."*
@@ -584,6 +605,67 @@ QComboBox QAbstractItemView {
 #blnote { font-size: 11px; color: %(INK_FAINT)s; }
 #blwhen { font-size: 11px; color: %(INK_FAINT)s; }
 
+/* ---- ⭐ LAYER 11: updating hato (gui-mock/mock-update.html, mechanism A) - */
+/* The PILL, on the tab line with the other things about hato itself. It is
+ * there only while an update is on offer -- never a permanent fixture. */
+#upill      { background: %(CARD_ON)s; border: 1px solid %(ACCENT_QUIET)s;
+              border-radius: 12px; }   /* ⚠ under half UpdatePill.HEIGHT, or Qt drops it */
+#upill:hover { border: 1px solid %(ACCENT)s; }
+#upilltext  { font-size: 12px; color: %(INK)s; background: transparent; }
+#upillsep   { font-size: 12px; color: %(INK_FAINT)s; background: transparent; }
+#upillgo    { font-size: 12px; color: %(ACCENT)s; font-weight: 600;
+              background: transparent; }
+/* The CARD, over the whole window -- the veil is painted in app.py. */
+#ucard {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 %(CARD_TOP)s, stop:1 %(CARD_BOTTOM)s);
+    border: 1px solid %(LINE_HI)s;
+    border-radius: 12px;
+}
+#ucardt1    { font-size: 17px; font-weight: 650; color: %(INK)s; background: transparent; }
+#ucardv     { font-size: 17px; font-weight: 650; color: %(ACCENT)s; background: transparent; }
+#ucardt2    { font-size: 12px; color: %(INK_DIM)s; background: transparent; }
+#ucardsect  { background: transparent; border-top: 1px solid %(LINE)s; }
+#ucardh4    { font-size: 10px; font-weight: 650; color: %(INK_FAINT)s;
+              background: transparent; }
+#ucardbul   { font-size: 12px; color: %(ACCENT_QUIET)s; background: transparent; }
+#ucardnote  { font-size: 12px; color: %(INK)s; background: transparent; }
+#ucardwhy   { background: %(GO_HOVER)s; border: 1px solid %(WHY_LINE)s; border-radius: 8px;
+              color: %(INK)s; font-size: 12px; padding: 9px 11px; }
+#ucardfoot  { font-size: 11px; color: %(INK_FAINT)s; background: transparent; }
+/* the quiet button beside the primary one: no box until the pointer is on it */
+#btnQuiet       { background: transparent; border: 1px solid transparent; color: %(INK_DIM)s; }
+#btnQuiet:hover { background: transparent; border: 1px solid %(LINE_HI)s; color: %(INK)s; }
+/* The PROGRESS: four named steps say WHAT, one bar says HOW FAR. */
+#ustep              { font-size: 12px; color: %(INK_FAINT)s; background: transparent; }
+#ustep[st="done"]   { color: %(INK_DIM)s; }
+#ustep[st="now"]    { color: %(INK)s; }
+#ustepdot           { border: 1px solid %(LINE_HI)s; border-radius: 8px;
+                      background: transparent; color: %(OK)s; font-size: 9px; }
+#ustepdot[st="done"] { border: 1px solid %(OK_LINE)s; background: %(OK_FILL)s; }
+#ustepdot[st="now"]  { border: 1px solid %(ACCENT)s; color: %(ACCENT)s; }
+#utrack     { background: %(LINE)s; border-radius: 2px; }
+#utrackfill { background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                          stop:0 %(ACCENT_QUIET)s, stop:1 %(ACCENT)s);
+              border-radius: 2px; }
+/* AFTER: a note, not a dialog -- the person opened hato to see subtitles. */
+#unote      { background: %(OK_GROUND)s; border: 1px solid %(OK_LINE)s; border-radius: 9px; }
+#unoteck    { background: %(OK_FILL)s; color: %(OK)s; border-radius: 9px; font-size: 11px;
+              font-weight: 700; }
+#unotelead  { font-size: 12px; font-weight: 600; color: %(INK)s; background: transparent; }
+#unoterest  { font-size: 12px; color: %(INK_DIM)s; background: transparent; }
+#unoteitem  { font-size: 12px; color: %(INK_DIM)s; background: transparent; }
+#ufail      { background: %(LOOK_GROUND)s; border: 1px solid %(LOOK_LINE)s;
+              border-left: 2px solid %(LOOK)s; border-radius: 9px; }
+/* Settings -> Updates */
+#udot                { font-size: 12px; color: %(INK_FAINT)s; background: transparent; }
+#udot[tone="ok"]     { color: %(OK)s; }
+#udot[tone="accent"] { color: %(ACCENT)s; }
+#uver       { font-size: 12px; font-weight: 600; color: %(INK)s; background: transparent; }
+#ucmd       { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px;
+              color: %(INK)s; background: %(BG)s; border: 1px solid %(LINE_HI)s;
+              border-radius: 7px; padding: 5px 10px; }
+
 /* ---- footer ------------------------------------------------------------ */
 #footer { background: %(STRIP)s; border-top: 1px solid %(LINE)s; }
 #live   { font-size: 12px; color: %(ACCENT)s; }
@@ -610,4 +692,6 @@ __all__ = ["qss", "colors", "BG", "SURFACE", "RAISED", "LINE", "LINE_HI",
            "PRESENT", "NO_TRACK", "HOVER", "TITLE_TOP", "TITLE_BOTTOM",
            "STRIP", "CARD", "CARD_ON", "TIP", "SWITCH_ON", "GO_HOVER",
            "BL_LINE", "SHADOW", "LINK", "LINK_CSS", "LINK_HOVER",
+           "CARD_TOP", "CARD_BOTTOM", "VEIL", "WHY_LINE", "OK_GROUND", "OK_LINE",
+           "OK_FILL", "LOOK_GROUND", "LOOK_LINE",
            "FAST", "SLOW", "EASE", "LIFT", "GLOW", "MARK_PX", "ICON_SIZES"]

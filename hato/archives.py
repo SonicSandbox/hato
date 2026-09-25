@@ -284,6 +284,13 @@ def _name_problem(name):
     return None
 
 
+def unsafe_name(name):
+    """-> why an archive member stored under `name` could land outside its root, or
+    None. ⭐ PUBLIC, AND THE ONE COPY: the update's program zip (RUNBOOK 11c) is
+    judged by these same rules as a subtitle archive -- a second copy would drift."""
+    return _name_problem(name)
+
+
 def _refuse_unsafe(entries):
     """⛔ Every refusal that must happen before ANY member is read -- over EVERY entry,
     junk and directories included."""

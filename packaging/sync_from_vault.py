@@ -77,6 +77,8 @@ COPIED = [
     "packaging/entry_cli.py",
     "packaging/entry_gui.py",
     "packaging/entry_watch.py",
+    # ⭐ hato-update.exe, the swapper (1.0.4, LAYER 11) -- `hato.spec` builds it
+    "packaging/entry_update.py",
     "packaging/smoke_standalone.py",
     "packaging/package_standalone.py",
     # ⚠ The launcher a Windows Run key points at. `hato/startup.py` registers
@@ -119,6 +121,8 @@ NOT_PUBLISHED = {
     "ADVERSARY-2026-09-22.md":
                         "an internal review register, same class as the ledgers",
     "ADVERSARY-2026-09-23.md":
+                        "an internal review register, same class as the ledgers",
+    "ADVERSARY-2026-09-24.md":
                         "an internal review register, same class as the ledgers",
     "REPORT-DRAFT-2026-09-23.md":
                         "a session's working draft of its report to the owner; vault-only",
@@ -338,6 +342,30 @@ def audit_dirs():
         problems.append(
             u"%s/ is a vault DIRECTORY in neither register. Add it to COPIED "
             u"if it ships, or to NOT_PUBLISHED_DIRS with the reason." % entry)
+    return problems
+
+
+def audit_partly():
+    u"""Every vault file inside a directory COPIED names FILES of is named. -> [problem]
+
+    🚨 THE SAME SILENT SUCCESS, ONE LEVEL DOWN. `packaging/` is published file by
+    file (see `audit_dirs`), so a NEW build file there was covered by neither
+    audit: 1.0.4's `entry_update.py` -- the updater's own entry, which the
+    published `hato.spec` builds -- would have been left out, and the sync would
+    have said nothing. Found reading the list before the 1.0.4 sync, 2026-09-24.
+    """
+    problems = []
+    named = set(item for item in COPIED if "/" in item)
+    for folder in sorted(set(item.split("/", 1)[0] for item in named)):
+        root = os.path.join(VAULT, folder)
+        if not os.path.isdir(root):
+            continue
+        for path in _walk(root):
+            rel = (folder + "/" + os.path.relpath(path, root)).replace("\\", "/")
+            if rel not in named:
+                problems.append(
+                    u"%s is in the vault's %s/, which is published file by file, and "
+                    u"COPIED does not name it. Add it if it ships." % (rel, folder))
     return problems
 
 
@@ -644,6 +672,14 @@ def main():
         print(u"\nFAIL  the copy list does not account for every directory:")
         for h in holes:
             print(u"    %s" % h)
+        return 2
+
+    # 🚨 AND EVERY FILE OF A DIRECTORY PUBLISHED IN PART (`packaging/`)
+    parts = audit_partly()
+    if parts:
+        print(u"\nFAIL  the copy list does not account for every file it publishes in part:")
+        for p in parts:
+            print(u"    %s" % p)
         return 2
 
     added, changed, removed, same = plan()

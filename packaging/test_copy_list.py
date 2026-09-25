@@ -45,11 +45,25 @@ gaps = m.audit_copy_list()
 stale = [g for g in gaps if "stale exemption" in g]
 print(u"stale exemption             caught: %s" % bool(stale))
 if not stale: fails.append(u"a stale exemption was not caught")
+del m.NOT_PUBLISHED["GONE-FOREVER.md"]
+
+# 4. a build file in a directory published file by file -- 1.0.4's updater entry,
+#    which the published hato.spec builds, was in no list (2026-09-24)
+parts = m.audit_partly()
+print(u"control (partly published)  %d gap(s)" % len(parts))
+for p in parts: print(u"    %s" % p[:110])
+if parts: fails.append(u"a file published in part is unnamed as shipped")
+m.COPIED = [c for c in m.COPIED if c != "packaging/entry_update.py"]
+parts = m.audit_partly()
+named = [p for p in parts if "packaging/entry_update.py" in p]
+print(u"entry_update.py dropped     %d gap(s), names it: %s" % (len(parts), bool(named)))
+if not named: fails.append(u"a packaging file missing from COPIED was NOT named")
+m.COPIED.append("packaging/entry_update.py")
 
 print()
 if fails:
     print(u"FAIL  %d" % len(fails))
     for f in fails: print(u"   - %s" % f)
     sys.exit(1)
-print(u"OK  the guard names a forgotten file, a lying register and a stale exemption,")
-print(u"    and is silent on the tree as shipped.")
+print(u"OK  the guard names a forgotten file, a lying register, a stale exemption and")
+print(u"    a forgotten build file, and is silent on the tree as shipped.")

@@ -30,8 +30,12 @@ OFFSCREEN
 too late, the platform plugin is chosen at import. Verified on this machine:
 PyQt6 6.11.0, Python 3.10.0, and `widget.grab().save(path)` writes a real PNG.
 """
+import ast
+import inspect
 import os
 import re
+import sys
+import threading
 import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -760,6 +764,11 @@ def test_the_surasura_card_is_last_and_carries_its_mark(qapp):
 
     ⚠ The ORDER is the requirement, so the check is on the order -- not merely
     on the card existing, which would stay green if it drifted to the top.
+
+    ⭐ AMENDED 2026-09-24 BY A LATER RULING: the auto-update mock Sonic approved
+    (*"I take all your leans"*, gui-mock/mock-update.html state 7, RUNBOOK 11f)
+    puts *Updates* after it. surasura stays below every card a person uses day
+    to day; only the card about hato itself follows it.
     """
     window = make()
     window.show_tab(gui_app.TAB_SET)
@@ -767,8 +776,8 @@ def test_the_surasura_card_is_last_and_carries_its_mark(qapp):
     titles = [w.text() for w in window.findChildren(gui_app.QLabel)
               if w.objectName() == u"cardtitle"]
     assert titles, u"the settings tab built no cards at all"
-    assert titles[-1].lower() == u"surasura", (
-        u"the integration is not the last card: %s" % u", ".join(titles))
+    assert [t.lower() for t in titles[-2:]] == [u"surasura", u"updates"], (
+        u"surasura is not last but for Updates: %s" % u", ".join(titles))
 
     marks = [w for w in window.findChildren(gui_app.QLabel)
              if w.pixmap() is not None and not w.pixmap().isNull()]
@@ -2044,7 +2053,7 @@ HEX = re.compile(r"#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})\b")
 RGB = re.compile(r"\b(?:rgba?|QColor)\s*\(\s*\d")
 
 
-@pytest.mark.parametrize("name", ["app.py", "branding.py", "__main__.py"])
+@pytest.mark.parametrize("name", ["app.py", "branding.py", "__main__.py", "updating.py"])
 def test_no_colour_literal_outside_theme(name):
     u"""[X] A literal is a SECOND PALETTE that drifts from the measured one.
 
@@ -2964,6 +2973,299 @@ class _NullRunner(object):
 
     def finished(self):
         return None
+
+
+def test_CLICKING_run_now_starts_the_run_it_names(qapp, monkeypatch):
+    u"""🚨 D12 -- 1.0.2 AND 1.0.3 CLOSED THE WINDOW ON THIS CLICK. Sonic,
+    2026-09-24, on two machines: *"it crashes gui on 'run' button is clicked
+    ... The automatic detection and run still seems to work great."*
+
+    `clicked` carries `checked`, and PyQt hands it to the slot's first
+    positional parameter. Layer 8 gave `start_run` an `argv=None`, so every
+    click arrived as `start_run(False)`: `Runner(argv=False)`, `list(False)`
+    raised out of the slot, and PyQt6 aborts on that -- `0xC0000409` in
+    Qt6Core, four times in his own event log. Measured two-arm: the click
+    handed `Runner` `False`, the direct call a real command.
+
+    ⛔ The check above is named *"run now builds…"* and calls `start_run()` --
+    the function under the button, never the button -- so it was green through
+    both releases. This one clicks.
+    """
+    window = make(running=False)
+    started = {}
+
+    def record(**kw):
+        started["argv"] = kw.get("argv")
+        return _NullRunner()
+
+    monkeypatch.setattr(gui_run, "Runner", record)
+    assert window.run_now.isEnabled() and not window.state.running, \
+        u"the control: a button that can be clicked, and no run going"
+    click(window.run_now)
+    assert started, u"clicking Run now started nothing"
+    assert started["argv"] == gui_run.argv_for(window.state.folders, progress=True), (
+        u"clicking Run now handed the run %r instead of the command for the "
+        u"watched folders -- the click's `checked` flag reached `start_run`"
+        % (started["argv"],))
+    assert window.live_label.text() == u"starting…", \
+        u"the footer says %r after the click" % window.live_label.text()
+
+
+def _defaulted_slots(text):
+    u"""Every `….connect(self.<method>)` whose method takes a DEFAULTED
+    positional parameter, as `line N: self.m(param)`. -> [text]
+
+    ⚠ The method is looked up in the class the `connect` sits in, then in any
+    class of the module (an inherited one). A name found in neither is Qt's own
+    (`accept`, `reject`) and has no Python default to fill."""
+    tree = ast.parse(text)
+    classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    anywhere = {}
+    for cls in classes:
+        for item in cls.body:
+            if isinstance(item, ast.FunctionDef):
+                anywhere.setdefault(item.name, []).append(item)
+    found = []
+    for cls in classes:
+        own = dict((f.name, [f]) for f in cls.body if isinstance(f, ast.FunctionDef))
+        for call in ast.walk(cls):
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == u"connect" and call.args):
+                continue
+            target = call.args[0]
+            if not (isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name) and target.value.id == u"self"):
+                continue
+            for method in own.get(target.attr) or anywhere.get(target.attr) or ():
+                positional = method.args.posonlyargs + method.args.args
+                count = len(method.args.defaults)
+                defaulted = positional[len(positional) - count:] if count else []
+                if defaulted:
+                    found.append(u"line %d: self.%s(%s)" % (
+                        call.lineno, target.attr, u", ".join(a.arg for a in defaulted)))
+    return sorted(set(found))
+
+
+def test_no_method_wired_to_a_signal_has_a_default_a_click_would_fill():
+    u"""🚨 D12'S CLASS, READ OFF THE SOURCE -- so the next button cannot ship it.
+
+    PyQt fills a slot's positional parameters from the signal, and `clicked`,
+    `toggled` and `triggered` all carry `checked`. A parameter with a DEFAULT
+    was written to be left out; a click fills it anyway, which is how
+    `start_run(argv=None)` came to be handed `False`. ⭐ Every
+    `.connect(self.<method>)` in every module of `hato/gui/` is read, whatever
+    the signal (a method's default is a claim about who calls it, and the
+    source cannot say which signals carry nothing). Wire such a method as
+    app.py does: `lambda _checked=False: self.method()`.
+
+    ⚠ What this cannot see: a LAMBDA whose own first parameter has a default.
+    The file's idiom (`_c=False`, `_checked=False`) guards those on real
+    buttons; the lambdas without it sit on `Clickable`s, whose `clicked`
+    carries nothing.
+    """
+    # ⭐ The control, first: the same reader DOES find the shape it hunts.
+    shipped = (u"class W(object):\n"
+               u"    def build(self):\n"
+               u"        self.run_now.clicked.connect(self.start_run)\n"
+               u"        self.box.toggled.connect(self._retarget)\n"
+               u"    def start_run(self, argv=None, targeted=False):\n"
+               u"        pass\n"
+               u"    def _retarget(self, on):\n"
+               u"        pass\n")
+    assert _defaulted_slots(shipped) == [u"line 3: self.start_run(argv, targeted)"], \
+        _defaulted_slots(shipped)
+    assert u".connect(self." in source("app.py"), \
+        u"the control: app.py wires methods to signals"
+    found = []
+    for name in sorted(os.listdir(GUI_DIR)):
+        if name.endswith(u".py"):
+            found.extend(u"%s %s" % (name, hit) for hit in _defaulted_slots(source(name)))
+    assert found == [], u"a click would fill a parameter meant to be left out: %r" % found
+
+
+# ===========================================================================
+# 10b -- an error inside the window is written down, and the window stays
+#
+# Sonic, 2026-09-24: *"I want to include the logging in this next update."*
+# PyQt6 aborts the process on any exception that leaves a slot, and a windowed
+# exe has nowhere to say why -- D12 reached him as a window vanishing four times.
+#
+# ⚠ EVERY CHECK HERE PUTS A SENTINEL HOOK IN FIRST. Without one, a net that
+# failed to install would not FAIL a check -- PyQt would abort the whole suite,
+# and an abort prints no FAILED line for anyone to read.
+# ===========================================================================
+
+def _sentinel(monkeypatch):
+    u"""A hook that is never the answer: it records what reached it. The
+    threading hook is put back after the check too."""
+    reached = []
+    monkeypatch.setattr(sys, "excepthook", lambda *exc: reached.append(exc))
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    return reached
+
+
+def _net_on(window, written):
+    net = gui_app.ErrorNet(say=written.append).install()
+    net.window = window
+    window._error_net = net
+    return net
+
+
+def _settle(rounds=12):
+    for _ in range(rounds):
+        QApplication.processEvents()
+        time.sleep(0.005)
+
+
+def test_an_error_inside_a_click_is_written_down_and_the_window_stays(qapp, monkeypatch):
+    u"""⭐ The window is still there, the traceback is in the log, and the
+    footer says so in words -- not the exception's name."""
+    window = make(running=False)
+    reached = _sentinel(monkeypatch)
+    written = []
+    net = _net_on(window, written)
+    assert sys.excepthook == net.hook and threading.excepthook == net.thread_hook, \
+        u"the net did not take over the hooks"
+
+    def broken():
+        raise RuntimeError(u"a defect inside a click")
+
+    monkeypatch.setattr(window, "start_run", broken)
+    click(window.run_now)
+    _settle()
+    assert reached == [], u"the net never saw it -- the sentinel did: %r" % (reached,)
+    assert written and u"a defect inside a click" in written[0], written
+    assert window.live_label.text() == gui_app.ERROR_LINE, window.live_label.text()
+    assert u"RuntimeError" not in window.live_label.text()
+    assert u"hato.log" in window.live_label.toolTip(), window.live_label.toolTip()
+
+
+class _Child(object):
+    def __init__(self, code):
+        self.code = code
+
+    def poll(self):
+        return self.code
+
+
+class _OldRunner(object):
+    u"""What `_runner` still holds after `Runner()` raised: the PREVIOUS run."""
+    def __init__(self, code):
+        self._process = _Child(code)
+
+
+@pytest.mark.parametrize("previous", [None, 0], ids=["no-earlier-run", "earlier-run-finished"])
+def test_a_run_the_error_cut_off_before_its_child_is_over(qapp, monkeypatch, previous):
+    u"""🚨 D12's own shape: `running` is set, then `Runner()` raises. With an
+    earlier run's object still in `_runner`, a check on the OBJECT alone left
+    `running` true -- and Run now dead for the life of the window."""
+    window = make(running=False)
+    if previous is not None:
+        window._runner = _OldRunner(previous)
+    _sentinel(monkeypatch)
+    written = []
+    _net_on(window, written)
+
+    def refuse(**_kw):
+        raise TypeError(u"'bool' object is not iterable")
+
+    monkeypatch.setattr(gui_run, "Runner", refuse)
+    click(window.run_now)
+    _settle()
+    assert written, u"nothing was written"
+    assert not window.state.running, u"the window still thinks a run is going"
+    assert window.live_label.text() == gui_app.ERROR_LINE
+
+
+def test_a_run_whose_child_is_alive_is_left_to_finish(qapp, monkeypatch):
+    u"""The control for the check above: the error was the window's, and a
+    child that IS running still owns its run."""
+    window = make(running=True)
+    window._runner = _OldRunner(None)          # poll() -> None: alive
+    _sentinel(monkeypatch)
+    net = _net_on(window, [])
+    net.hook(RuntimeError, RuntimeError(u"elsewhere"), None)
+    _settle()
+    assert window.state.running
+
+
+def test_the_repaint_that_reports_an_error_cannot_loop(qapp, monkeypatch):
+    u"""⛔ A repaint that fails while reporting a failure must not report
+    itself on every turn of the event loop."""
+    window = make(running=False)
+    reached = _sentinel(monkeypatch)
+    written = []
+    net = _net_on(window, written)
+    renders = []
+
+    def render():
+        renders.append(1)
+        raise ValueError(u"the repaint broke")
+
+    monkeypatch.setattr(window, "render", render)
+    net.hook(RuntimeError, RuntimeError(u"first"), None)
+    _settle(rounds=40)
+    assert len(renders) == 1, u"the repaint ran %d times -- it is looping" % len(renders)
+    assert reached == []
+    assert len(written) == 2 and u"the repaint broke" in written[1], written
+
+
+def test_the_same_error_again_is_written_once_and_said_each_time(qapp, monkeypatch):
+    u"""A timer slot's error repeats every tick: written ONCE. ⚠ But said every
+    time -- the footer may have moved on before it came round again."""
+    window = make(running=False)
+    _sentinel(monkeypatch)
+    written = []
+    net = _net_on(window, written)
+    error = RuntimeError(u"again and again")
+    net.hook(RuntimeError, error, None)
+    _settle()
+    window.state.live = u"done"
+    window.render()
+    net.hook(RuntimeError, error, None)
+    _settle()
+    assert len(written) == 1, written
+    assert window.live_label.text() == gui_app.ERROR_LINE, window.live_label.text()
+
+
+def test_a_reader_threads_error_is_written_and_never_painted(qapp, monkeypatch):
+    u"""⛔ A thread must never touch Qt, so its error is written and nothing
+    else."""
+    window = make(running=False)
+    _sentinel(monkeypatch)
+    written = []
+    net = _net_on(window, written)
+    window.state.live = u"done"
+
+    class Args(object):
+        exc_type, exc_value, exc_traceback = OSError, OSError(u"a pipe broke"), None
+
+    net.thread_hook(Args())
+    assert written and u"a pipe broke" in written[0], written
+    assert window.state.live == u"done"
+
+
+def test_the_net_writes_a_window_block_into_the_real_log(qapp, monkeypatch, tmp_path):
+    u"""The seam: the net -> `watch.complain` -> hato.log, named for the window
+    -- and ⛔ never a digit first, which is how a RUN's block is counted."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path))
+    gui_app.ErrorNet().write(u"Traceback: the window's own\n")
+    with open(os.path.join(str(tmp_path), "hato.log"), encoding="utf-8") as handle:
+        text = handle.read()
+    assert re.search(u"^=== hato window \\d{4}-\\d\\d-\\d\\d .* ===\nTraceback: the window's own",
+                     text, re.M), text
+    assert not re.search(u"^=== hato \\d", text, re.M), u"it would be counted as a run"
+
+
+def test_main_puts_the_net_up_before_anything_else(qapp):
+    u"""Static: the first thing `main()` does, and the window is handed to it
+    the moment it exists."""
+    text = inspect.getsource(gui_app.main)
+    first = text.find(u"ErrorNet().install()")
+    assert first != -1, u"main() never installs the net"
+    assert first < text.find(u"QApplication.instance()"), u"the net goes up after Qt"
+    made = text.find(u"window = HatoWindow()")
+    assert made < text.find(u"net.window = window") < text.find(u"settings_from_disk(")
 
 
 def test_run_now_does_nothing_without_a_folder(qapp):
