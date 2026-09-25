@@ -42,10 +42,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
-from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
 from PyQt6.QtGui import QEnterEvent, QMouseEvent, QPalette
 from PyQt6.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton,
-                             QWidget)
+                             QVBoxLayout, QWidget)
 
 from hato.gui import app as gui_app
 from hato.gui import branding, theme
@@ -456,6 +456,9 @@ def test_no_button_in_the_window_is_inert(qapp):
     any other, and the base class covers every kind at once.
     """
     window = make()
+    # ⚠ EVERY ROW OPEN (RUNBOOK 13e): a closed row builds no panel now, and the
+    # panel's *Open video* is a control this walk must reach
+    window.state.open_rows = set(window.state.key(r) for r in window.state.rows)
     for tab in gui_app.TABS:
         window.show_tab(tab)
 
@@ -465,6 +468,15 @@ def test_no_button_in_the_window_is_inert(qapp):
             inert.append(u"%s(%s)" % (type(widget).__name__,
                                       widget.text() or widget.objectName()
                                       or u"no label"))
+    # ⚠ AND EVERY TEXT FIELD (RUNBOOK 13j): the blacklist's *"Filter by name or
+    # show…"* was built, placed and connected to nothing, and this walk -- buttons
+    # only -- sailed past it for as long as the card has existed
+    for field in window.findChildren(QLineEdit):
+        said = (field.textChanged, field.textEdited, field.editingFinished,
+                field.returnPressed)
+        if not any(field.receivers(signal) for signal in said):
+            inert.append(u"QLineEdit(%s)" % (field.placeholderText()
+                                             or field.objectName() or u"no label"))
     assert not inert, (
         u"these controls are rendered and connected to nothing, so using them "
         u"does nothing at all: %s" % u", ".join(sorted(inert)))
@@ -1522,6 +1534,9 @@ def test_the_alarming_word_is_nowhere_in_the_built_window(qapp):
     was BUILT, not what this file happens to contain.
     """
     window = make()
+    # ⚠ EVERY ROW OPEN (RUNBOOK 13e): a closed row builds no panel now, and the
+    # panel carries the engine's words this walk exists to keep out
+    window.state.open_rows = set(window.state.key(r) for r in window.state.rows)
     for tab in gui_app.TABS:
         window.show_tab(tab)
         for pick in window.state.of(gui_run.NEEDS_YOU):
@@ -2401,12 +2416,33 @@ def test_the_evidence_is_behind_the_row_not_gone(qapp):
     assert u"locked" in joined
 
 
-def test_a_row_starts_closed_and_its_detail_is_hidden(qapp):
-    window = make(rows=[added(1)])
+def test_a_row_starts_closed_and_its_detail_is_built_only_when_open(qapp, monkeypatch):
+    u"""⭐ RUNBOOK 13e: the evidence behind a row is BUILT only while the row is open.
+    Built for every row and hidden, it was ~21 widgets and a `stat` of the video per
+    row at every render -- 1,624 widgets and 64 stats at 64 subtitled rows."""
+    rows = [added(1), added(2)]
+    videos = set(r[u"video"] for r in rows)
+    asked = []
+    real = gui_app.os.path.isfile
+    monkeypatch.setattr(gui_app.os.path, "isfile",
+                        lambda path: asked.append(path) or real(path))
+    window = make(rows=rows)
     key = window.state.key(window.state.rows[0])
-    assert not window._details[key].isVisibleTo(window)
+    assert key not in window._details, u"a closed row built its panel"
+    assert not [p for p in asked if p in videos], u"a closed row asked the disk: %s" % asked
     window._toggle_row(key)
     assert window._details[key].isVisibleTo(window)
+    # ⭐ The Layer 13 pass (Z13-6) -- AND UNDER ITS ROW. A panel built and never
+    # placed, or placed at the end of the pane, is "visible to the window" too: both
+    # survived every check, and only a picture saw them (Z-E1/Z-E2)
+    column = window.pane_layouts[gui_app.TAB_SUBS]
+    widget = [w for w in window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow)
+              if window.state.key(w.row) == key][0]
+    assert column.indexOf(window._details[key]) == column.indexOf(widget) + 1, (
+        u"the panel is not under its row", column.indexOf(window._details[key]),
+        column.indexOf(widget))
+    assert list(window._details) == [key], u"opening one row built the others' panels"
+    assert [p for p in asked if p in videos] == [rows[0][u"video"]], asked
 
 
 def test_the_chevron_is_invisible_until_the_pointer_arrives(qapp):
@@ -5465,3 +5501,659 @@ def test_a_blocked_and_a_taken_format_wait_are_two_lines_never_one(qapp, tmp_pat
     assert offered == [u"Download .ass instead"], (u"a button offered the chosen kind", offered)
     tip = u" ".join(buttons_called(window, u"Download .ass instead")[0].toolTip().split())
     assert u"download .ass or another format" in tip, (u"#9b: the words under-describe it", tip)
+
+# ===========================================================================
+# ⭐ LAYER 13 -- nothing flashes, nothing glitches (RUNBOOK 13a/13b)
+# ===========================================================================
+
+class _ShownAsWindow(QObject):
+    u"""Every widget SHOWN as a window of its own, other than `window`."""
+
+    def __init__(self, window):
+        super().__init__()
+        self.window, self.seen = window, []
+
+    def eventFilter(self, obj, event):
+        if (event.type() == QEvent.Type.Show and isinstance(obj, QWidget)
+                and obj.isWindow() and obj is not self.window):
+            self.seen.append((type(obj).__name__, obj.width(), obj.height()))
+        return False
+
+
+def test_a_widget_cleared_before_its_queued_show_never_becomes_a_window(qapp):
+    u"""🚨 13a: a widget added to a VISIBLE layout is shown LATER -- Qt queues the show.
+    Detached by `clear()` before that ran, the queued show made it a WINDOW of its own:
+    Sonic's *"bunch of flashing windows"* while updating to 1.0.5 (~50 measured on the
+    published 1.0.4, the window's own process)."""
+    host = QWidget()
+    box = QVBoxLayout(host)
+    host.show()
+    qapp.processEvents()
+    watch = _ShownAsWindow(host)
+    qapp.installEventFilter(watch)
+    try:
+        box.addWidget(QLabel(u"a card", host))           # its show is QUEUED
+        gui_app.clear(box)                               # ... and it is detached first
+        qapp.processEvents()
+        assert watch.seen == [], u"a cleared widget was shown as a window: %s" % watch.seen
+        box.addWidget(QLabel(u"the control", host))
+        qapp.processEvents()
+        assert box.itemAt(0).widget().isVisible(), u"the control: a widget kept is shown"
+    finally:
+        qapp.removeEventFilter(watch)
+        host.hide()
+
+
+def test_two_renders_in_one_turn_never_show_the_no_key_card_as_a_window(qapp):
+    u"""🚨 13a, the way it happened: a pane rebuilt twice before the event loop turned --
+    the no-key card (what the published 1.0.4 showed, keyless) flashed as a window of
+    its own, ~50 times in one download."""
+    window = make(rows=[])
+    window.state.key_hint = u""
+    window.show()
+    qapp.processEvents()
+    watch = _ShownAsWindow(window)
+    qapp.installEventFilter(watch)
+    try:
+        for _ in range(5):
+            window.render()
+            window.render()                             # twice, in one turn
+            qapp.processEvents()
+        assert watch.seen == [], u"a rebuilt pane showed windows: %s" % watch.seen[:5]
+        texts = u" ".join(l.text() for l in window.findChildren(QLabel))
+        assert u"No jimaku key yet" in texts, u"the control: the no-key card is the pane"
+    finally:
+        qapp.removeEventFilter(watch)
+        window.hide()
+
+
+def test_two_renders_in_one_turn_with_rows_on_screen_never_crash_the_window():
+    u"""🚨 13a's worst half: with ROWS on screen (each `SubRow` carries a graphics effect)
+    the same race SEGFAULTED the window -- 3 of 3, offscreen and on the real platform.
+    ⭐ IN A PROCESS OF ITS OWN (`_double_render.py`): a crash here would otherwise take
+    every later check of this suite down with it, and the harness could not tell a
+    crash from a pass for the wrong reason (M13-03 was first caught that way)."""
+    import subprocess
+    here = os.path.dirname(os.path.abspath(__file__))
+    # ⭐ `-X faulthandler`: a crash says WHERE, in the message below
+    child = subprocess.run([sys.executable, u"-X", u"faulthandler",
+                            os.path.join(here, u"_double_render.py")],
+                           capture_output=True, timeout=180)
+    said = (child.stdout + child.stderr).decode(u"utf-8", u"replace").strip()
+    assert child.returncode == 0, (
+        u"the window CRASHED (exit %d, 0x%08X)" % (child.returncode,
+                                                   child.returncode & 0xFFFFFFFF)
+        if child.returncode not in (0, 1) else u"widgets were shown as windows"
+    ) + u" -- %s" % said[-400:]
+    assert u"rows on screen: 0;" not in said, u"the control: no rows were on screen -- %s" % said
+
+
+def test_a_runs_ticks_leave_settings_standing_and_its_end_rebuilds_it(qapp):
+    u"""🚨 13b -- Sonic's screenshot, 2026-09-25: Settings during a manual run, every card
+    collapsed and its title cut through. `_drain` rendered at every tick and Settings was
+    torn down and rebuilt eight times a second, caught half laid out. ⚠ The ticks here
+    bring NEWS -- rows, as the run's end streams them -- because since 13c a tick of
+    progress alone renders nothing at all (the gate showed this check stopped reaching
+    the live render when its ticks carried progress only: M13-07). A tick with news
+    leaves Settings standing; the run's end rebuilds it."""
+    window = make(running=True)
+    window.show_tab(gui_app.TAB_SET)
+    card = window._ucard
+    for n in range(5):
+        window._runner = _EventRunner([{u"type": u"progress", u"name": u"show %d" % n},
+                                       added(20 + n)])
+        window._drain()
+        assert window._ucard is card, u"a run's tick with news rebuilt Settings"
+    episodes = set(r.get(u"episode") for r in window.state.rows)
+    assert episodes >= set(range(20, 25)), u"the control: the ticks brought their rows"
+    assert u"show 4" in window.live_label.text(), u"the control: the footer moved"
+    window._runner = _FinishedRunner(0)
+    window._drain()
+    assert window._ucard is not card, u"the run's end did not rebuild Settings"
+
+
+@pytest.mark.parametrize("tab", [gui_app.TAB_SUBS, gui_app.TAB_PICK])
+def test_a_runs_progress_ticks_rebuild_no_pane_and_move_the_footer(qapp, tab):
+    u"""🚨 RUNBOOK 13c: mid-run the stream is ONLY progress lines -- the rows arrive at
+    the end -- and every tick rebuilt the pane in front: 0.9-2.2 s each at 64 subtitled
+    rows, a window frozen for the length of the run (measured, the performance scope)."""
+    window = make(running=True)
+    window.show_tab(tab)
+    kind = gui_app.SubRow if tab == gui_app.TAB_SUBS else gui_app.PickHead
+    standing = window.findChildren(kind)[0]
+    for n in range(5):
+        window._runner = _EventRunner([{u"type": u"progress", u"name": u"show %d" % n}])
+        window._drain()
+        assert window.findChildren(kind)[0] is standing, u"a progress tick rebuilt the pane"
+    window._runner = _EventRunner([])
+    window._drain()                                      # a tick with nothing at all
+    assert window.findChildren(kind)[0] is standing, u"an empty tick rebuilt the pane"
+    assert u"show 4" in window.live_label.text(), u"the footer did not move"
+    window._runner = _EventRunner([added(9)])            # NEWS: a row
+    window._drain()
+    assert window.findChildren(kind)[0] is not standing, u"the control: a row rebuilds"
+
+
+class _LateLinesRunner(object):
+    u"""A run whose last lines are queued only after `finished()` joined its readers --
+    the gap `_drain` never read (RUNBOOK 13d)."""
+
+    def __init__(self, late):
+        self.late, self.joined = list(late), False
+
+    def drain(self):
+        if not self.joined:
+            return []
+        out, self.late = self.late, []
+        return out
+
+    def finished(self):
+        self.joined = True
+        return gui_run.Run(0, [], {u"api_calls": 0}, [], u"")
+
+
+def test_a_runs_last_lines_are_read_after_it_finishes(qapp):
+    u"""🚨 RUNBOOK 13d: `finished()` joins the reader threads, and what they queued after
+    the tick's drain was never read -- 40 rows written, 14 shown (1 of 3, measured); a
+    lost `busy` read as "done" and stamped *last run* over a run that scanned nothing."""
+    window = make(rows=[], running=True)
+    stamped = window.state.last_run
+    window._runner = _LateLinesRunner([added(41), {u"type": u"busy"}])
+    window._drain()
+    assert [r.get(u"episode") for r in window.state.rows] == [41], u"the last row was lost"
+    assert u"already running" in window.state.live, window.state.live
+    assert window.state.last_run == stamped, u"a run that scanned nothing was stamped"
+
+
+def test_the_trays_countdown_moves_the_footer_and_rebuilds_nothing(qapp, monkeypatch):
+    u"""🚨 RUNBOOK 13g: the tray's countdown changed at every 3-second look, and every
+    look rebuilt the pane in front -- ~20 times an arrival, when only the footer's
+    words move. Its start and its end still render in full."""
+    queue = [(0.0, []), (45.0, [u"a.mkv"]), (42.0, [u"a.mkv"]), (39.0, [u"a.mkv"]),
+             (59.0, [u"a.mkv", u"b.mkv"]), (0.0, [])]
+    monkeypatch.setattr(gui_run, "pending_run", lambda: queue[0])
+    window = make(running=False)                          # the footer counts only while idle
+    window._anything_dated = lambda: False                # no minute may render here
+    window.follow_other_runs(every_ms=60000)
+    window._others_timer.stop()
+    look = window._others_timer.timeout
+    look.emit()
+    queue.pop(0)
+    look.emit()                                          # 0 -> 45: it STARTS
+    standing = window.findChildren(gui_app.SubRow)[0]
+    footer = window.live_label.text()
+    for _ in range(2):
+        queue.pop(0)
+        look.emit()                                      # 45 -> 42 -> 39: it MOVES
+        assert window.findChildren(gui_app.SubRow)[0] is standing, u"a tick rebuilt the pane"
+    assert window.live_label.text() != footer, u"the footer's countdown stood still"
+    queue.pop(0)
+    look.emit()                                          # 39 -> 59: it RESTARTS
+    # ⭐ The Layer 13 pass (Z13-8) -- a second arrival restarts it, and the footer says
+    # so at once: a mutant moving the footer only as the count FELL survived (Z-G1)
+    said = window.live_label.text()
+    assert u"2 new videos" in said and u"59s" in said, u"the restart went unsaid: %r" % said
+    assert window.findChildren(gui_app.SubRow)[0] is standing, u"a restart rebuilt the pane"
+    queue.pop(0)
+    look.emit()                                          # 59 -> 0: it ENDS
+    assert window.findChildren(gui_app.SubRow)[0] is not standing, u"the control: its end"
+
+
+def test_answers_only_settings_shows_rebuild_nothing_elsewhere(qapp):
+    u"""RUNBOOK 13h: hato's memory and its blacklist are shown only in Settings, and
+    their answers rebuilt the pane in front anyway -- at every start and every run's
+    end. The switch to Settings renders in full."""
+    window = make()
+    standing = window.findChildren(gui_app.SubRow)[0]
+    window._memory_read(None, [MEMORY])
+    window._blacklist_read(None, [{u"blacklist": []}])
+    assert window.findChildren(gui_app.SubRow)[0] is standing, u"it rebuilt Subtitles"
+    assert window.state.memory == MEMORY, u"the answer was not taken"
+    window.show_tab(gui_app.TAB_SET)
+    card = window._ucard
+    window._memory_read(None, [MEMORY])
+    assert window._ucard is not card, u"the control: on Settings the answer renders"
+    card = window._ucard
+    window._blacklist_read(None, [{u"blacklist": []}])
+    assert window._ucard is not card, u"the control: ... and the blacklist's"
+
+
+def test_the_window_starts_with_one_render_not_two(tmp_path):
+    u"""RUNBOOK 13h: `check_updates` renders, and `main()` rendered again straight after
+    -- every pane-in-front built twice before the window was ever shown.
+
+    ⭐ The Layer 13 pass (Z13-7): the check read `main()`'s TEXT. The double build put
+    back through `show_tab`, or the render taken out of `check_updates` -- which
+    `main()` now relies on to paint -- both stayed green. `main()` itself now runs,
+    in a process of its own (`_start_window.py`), up to the moment it shows the
+    window: ONE render, a window that says the folders it loaded, and nothing
+    imported on the way that talks to the network (13i's 139 ms, whichever module
+    brings it back)."""
+    import json
+    import subprocess
+    folders = [tmp_path / u"Anime A", tmp_path / u"Anime B"]
+    for folder in folders:
+        folder.mkdir()
+    config = tmp_path / u"config.toml"
+    config.write_text(u"folders = [%s]" % u", ".join(u"'%s'" % f for f in folders),
+                      encoding=u"utf-8")
+    child = subprocess.run([sys.executable, u"-X", u"faulthandler",
+                            os.path.join(HERE, u"_start_window.py")],
+                           capture_output=True, timeout=180,
+                           env=dict(os.environ, HATO_CONFIG=str(config)))
+    out = child.stdout.decode(u"utf-8", u"replace").strip()
+    assert child.returncode == 0, (child.returncode, out[-300:],
+                                   child.stderr.decode(u"utf-8", u"replace")[-600:])
+    seen = json.loads(out.splitlines()[-1])
+    assert seen[u"titlesub"].startswith(u"2 folders"), (
+        u"the window was shown before anything painted what it loaded: %r" % seen[u"titlesub"])
+    assert seen[u"renders"] == 1, u"main() rendered %d times before showing" % seen[u"renders"]
+    assert seen[u"net"] == [], u"the window's start imported %s" % seen[u"net"]
+
+
+def test_a_mark_repolishes_only_a_polished_widget(qapp, monkeypatch):
+    u"""RUNBOOK 13f: a widget not yet polished takes the property, and Qt applies it at
+    its first polish -- repolishing it was 516 unpolish/polish pairs per Subtitles build
+    at 64 rows. A polished widget is repolished exactly as before."""
+    polished = []
+    monkeypatch.setattr(gui_app, "repolish", lambda widget: polished.append(widget))
+    fresh = QLabel(u"a cell")
+    gui_app.mark(fresh, u"tier", u"ok")
+    assert polished == [] and fresh.property(u"tier") == u"ok"
+    fresh.ensurePolished()
+    gui_app.mark(fresh, u"tier", u"look")
+    assert polished == [fresh], u"a polished widget was not repolished"
+    gui_app.mark(fresh, u"tier", u"look")
+    assert polished == [fresh, fresh], u"a repeated value on a live widget was skipped"
+
+
+def test_the_schedule_module_pulls_in_no_network_library():
+    u"""RUNBOOK 13i: one `escape` from `xml.sax.saxutils` imported `urllib.request` and
+    `http.client` -- 139 ms on every window start, before it shows. Asked of a fresh
+    interpreter: this one has imported everything already."""
+    import subprocess
+    child = subprocess.run([sys.executable, u"-c",
+                            u"import sys, hato.schedule; "
+                            u"print(sorted(m for m in ('urllib.request', 'http.client') "
+                            u"if m in sys.modules))"],
+                           capture_output=True, timeout=120)
+    said = child.stdout.decode(u"utf-8", u"replace").strip()
+    assert child.returncode == 0 and said == u"[]", (said, child.stderr[-300:])
+
+
+@pytest.mark.parametrize("text", [u"a & <b> > c", u"&amp;", u"C:\\ツール置き場\\hato-watch.exe",
+                                  u"", u"&&<<>>", u"'quotes' \"too\""])
+def test_the_schedules_escape_is_xmls(text):
+    u"""RUNBOOK 13i: its own three replacements -- `&` first -- exactly what
+    `xml.sax.saxutils.escape` does, on the paths a person's folder can hold."""
+    from xml.sax.saxutils import escape
+    from hato import schedule
+    assert schedule.escape(text) == escape(text)
+
+def _bl_rows(window):
+    return [w for w in window.findChildren(gui_app.Styled) if w.objectName() == u"blrow"]
+
+
+def test_the_blacklist_filter_filters_and_a_rebuild_keeps_it(qapp):
+    u"""RUNBOOK 13j -- *"Filter by name or show…"* was built and connected to nothing:
+    typing did nothing (found by the performance scope). It keeps the rows whose file,
+    folder or note holds every word typed -- and a rebuild of Settings keeps the words."""
+    window = make()
+    window.state.blacklist = [
+        {u"name": u"ep01.mkv", u"path": u"D:\\Anime\\Sousou no Frieren\\ep01.mkv",
+         u"note": u"", u"when": u"3 Sep", u"gone": False},
+        {u"name": u"ep02.mkv", u"path": u"D:\\Anime\\One Piece\\ep02.mkv",
+         u"note": u"the wrong cut", u"when": u"4 Sep", u"gone": False}]
+    window.show_tab(gui_app.TAB_SET)
+    assert len(_bl_rows(window)) == 2, u"the control: both rows are listed"
+    window.filter_field.setText(u"frieren")                 # typed
+    shown = [r for r in _bl_rows(window) if r.isVisibleTo(window)]
+    assert len(shown) == 1 and u"ep01.mkv" in gui_app.texts(shown[0]), u"typing did nothing"
+    # ⭐ The Layer 13 pass (Z13-5): a filter keeping rows with ANY word typed, and one
+    # blind to capitals, both passed every check (Z-J1, Z-J2)
+    window.filter_field.setText(u"frieren recap")
+    assert not [r for r in _bl_rows(window) if r.isVisibleTo(window)], (
+        u"one word of two kept a row")
+    window.filter_field.setText(u"Frieren")
+    shown = [r for r in _bl_rows(window) if r.isVisibleTo(window)]
+    assert len(shown) == 1 and u"ep01.mkv" in gui_app.texts(shown[0]), u"capitals found nothing"
+    window.filter_field.setText(u"wrong cut")               # a note, two words
+    shown = [r for r in _bl_rows(window) if r.isVisibleTo(window)]
+    assert len(shown) == 1 and u"ep02.mkv" in gui_app.texts(shown[0])
+    window.render()                                         # Settings rebuilt
+    assert window.filter_field.text() == u"wrong cut", u"a rebuild forgot the words"
+    assert len([r for r in _bl_rows(window) if r.isVisibleTo(window)]) == 1
+    window.filter_field.setText(u"")
+    assert all(r.isVisibleTo(window) for r in _bl_rows(window)), u"clearing it hid rows"
+
+
+# ===========================================================================
+# ⭐ LAYER 13's ADVERSARIAL PASS (13z) -- ADVERSARY-2026-09-25.md, section Z
+# ===========================================================================
+
+#: What a stray key could PRESS, by name -- recorded on the class BEFORE a window is
+#: built, so the connections its controls make reach the recorder.
+_PRESSABLE = (u"_toggle_auto", u"_toggle_watch", u"_toggle_startup", u"set_auto_update",
+              u"_toggle_recurse", u"_toggle_fallback", u"start_run")
+
+
+def _pressed(monkeypatch):
+    called = []
+    for name in _PRESSABLE:
+        monkeypatch.setattr(gui_app.HatoWindow, name,
+                            lambda self, *args, _n=name, **kwargs: called.append(_n))
+    return called
+
+
+def _type(qapp, window, text):
+    u"""Keys, one at a time, to whatever holds the keyboard -- the way a person types."""
+    from PyQt6.QtTest import QTest
+    for key in text:
+        QTest.keyClick(QApplication.focusWidget() or window, key)
+        qapp.processEvents()
+
+
+def test_typing_in_the_filter_survives_the_minute_and_a_rebuild_and_presses_nothing(
+        qapp, monkeypatch):
+    u"""🚨 The Layer 13 pass, Z13-1 -- REAL. Typing *"one piece"* into the blacklist's
+    filter as Settings was rebuilt -- the minute's look, whenever the daily run is on;
+    an answer arriving -- `clear()` hid the field, Qt handed the keyboard to the title
+    bar's DAILY-RUN SWITCH, and the Space PRESSED it: the daily run went off and the
+    rest of the words were lost (the adversary's p02c). Typed here through the
+    minute's look AND through a rebuild of Settings (the memory's answer)."""
+    called = _pressed(monkeypatch)
+    monkeypatch.setattr(gui_run, "pending_run", lambda: (0.0, []))
+    window = make(running=False, auto=True)
+    window.show()
+    window.activateWindow()
+    window.follow_other_runs(every_ms=60000)
+    window._others_timer.stop()
+    look = window._others_timer.timeout
+    look.emit()                                          # the first look settles the minute
+    window.show_tab(gui_app.TAB_SET)
+    qapp.processEvents()
+    try:
+        window.filter_field.setFocus(Qt.FocusReason.MouseFocusReason)
+        qapp.processEvents()
+        assert QApplication.focusWidget() is window.filter_field, u"the control: typing starts there"
+        _type(qapp, window, u"one")
+        window._minute_seen -= 1
+        look.emit()                                      # ... the minute turns
+        _type(qapp, window, u" pi")
+        card = window._ucard
+        window._memory_read(None, [MEMORY])              # ... an answer rebuilds Settings
+        assert window._ucard is not card, u"the control: Settings WAS rebuilt"
+        _type(qapp, window, u"ece")
+        assert called == [], u"the typing PRESSED %s" % called
+        assert window.filter_field.text() == u"one piece", window.filter_field.text()
+        assert QApplication.focusWidget() is window.filter_field, u"the keyboard left the filter"
+    finally:
+        window.hide()
+
+
+def test_a_half_typed_time_outlives_a_rebuild_and_enter_still_judges_it(qapp, daily):
+    u"""Z13-1's other half (the adversary's p06 -- it predates Layer 13): *"04:3"*, half
+    typed as Settings was rebuilt, was JUDGED. The rebuild's focus-out finished the
+    edit -- *"04:3 is not a time"*, *03:00* put back -- and rendered again from inside
+    the rebuild's own `clear()`. The words and the keyboard outlive the rebuild; the
+    person's own Enter still judges."""
+    from PyQt6.QtTest import QTest
+    daily[u"task"] = _task(u"03:00")
+    window = make(running=False, auto=True)
+    window.show()
+    window.activateWindow()
+    window.show_tab(gui_app.TAB_SET)
+    qapp.processEvents()
+    try:
+        window.time_field.setFocus(Qt.FocusReason.MouseFocusReason)
+        window.time_field.selectAll()
+        _type(qapp, window, u"04:3")
+        card = window._ucard
+        window._memory_read(None, [MEMORY])              # an answer rebuilds Settings
+        qapp.processEvents()
+        assert window._ucard is not card, u"the control: Settings WAS rebuilt"
+        assert window.state.schedule_said == u"", (
+            u"the rebuild JUDGED a half-typed time: %s" % window.state.schedule_said)
+        assert window.time_field.text() == u"04:3", window.time_field.text()
+        assert QApplication.focusWidget() is window.time_field, u"the keyboard left the time"
+        _type(qapp, window, u"0")
+        QTest.keyClick(window.time_field, Qt.Key.Key_Return)
+        assert window.state.schedule == u"04:30", u"Enter no longer sets the time"
+        assert (u"enable", u"04:30") in daily[u"calls"], daily[u"calls"]
+    finally:
+        window.hide()
+
+
+def test_the_keyboard_never_lands_on_the_daily_switch_at_start_or_after_a_rebuild(
+        qapp, monkeypatch):
+    u"""🚨 The Layer 13 pass. Z13-11: the window OPENED with the keyboard on the title
+    bar's daily-run switch -- a Space straight after opening turned the daily run off
+    (measured, both platforms). Z13-1: a rebuild hiding a focused BUTTON handed the
+    keyboard down the chain to that same switch -- and a rebuild while the window sat
+    in the background did it the moment the window came back."""
+    called = _pressed(monkeypatch)
+    window = make(running=False, auto=True)
+    other = QWidget()
+    window.show()
+    window.activateWindow()
+    qapp.processEvents()
+
+    def a_button():
+        pane = window.panes[gui_app.TAB_SET]
+        return [b for b in pane.findChildren(QPushButton) if b.isVisibleTo(window)][0]
+    try:
+        assert QApplication.focusWidget() is not window.auto_switch, u"it OPENED on the switch"
+        _type(qapp, window, u" ")
+        assert called == [], u"a Space at the start pressed %s" % called
+        window.show_tab(gui_app.TAB_SET)
+        qapp.processEvents()
+        button = a_button()
+        button.setFocus(Qt.FocusReason.TabFocusReason)   # a person tabbed to it
+        assert QApplication.focusWidget() is button, u"the control: a button holds the keys"
+        window.render()                                  # an action's rebuild
+        qapp.processEvents()
+        assert QApplication.focusWidget() is not window.auto_switch, (
+            u"a rebuild handed the keyboard to the switch")
+        _type(qapp, window, u" ")
+        assert called == [], u"a Space after a rebuild pressed %s" % called
+        a_button().setFocus(Qt.FocusReason.TabFocusReason)
+        other.show()
+        other.activateWindow()
+        qapp.processEvents()
+        assert QApplication.activeWindow() is other, u"the control: hato is in the background"
+        window.render()                                  # rebuilt while in the background
+        window.activateWindow()
+        qapp.processEvents()
+        assert QApplication.activeWindow() is window, u"the control: hato is back"
+        assert QApplication.focusWidget() is not window.auto_switch, (
+            u"coming back, the keyboard was on the switch")
+        _type(qapp, window, u" ")
+        assert called == [], u"a Space on coming back pressed %s" % called
+    finally:
+        other.hide()
+        window.hide()
+
+
+def test_a_rebuild_of_settings_keeps_the_page_and_the_lists_place(qapp):
+    u"""🚨 The Layer 13 pass, Z13-10 (found measuring the minute's rebuild): EVERY
+    rebuild of Settings threw the page back to its top -- any action, *Check now* at
+    the very bottom of it, the minute's look -- because the rebuilt page was laid out
+    holding nothing before its queued show (1,642 px -> 0, measured on both
+    platforms). The blacklist's own list went back to its top with it."""
+    window = make(running=False)
+    window.state.blacklist = [{u"name": u"Show %02d - 01.mkv" % n, u"note": u"",
+                               u"when": u"3 Sep", u"gone": False} for n in range(20)]
+    lay_out(window)
+    window.show_tab(gui_app.TAB_SET)
+    for _ in range(4):
+        qapp.processEvents()
+    page = window.panes[gui_app.TAB_SET].verticalScrollBar()
+    try:
+        listing = window._bl_area.verticalScrollBar()
+        assert page.maximum() > 0 and listing.maximum() > 0, u"the control: both scroll"
+        page.setValue(page.maximum())
+        listing.setValue(listing.maximum())
+        at, place, card = page.value(), listing.value(), window._ucard
+        check = [b for b in window.findChildren(QPushButton)
+                 if b.text().startswith(u"Check now")][0]
+        check.click()                                    # at the very bottom of the page
+        qapp.processEvents()
+        assert window._ucard is not card, u"the control: Check now rebuilt Settings"
+        assert page.value() == at, u"the page went to %d from %d" % (page.value(), at)
+        now = window._bl_area.verticalScrollBar().value()
+        assert now == place, u"the list went to %d from %d" % (now, place)
+    finally:
+        window.hide()
+
+
+def test_a_look_mid_run_rebuilds_no_settings(qapp, monkeypatch):
+    u"""The Layer 13 pass, Z13-3: mid-run, Settings was still rebuilt by the minute's look
+    and by the tray's countdown starting and ending -- on a page 13b says stands still
+    for a run (the adversary's p08). The run's end rebuilds it."""
+    queue = [(0.0, [])]
+    monkeypatch.setattr(gui_run, "pending_run", lambda: queue[0])
+    window = make(running=True, auto=True)
+    window.show_tab(gui_app.TAB_SET)
+    window.follow_other_runs(every_ms=60000)
+    window._others_timer.stop()
+    look = window._others_timer.timeout
+    look.emit()
+    card = window._ucard
+    window._minute_seen -= 1
+    look.emit()                                          # a minute passes
+    queue[0] = (45.0, [u"a.mkv"])
+    look.emit()                                          # the tray's countdown starts
+    queue[0] = (0.0, [])
+    look.emit()                                          # ... and ends
+    assert window._ucard is card, u"a look rebuilt Settings mid-run"
+    window._runner = _FinishedRunner(0)
+    window._drain()
+    assert window._ucard is not card, u"the control: the run's end rebuilds it"
+
+
+def _words(window):
+    u"""Every word the window SHOWS -- tooltips too, whitespace collapsed -- from its
+    visible widgets only. -> sorted [unicode]"""
+    found = []
+    for widget in window.findChildren(QWidget):
+        if not widget.isVisibleTo(window):
+            continue
+        for getter in (u"text", u"toolTip", u"placeholderText"):
+            method = getattr(widget, getter, None)
+            try:
+                value = method() if callable(method) else None
+            except TypeError:
+                value = None
+            if isinstance(value, str) and value:
+                found.append(u" ".join(value.split()))
+    return sorted(found)
+
+
+def test_a_minute_moves_the_next_run_in_place_and_says_what_a_rebuild_would(
+        qapp, monkeypatch):
+    u"""P-F on Settings (the Layer 13 pass): the minute's look rebuilt ALL of Settings to
+    move *"next run in 14h"* -- once a minute, for anybody whose daily run is on -- and
+    every rebuild took the keyboard, the words half typed and the page's place with it
+    (Z13-1, Z13-10). It is repainted in place now. ⭐ And an hour on, the page says
+    EXACTLY what a full rebuild says: a dated word left behind is a red here."""
+    monkeypatch.setattr(gui_run, "pending_run", lambda: (0.0, []))
+    window = make(running=False, auto=True)
+    window.show_tab(gui_app.TAB_SET)
+    window.follow_other_runs(every_ms=60000)
+    window._others_timer.stop()
+    look = window._others_timer.timeout
+    look.emit()
+    card, before = window._ucard, _words(window)
+    window.state.now = NOW8 + timedelta(hours=1, minutes=1)
+    window._minute_seen -= 1
+    look.emit()                                          # an hour and a minute on
+    assert window._ucard is card, u"the minute rebuilt Settings"
+    moved = _words(window)
+    window.render()                                      # what a full rebuild says
+    assert window._ucard is not card, u"the control: that one did rebuild"
+    rebuilt = _words(window)
+    assert moved == rebuilt, u"said in place / said rebuilt: %s" % sorted(
+        set(moved) ^ set(rebuilt))
+    assert moved != before, u"the control: an hour passed and nothing dated moved"
+
+
+def test_the_filter_says_what_it_leaves(qapp):
+    u"""The Layer 13 pass, Z13-4 (the adversary's pictures): nothing matching was a blank
+    186 px box; the heading said *"4 videos"* with one showing; a lone match floated in
+    the middle of the box; and *"Remove those 2"* stood over rows the filter hid -- and
+    removed them. ⭐ Over an empty list there is no filter at all: it had nothing to do."""
+    window = lay_out(make(running=False))
+    window.show_tab(gui_app.TAB_SET)
+    qapp.processEvents()
+    try:
+        count, none, notice = window._bl_count, window._bl_none, window._bl_stale
+        assert count.text() == u"· 4 videos" and notice.isVisibleTo(window), u"the control"
+        assert not none.isVisibleTo(window), u"the control: nothing to say yet"
+        window.filter_field.setText(u"zzz")
+        assert count.text() == u"· 0 of 4 videos", count.text()
+        assert none.isVisibleTo(window) and u"“zzz”" in none.text(), (
+            u"nothing matching said nothing")
+        assert not notice.isVisibleTo(window), u"the notice stood over rows the filter hides"
+        window.filter_field.setText(u"one piece")
+        qapp.processEvents()
+        shown = [r for r in _bl_rows(window) if r.isVisibleTo(window)]
+        assert len(shown) == 1 and count.text() == u"· 1 of 4 videos", count.text()
+        assert not none.isVisibleTo(window), u"a match was said to be nothing"
+        assert shown[0].height() <= shown[0].sizeHint().height() + 2, (
+            u"a lone match was spread over the box: %d px" % shown[0].height())
+        window.filter_field.setText(u"")
+        assert count.text() == u"· 4 videos" and notice.isVisibleTo(window), count.text()
+        window.state.blacklist = []
+        window.render()
+        assert window.filter_field is None and not [
+            f for f in window.findChildren(QLineEdit) if f.objectName() == u"filter"], (
+            u"a filter over an empty list")
+    finally:
+        window.hide()
+
+
+def test_the_errors_tooltip_goes_when_the_footer_moves_on(qapp):
+    u"""The Layer 13 pass, Z13-8 (Z-C3): the footer's *"hato.log is at …"* belongs to
+    the error line alone -- a mutant that only ever SET it survived every check."""
+    window = make(running=True)
+    window.error_caught()
+    qapp.processEvents()                                 # its render is queued
+    assert u"hato.log is at" in window.live_label.toolTip(), u"the control: the error's tooltip"
+    window._runner = _EventRunner([{u"type": u"progress", u"name": u"show 1"}])
+    window._drain()                                      # a quiet tick moves the footer on
+    assert u"show 1" in window.live_label.text(), u"the control: the footer moved on"
+    assert window.live_label.toolTip() == u"", window.live_label.toolTip()
+
+
+@pytest.mark.skipif(not os.name == "nt", reason=(
+    "measures WINDOWS' own fonts (QT_QPA_FONTDIR) under Windows' 'Make text bigger' -- another platform's fonts and text-size setting are another check"))
+def test_a_strips_words_sit_on_its_buttons_middle_under_a_larger_system_font():
+    u"""🚨 The Layer 13 pass, Z13-2: 13f stopped `mark` polishing a fresh widget, and
+    the strip then measured its lead UNPOLISHED -- in the application's font, not the
+    sheet's. At Windows' default 9 pt the two pad alike, which is the only reason 64
+    shots were identical and M13-22 was retired; at 12 pt ("Make text bigger") the
+    words rode 2.5 px high. ⭐ In a process of its own, with real fonts: here, offscreen
+    on Windows, every size measures alike and no check could ever fail."""
+    import subprocess
+    child = subprocess.run([sys.executable, os.path.join(HERE, u"_strip_fonts.py")],
+                           capture_output=True, timeout=180)
+    said = (child.stdout + child.stderr).decode(u"utf-8", u"replace").strip()
+    assert child.returncode == 0, u"exit %d -- %s" % (child.returncode, said[-600:])
+
+
+def test_a_chevron_never_fades_on_a_row_nobody_can_see():
+    u"""🚨 The Layer 13 pass, Z13-9 (it predates Layer 13): the chevron's opacity effect,
+    animated on a HIDDEN row -- its pane at the back, or its show still queued --
+    crashed the window 8 of 8 when forced, and about 1 run in 36 of a person flicking
+    between tabs mid-fade. ⭐ In a process of its own (`_fade_hidden.py`), like 13a's
+    crash check: a crash here would take every later check down with it."""
+    import subprocess
+    child = subprocess.run([sys.executable, u"-X", u"faulthandler",
+                            os.path.join(HERE, u"_fade_hidden.py")],
+                           capture_output=True, timeout=180)
+    said = (child.stdout + child.stderr).decode(u"utf-8", u"replace").strip()
+    assert child.returncode == 0, (
+        u"the window CRASHED (exit %d, 0x%08X)" % (child.returncode,
+                                                   child.returncode & 0xFFFFFFFF)
+        if child.returncode not in (0, 1) else u"a fade ran where nobody could see it"
+    ) + u" -- %s" % said[-400:]

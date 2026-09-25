@@ -189,10 +189,21 @@ def repolish(widget):
 
 
 def mark(widget, name, value):
-    u"""Set a dynamic property Qt's selectors can see, and repolish."""
+    u"""Set a dynamic property Qt's selectors can see, and repolish.
+
+    ⭐ RUNBOOK 13f -- ONLY A POLISHED WIDGET IS REPOLISHED. One not yet polished
+    takes the property and Qt applies it at its first polish, when it is shown:
+    repolishing it here was 516 unpolish/polish pairs per Subtitles build at 64
+    rows -- 0.29 of 0.96 s -- each undone at show. A widget already polished is
+    repolished exactly as before. ⚠ Code that MEASURES a freshly marked widget
+    before it is shown must polish it first: `_strip_row` does. (It was once
+    measured as needing none -- 64 shots identical to the pixel -- only because
+    at Windows' default font the unpolished and the polished lead round to the
+    same pad: the Layer 13 pass, Z13-2.)"""
     widget.setProperty(name, u"true" if value is True
                        else (u"false" if value is False else value))
-    repolish(widget)
+    if widget.testAttribute(Qt.WidgetAttribute.WA_WState_Polished):
+        repolish(widget)
 
 
 def texts(widget):
@@ -343,6 +354,9 @@ class State(object):
         self.skip_folders = []
         self.recurse = True
         self.blacklist = []
+        #: ⭐ RUNBOOK 13j -- what is typed in the blacklist's filter: kept here, so a
+        #: rebuild of Settings keeps it
+        self.blacklist_filter = u""
         #: ⭐ RUNBOOK 7h. Empty means the integration is off, which is the
         #: default -- most people do not run surasura.
         self.surasura_dir = u""
@@ -1380,6 +1394,15 @@ def _strip_row(box, lead, detail, action, dot=None):
     wrapped detail of four lines pulled the one-line lead and the button to its
     middle, away from the words they belong to (LOOKED, 2026-09-23).
     """
+    # 🚨 POLISHED BEFORE IT IS MEASURED (the Layer 13 pass, Z13-2). RUNBOOK 13f stopped
+    # `mark` polishing a fresh widget on the way past, and an unpolished lead measures
+    # the APPLICATION's font, not the sheet's 11 px. At Windows' default 9 pt the two
+    # happen to pad alike -- (30-16)//2 == (30-15)//2 == 7 -- so the 64 standard shots
+    # were identical and these lines were retired on that; under "Make text bigger"
+    # (12 pt) the words rode 2.5 px above the button's middle. ⛔ A measurement at one
+    # font size is about that font size.
+    for widget in (lead, action) + ((dot,) if dot is not None else ()):
+        widget.ensurePolished()
     pad = max(0, (action.sizeHint().height() - lead.fontMetrics().height()) // 2)
     for text in (lead, detail):
         text.setContentsMargins(0, pad, 0, 0)
@@ -1541,11 +1564,36 @@ def clear(layout):
     [!] `takeAt` alone LEAKS THE WIDGET AND LEAVES IT VISIBLE -- it is removed
     from the layout and re-parented to nothing in particular, so a re-render
     paints the new rows over the old ones.
+
+    🚨 HIDDEN BEFORE IT IS DETACHED (RUNBOOK 13a). A widget added to a VISIBLE
+    layout is shown LATER: `QLayout.addChildWidget` queues the show for the next
+    turn of the event loop. Rebuilt twice in one turn -- a download delivers every
+    waiting progress line at once -- the first build's widgets were detached
+    before their queued show ran, and it then showed each one as a WINDOW of its
+    own: Sonic, updating to 1.0.5, *"a bunch of flashing windows"* (~50 measured
+    on the published 1.0.4). With rows on screen the same race SEGFAULTED the
+    window, 3 of 3. ⭐ Hidden first, the queued show finds a widget explicitly
+    hidden and leaves it so.
+
+    🚨 AND THE KEYBOARD IS NEVER HANDED DOWN THE CHAIN (the Layer 13 pass, Z13-1).
+    Hiding a widget that holds the focus gives it to the next control in Qt's
+    focus chain -- here the title bar's DAILY-RUN SWITCH. Typing *"one piece"*
+    into the blacklist's filter as a rebuild landed, the Space pressed that
+    switch and the daily run went OFF. ⭐ The focus is parked on the layout's own
+    widget first, where a key does nothing -- and it is the WINDOW's remembered
+    focus that is asked, so an inactive window is not handed the switch when it
+    comes back.
     """
+    host = layout.parentWidget()
+    if host is not None:
+        focused = host.window().focusWidget()
+        if focused is not None and host.isAncestorOf(focused):
+            host.setFocus(Qt.FocusReason.OtherFocusReason)
     while layout.count():
         item = layout.takeAt(0)
         widget = item.widget()
         if widget is not None:
+            widget.hide()
             widget.setParent(None)
             widget.deleteLater()
 
@@ -1664,9 +1712,24 @@ class SubRow(Clickable):
 
     def _fade_chev(self, target):
         self._chev_anim.stop()
+        # 🚨 NO FADE ON A ROW NOBODY CAN SEE (the Layer 13 pass, Z13-9). The opacity
+        # effect animated on a HIDDEN row -- its pane at the back, or its show still
+        # queued -- crashed the window 8 of 8 when forced, and about 1 run in 36 of a
+        # person flicking between tabs mid-fade. Out of sight it is set, not faded.
+        if not self.isVisible():
+            self._chev_fade.setOpacity(float(target))
+            return
         self._chev_anim.setStartValue(self._chev_fade.opacity())
         self._chev_anim.setEndValue(target)
         self._chev_anim.start()
+
+    def hideEvent(self, event):
+        u"""⭐ Z13-9 -- a fade still running as its row is hidden (a tab switched
+        within its 120 ms, a rebuild) ends at once, where it was going."""
+        if self._chev_anim.state() == QVariantAnimation.State.Running:
+            self._chev_anim.stop()
+            self._chev_fade.setOpacity(float(self._chev_anim.endValue()))
+        super().hideEvent(event)
 
     def enterEvent(self, event):
         self._fade_chev(1.0)
@@ -1779,6 +1842,9 @@ def detail_panel(row, parent=None):
     # ⚠ ONE `stat`, ONLY WHEN A ROW IS EXPANDED. That is a click, not a
     # render loop -- and a row genuinely outlives the file it describes, so
     # the question has to be asked of the disk rather than of the run.
+    # 🚨 AND UNTIL RUNBOOK 13e THIS NOTE WAS UNTRUE: the panel was built -- and
+    # this `stat` asked -- for EVERY row at every render, hidden (64 stats a
+    # render at 64 rows, measured). Only an OPEN row builds one now.
     video = row.get(u"video")
     if video and os.path.isfile(video):
         open_it = button(u"Open video", panel)
@@ -2113,6 +2179,12 @@ class UpdatePill(Clickable):
     #: laid out at ~22 px its 12 px radius was over half, and Qt dropped the
     #: rounding entirely, so the pill drew as a box (theme.py's `#info` note).
     HEIGHT = 26
+    #: ⭐ SONIC, 2026-09-25: *"do the ten seconds"*. The dot pulses for the first TEN
+    #: SECONDS of each new thing the pill says, then holds still. Pulsing for as long
+    #: as an update waited, it repainted ~60 times a second (8 ms of CPU every
+    #: second) to say what the pill's own words already said. ⚠ The footer's dot is
+    #: another thing: it reports a RUN, and a run ends.
+    PULSE_MS = 10000
 
     def __init__(self, parent=None):
         super().__init__(parent, u"upill")
@@ -2128,19 +2200,30 @@ class UpdatePill(Clickable):
         self.go = label(u"", u"upillgo", self)
         box.addWidget(self.go)
         self.action = None
+        self._said = None                     # what the dot last pulsed for
+        self._settle = QTimer(self)
+        self._settle.setSingleShot(True)
+        self._settle.timeout.connect(lambda: self.dot.set_running(False))
         self.hide()
 
     def paint_answer(self, answer):
         u"""`answer`: `updating.pill()`'s -- None hides the pill."""
         if answer is None:
             self.action = None
+            self._said = None
+            self._settle.stop()
             self.dot.set_running(False)
             self.hide()
             return
         text, go, self.action = answer
         self.text.setText(text)
         self.go.setText(go)
-        self.dot.set_running(True)
+        # ⭐ Only something NEW starts the ten seconds: every render repaints the
+        # pill, and restarting here would pulse for ever, ten seconds at a time
+        if text != self._said:
+            self._said = text
+            self.dot.set_running(True)
+            self._settle.start(self.PULSE_MS)
         self.show()
 
 
@@ -2296,6 +2379,12 @@ class HatoWindow(Styled):
 
         self.setStyleSheet(theme.qss())
         self.render()
+        # 🚨 THE KEYBOARD STARTS ON NOTHING THAT ACTS (the Layer 13 pass, Z13-11). Left
+        # to Qt, the window opened with the focus on the first control in its chain --
+        # the title bar's DAILY-RUN SWITCH -- and a Space pressed straight after opening
+        # turned the daily run off (measured, both platforms). The window itself holds
+        # it: a key there does nothing, and Tab still reaches every control.
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -2512,7 +2601,28 @@ class HatoWindow(Styled):
     # render -- [*] the ONE place state reaches the screen
     # ------------------------------------------------------------------
 
-    def render(self):
+    def _render_live(self):
+        u"""⭐ RUNBOOK 13c -- the footer's live line, its tooltip and its dot: all that
+        a run's progress tick and the tray's countdown move. ⛔ Never a pane."""
+        state = self.state
+        self.live_label.setText(footer_status(state))
+        # ⭐ 10b -- the line says WHERE, on hover: the substance, not commentary.
+        # ⚠ The path on a line of its own, NOT through `wrap()`: that broke it at
+        # a hyphen inside a folder name (LOOKED, 2026-09-24).
+        self.live_label.setToolTip(
+            u"hato.log is at\n%s" % ErrorNet.log_path()
+            if state.live == ERROR_LINE else u"")
+        self.dot.set_running(state.running)
+
+    def render(self, live=False):
+        u"""State to screen -- the ONE place. `live`: a run's own tick (`_drain`,
+        ~8 a second), a look mid-run and the minute's look (`follow_other_runs`).
+        ⭐ RUNBOOK 13b: a live render does not rebuild Settings -- nothing on it
+        moves then but the Updates line and the next run's words, repainted in
+        place. Torn down and rebuilt at every tick, it was caught half laid out
+        (Sonic's screenshot, 2026-09-25: every card collapsed, its title cut
+        through) and a button could be destroyed under the pointer. ⚠ The run's
+        start and end, every action and every tab switch render in full."""
         state = self.state
         tallies = state.tallies()            # [*] ONE call. Two readers.
 
@@ -2566,24 +2676,20 @@ class HatoWindow(Styled):
             self._render_subs()
         elif state.tab == TAB_PICK:
             self._render_pick()
+        elif live:
+            self._refresh_update_line()
+            self._refresh_next_run()
         else:
             self._render_settings()
         self._render_update()
 
-        self.live_label.setText(footer_status(state))
+        self._render_live()
         # ⭐ RUNBOOK 12d -- the running version, one click from Settings -> Updates
         import html
         current = state.updates.current
         self.version_label.setText(
             u"<a href=\"updates\" style=\"%s\">hato %s</a> │&nbsp;"
             % (theme.LINK_CSS, html.escape(current)) if current else u"")
-        # ⭐ 10b -- the line says WHERE, on hover: the substance, not commentary.
-        # ⚠ The path on a line of its own, NOT through `wrap()`: that broke it at
-        # a hyphen inside a folder name (LOOKED, 2026-09-24).
-        self.live_label.setToolTip(
-            u"hato.log is at\n%s" % ErrorNet.log_path()
-            if state.live == ERROR_LINE else u"")
-        self.dot.set_running(state.running)
         need = tallies[gui_run.NEEDS_YOU]
         self.tally_labels[0].setText(u"%d added" % tallies[gui_run.ADDED])
         self.tally_labels[1].setText(
@@ -2686,10 +2792,15 @@ class HatoWindow(Styled):
                 widget.clicked.connect(
                     lambda k=key: self._toggle_row(k))
                 column.addWidget(widget)
-                panel = detail_panel(row, self.panes[TAB_SUBS].widget())
-                panel.setVisible(key in state.open_rows)
-                self._details[key] = panel
-                column.addWidget(panel)
+                # ⭐ RUNBOOK 13e -- THE EVIDENCE IS BUILT ONLY WHILE ITS ROW IS OPEN.
+                # Built for every row and hidden, it was ~21 widgets, a drop-shadow
+                # button and a `stat` of the video per row, every render: 1,624
+                # widgets and 64 stats at 64 subtitled rows, 0.9-2.2 s a rebuild
+                if key in state.open_rows:
+                    panel = detail_panel(row, self.panes[TAB_SUBS].widget())
+                    panel.setVisible(True)
+                    self._details[key] = panel
+                    column.addWidget(panel)
             if skipped:
                 # ⚠ "already had subtitles" was true of only one of the five
                 # skips. This counts all of them, so it says the thing that IS
@@ -3325,6 +3436,9 @@ class HatoWindow(Styled):
 
     def _render_settings(self):
         column = self.pane_layouts[TAB_SET]
+        # ⭐ THE LAYER 13 PASS (Z13-1, Z13-10) -- what the person is doing on this page
+        # outlives its rebuild: the words being typed, the cursor, the list's place
+        held = self._settings_held()
         clear(column)
         state = self.state
         host = self.panes[TAB_SET].widget()
@@ -3359,6 +3473,62 @@ class HatoWindow(Styled):
         wrapper.addStretch(1)
         column.addWidget(row)
         column.addStretch(1)
+        # 🚨 SHOWN NOW, NOT AT ITS QUEUED SHOW (the Layer 13 pass, Z13-10). In between,
+        # the pane was laid out holding nothing but its stretch: the scroll range fell
+        # to 0, and every rebuild -- any action, *Check now* at the very bottom, the
+        # minute's look -- threw the page back to its top (1,642 px -> 0, measured on
+        # both platforms). ⚠ Rebuilt again in the same turn, `clear()` still hides it
+        # before it is detached (13a).
+        row.show()
+        self._settings_restore(held)
+
+    def _settings_held(self):
+        u"""What a rebuild of Settings must not take from the person (the Layer 13
+        pass, Z13-1 and Z13-10). -> dict: the text field being typed in -- its
+        name, words, cursor and selection -- and the blacklist listing's place.
+
+        ⛔ THE REBUILD IS NOT THE PERSON FINISHING THEIR EDIT. The field is
+        silenced before `clear()` hides it: its focus-out judged a half-typed
+        *"04:3"* as a time, refused it, put *03:00* back -- and rendered again
+        from inside the rebuild's own `clear()` (the adversary's p06)."""
+        held = {}
+        pane = self.panes[TAB_SET]
+        focused = pane.window().focusWidget()
+        if isinstance(focused, QLineEdit) and focused.objectName() \
+                and pane.isAncestorOf(focused):
+            focused.blockSignals(True)            # it is deleted with the rebuild
+            held[u"field"] = (focused.objectName(), focused.text(),
+                              focused.cursorPosition(), focused.selectionStart(),
+                              len(focused.selectedText()))
+        area = getattr(self, u"_bl_area", None)
+        if area is not None:
+            try:
+                held[u"listing"] = area.verticalScrollBar().value()
+            except RuntimeError:                  # rebuilt since
+                pass
+        return held
+
+    def _settings_restore(self, held):
+        u"""Give the rebuilt Settings back what `_settings_held` kept. ⭐ At once:
+        the page is shown already, so the rebuilt field takes the very next key --
+        nothing typed falls between the two builds."""
+        field = held.get(u"field")
+        if field is not None:
+            name, text, cursor, start, length = field
+            for new in self.panes[TAB_SET].widget().findChildren(QLineEdit):
+                if new.objectName() != name:
+                    continue
+                if new.text() != text:            # a half-typed time: its words stay
+                    new.setText(text)
+                new.setFocus(Qt.FocusReason.OtherFocusReason)
+                if length:
+                    new.setSelection(start, length)
+                else:
+                    new.setCursorPosition(cursor)
+                break
+        area = getattr(self, u"_bl_area", None)
+        if held.get(u"listing") and area is not None:
+            area.verticalScrollBar().setValue(held[u"listing"])
 
     def _card(self, title, parent, count=None):
         card = Styled(parent, u"card")
@@ -3394,6 +3564,7 @@ class HatoWindow(Styled):
     def _card_when(self, parent):
         card, body = self._card(u"When it runs", parent)
         state = self.state
+        self._next_run = None
         if state.auto_supported:
             top = QWidget(card)
             line = QHBoxLayout(top)
@@ -3416,7 +3587,9 @@ class HatoWindow(Styled):
             # that was OFF.
             when = gui_run.next_run_text(state.daily(), state.clock())
             if when:
-                line.addWidget(label(when, u"hint", top))
+                # ⭐ kept, so the minute's look moves it IN PLACE (`_refresh_next_run`)
+                self._next_run = label(when, u"hint", top)
+                line.addWidget(self._next_run)
             line.addStretch(1)
             body.addWidget(top)
         # 🚨 D2 -- THIS SENTENCE WAS A CLAIM ABOUT A TASK NOBODY REGISTERED:
@@ -3924,6 +4097,13 @@ class HatoWindow(Styled):
                                                        u"" if len(rows) == 1
                                                        else u"s"))
         body.setSpacing(9)
+        #: ⭐ RUNBOOK 13j and the Layer 13 pass (Z13-4) -- what the filter leaves is
+        #: SAID: the heading counts what shows, a line says when nothing does, and
+        #: the stale rows' notice stands aside while it filters
+        self._bl_rows, self._bl_stale, self._bl_none, self._bl_area = [], None, None, None
+        self._bl_count = card.findChild(QLabel, u"cardcount")
+        self._bl_total = len(rows)
+        self.filter_field = None
         #: [*] hato CLEANS IT, NOT THE PERSON. Sonic: *"it's likely they will
         #: not clean it as videos get rotated from there."* A blacklist row is
         #: keyed on the video's CONTENT HASH, so hato can tell exactly which
@@ -3960,23 +4140,40 @@ class HatoWindow(Styled):
             sweep.clicked.connect(self.remove_stale_blacklist)
             line.addWidget(sweep)
             body.addWidget(notice)
-
-        self.filter_field = QLineEdit(card)
-        self.filter_field.setObjectName(u"filter")
-        self.filter_field.setPlaceholderText(u"Filter by name or show…")
-        palette = self.filter_field.palette()
-        palette.setColor(QPalette.ColorRole.PlaceholderText,
-                         QColor(theme.INK_FAINT))
-        self.filter_field.setPalette(palette)
-        body.addWidget(self.filter_field)
+            self._bl_stale = notice
 
         if rows:
+            # ⭐ Z13-4 -- only with rows to filter: over an empty list it had nothing to do
+            self.filter_field = QLineEdit(card)
+            self.filter_field.setObjectName(u"filter")
+            self.filter_field.setPlaceholderText(u"Filter by name or show…")
+            palette = self.filter_field.palette()
+            palette.setColor(QPalette.ColorRole.PlaceholderText,
+                             QColor(theme.INK_FAINT))
+            self.filter_field.setPalette(palette)
+            self.filter_field.setText(self.state.blacklist_filter)
+            # ⭐ RUNBOOK 13j -- IT FILTERS. Built and placed since the card was made, and
+            # connected to nothing: typing did nothing at all (found by the performance
+            # scope, 2026-09-25; the wiring walk looked at buttons only)
+            self.filter_field.textChanged.connect(self._filter_blacklist)
+            body.addWidget(self.filter_field)
+
             listing = Styled(card, u"blist")
             inner = QVBoxLayout(listing)
             inner.setContentsMargins(0, 0, 0, 0)
             inner.setSpacing(0)
+            # ⭐ Z13-4 -- NOTHING MATCHING IS SAID: it was a blank 186 px box
+            self._bl_none = label(u"", u"hint", listing)
+            self._bl_none.setContentsMargins(10, 6, 10, 6)
+            self._bl_none.setWordWrap(True)
+            inner.addWidget(self._bl_none)
             for entry in rows:
-                inner.addWidget(self._bl_row(listing, entry))
+                row = self._bl_row(listing, entry)
+                self._bl_rows.append((entry, row))
+                inner.addWidget(row)
+            # ⭐ Z13-4 -- the rows sit at the top: spread over the box, a lone match
+            # floated in its middle
+            inner.addStretch(1)
             #: [!] CAPPED AND SCROLLED, and this ONE cap is deliberate: 34 rows
             #: today and it only grows, so without a ceiling Settings becomes a
             #: scroll marathon to reach anything below it. [X] Not the
@@ -3989,11 +4186,51 @@ class HatoWindow(Styled):
             area.setWidget(listing)
             area.setFixedHeight(186)
             body.addWidget(area)
+            self._bl_area = area
+            self._filter_blacklist(self.state.blacklist_filter)
         body.addWidget(paragraph(
             u"Your instruction, so nothing overrides it — not even Force. "
             u"Kept by the video's content, so renaming or moving a file does "
             u"not lose its place here.", card))
         return card
+
+    def _filter_blacklist(self, text):
+        u"""⭐ RUNBOOK 13j -- the blacklist's filter: a row stays when its file name,
+        its folder or its note holds every word typed; the rest are hidden.
+
+        ⭐ And what it leaves is SAID (the Layer 13 pass, Z13-4): the heading reads
+        *"1 of 4 videos"*, a line says when nothing matches -- it was a blank box --
+        and the notice about rows no longer on this machine stands aside: its
+        *"Remove those 2"* removed rows the filter was hiding."""
+        self.state.blacklist_filter = text or u""
+        words = self.state.blacklist_filter.lower().split()
+        shown = 0
+        for entry, row in getattr(self, u"_bl_rows", ()):
+            held = u" ".join((entry.get(u"name") or u"", entry.get(u"path") or u"",
+                              entry.get(u"note") or u"")).lower()
+            keep = all(word in held for word in words)
+            shown += keep
+            try:
+                row.setVisible(keep)
+            except RuntimeError:              # the card was rebuilt: this row is gone
+                pass
+        total = getattr(self, u"_bl_total", 0)
+        videos = u"video" if total == 1 else u"videos"
+        try:
+            count = getattr(self, u"_bl_count", None)
+            if count is not None:
+                count.setText(u"· %d of %d %s" % (shown, total, videos) if words
+                              else u"· %d %s" % (total, videos))
+            none = getattr(self, u"_bl_none", None)
+            if none is not None:
+                none.setText(u"Nothing on this list matches “%s”."
+                             % self.state.blacklist_filter.strip())
+                none.setVisible(bool(words) and not shown)
+            stale = getattr(self, u"_bl_stale", None)
+            if stale is not None:
+                stale.setVisible(not words)
+        except RuntimeError:                  # the card was rebuilt
+            pass
 
     def _bl_row(self, parent, entry):
         row = Styled(parent, u"blrow")
@@ -4081,7 +4318,13 @@ class HatoWindow(Styled):
             # V1); read from the world on every look, never from the Settings tick.
             watching, old = self.tray_is_watching(), self.tray_is_old()
             reads = self.tray_reads_formats()
-            changed = (int(self.state.queued_in) != was
+            # ⭐ RUNBOOK 13g -- THE COUNTDOWN MOVING (it was counting and still is)
+            # changes the footer's words and nothing else: it rebuilt the pane in
+            # front at every look, ~20 times an arrival. Its start and its end
+            # still render in full.
+            now_in = int(self.state.queued_in)
+            ticking = now_in != was and was > 0 and now_in > 0
+            changed = ((now_in != was and not ticking)
                        or watching != self.state.watching
                        or old != self.state.old_tray
                        or reads != self.state.tray_reads_formats)
@@ -4095,11 +4338,22 @@ class HatoWindow(Styled):
             # *"retrying in 30m"* read the same five hours later. Once a minute,
             # while anything on screen is dated.
             minute = int(time.time() // 60)
+            dated = False
             if minute != self._minute_seen:
                 self._minute_seen = minute
-                changed = changed or self._anything_dated()
+                dated = self._anything_dated()
             if changed:
-                self.render()
+                # ⭐ THE LAYER 13 PASS (Z13-3) -- mid-run, nothing a look finds rebuilds
+                # Settings (the countdown's start and end did); the run's end renders
+                # in full
+                self.render(live=self.state.running)
+            elif dated:
+                # ⭐ P-F -- a minute passing MOVES WORDS. Settings is repainted in place;
+                # the row panes are rebuilt, because a waited row passing its date
+                # moves between their sections (A16)
+                self.render(live=True)
+            elif ticking:
+                self._render_live()
             # ⭐ LAYER 11 -- a run the TRAY started holds the lock and tells this
             # window nothing when it ends: *Restart after this run* is kept here.
             if self.state.updates.after_run and not self.state.running:
@@ -4715,6 +4969,19 @@ class HatoWindow(Styled):
         self._updates_timer = timer
         return timer
 
+    def _refresh_next_run(self):
+        u"""⭐ *"next run in 14h"*, repainted IN PLACE (the Layer 13 pass, P-F). The
+        minute's look moved it by rebuilding ALL of Settings -- once a minute, for
+        anybody whose daily run is on -- and every rebuild took the page's place,
+        the keyboard and the words half typed with it (Z13-1, Z13-10)."""
+        hint = getattr(self, u"_next_run", None)
+        if hint is None:
+            return
+        try:
+            hint.setText(gui_run.next_run_text(self.state.daily(), self.state.clock()))
+        except RuntimeError:                  # the card was rebuilt: this label is gone
+            self._next_run = None
+
     def _refresh_update_line(self):
         u"""⭐ RUNBOOK 12b/12c -- the Updates line's words and tone, repainted IN PLACE:
         *checked 12 min ago* moves with the clock, and a confirmation steps back to
@@ -4874,9 +5141,12 @@ class HatoWindow(Styled):
         return runner
 
     def _update_progress(self, event):
-        u"""One `{"type": "progress"}` line. ⚠ The PANE re-renders only when the
-        whole percent moves: Settings rebuilding at every block is the flicker
-        Sonic reported in 1.0.0 (*"the settings tab glitches HARD"*)."""
+        u"""One `{"type": "progress"}` line. ⭐ NOTHING IS REBUILT (RUNBOOK 13b): the
+        pill and the card, and Settings -> Updates' one moving line, are repainted
+        IN PLACE. It rebuilt the pane in front at every whole percent -- the
+        flicker Sonic reported in 1.0.0 (*"the settings tab glitches HARD"*), and
+        with several lines waiting in one turn, the trigger of 13a's flashing
+        windows and crash. Nothing else on screen reads a download's progress."""
         if not (isinstance(event, dict) and event.get(u"type") == u"progress"):
             return
         done, total = event.get(u"done"), event.get(u"total")
@@ -4885,11 +5155,10 @@ class HatoWindow(Styled):
         u = self.state.updates
         u.downloading = (done, total)
         pct = 100 * done // total if total else 0
+        self._render_update()
         if pct != getattr(self, u"_stage_pct", -1):
             self._stage_pct = pct
-            self.render()
-        else:
-            self._render_update()
+            self._refresh_update_line()
 
     def _update_staged(self, finished, events):
         u = self.state.updates
@@ -5791,7 +6060,11 @@ class HatoWindow(Styled):
             if isinstance(event, dict) and event.get(u"type") == u"clear" \
                     and event.get(u"ok") and event.get(u"dry_run"):
                 self.state.memory = event
-                self.render()
+                # ⭐ RUNBOOK 13h: only Settings shows it -- elsewhere this rebuilt the
+                # pane in front for nothing (at every start and every run's end); the
+                # switch to Settings renders in full
+                if self.state.tab == TAB_SET:
+                    self.render()
                 return
 
     def choose_clear(self):
@@ -5831,7 +6104,8 @@ class HatoWindow(Styled):
         for event in events:
             if isinstance(event, dict) and u"blacklist" in event:
                 self.state.blacklist = gui_run.blacklist_entries(event)
-                self.render()
+                if self.state.tab == TAB_SET:           # ⭐ 13h, as the memory's
+                    self.render()
                 return
 
     def _toggle_auto(self):
@@ -6200,11 +6474,20 @@ class HatoWindow(Styled):
                     calls, u"" if calls == 1 else u"s", (u" · " + spent) if spent else u"")
         return u"done"
 
-    def _drain(self):
-        if self._runner is None:
-            return
-        for event in self._runner.drain():
+    #: ⭐ RUNBOOK 13c -- the kinds of line that move ONLY the footer. Any other kind -- a
+    #: row, the summary, a busy lock, or one this window does not know -- renders in
+    #: full: an unknown line fails SAFE.
+    QUIET_EVENTS = (u"progress", u"note", u"unparsed")
+
+    def _take_events(self, events):
+        u"""Each line of the run's stream, applied to `State`. -> True when one of
+        them is news beyond the footer's live line (RUNBOOK 13c). ⭐ ONE handler,
+        for a tick's lines and for the last ones read after the run ended (13d)."""
+        news = False
+        for event in events:
             kind = event.get(u"type")
+            if kind not in self.QUIET_EVENTS:
+                news = True
             if kind in (u"video", u"run") and self._fresh:
                 self._begin_fresh()
             if kind == u"video":
@@ -6234,8 +6517,20 @@ class HatoWindow(Styled):
                 self.state.live = safe(event.get(u"name")
                                        or event.get(u"stage")) \
                     or self.state.live
+        return news
+
+    def _drain(self):
+        if self._runner is None:
+            return
+        news = self._take_events(self._runner.drain())
         finished = self._runner.finished()
         if finished is not None:
+            # 🚨 RUNBOOK 13d -- THE RUN'S LAST LINES. `finished()` joins the reader
+            # threads, and what they queued after the drain above was never read:
+            # a child wrote 40 rows and the window showed 14 (1 of 3, measured); a
+            # lost `busy` read as "done" and stamped *last run* over a run that
+            # scanned nothing (A3's shape). `_poll_reads` drained again; this did not.
+            news = self._take_events(self._runner.drain()) or news
             self.state.running = False
             ran = not self._busy and not finished.could_not_run
             if not self._targeted and ran and not self._fresh:
@@ -6262,7 +6557,17 @@ class HatoWindow(Styled):
             if self.state.updates.after_run:
                 # ⭐ LAYER 11 -- *Restart now* asked during this run happens now
                 QTimer.singleShot(0, self.update_after_run)
-        self.render()
+        elif not news:
+            # ⭐ RUNBOOK 13c -- a tick that brought only progress, or nothing, moves
+            # the footer and rebuilds nothing. Mid-run the stream is ONLY progress
+            # (the rows arrive at the end): the pane in front was torn down and
+            # rebuilt at every tick -- 0.9-2.2 s each at 64 subtitled rows, a window
+            # frozen for the length of the run
+            self._render_live()
+            return
+        # ⭐ RUNBOOK 13b: a tick with news is LIVE -- Settings is not rebuilt under
+        # the person; the run's end renders in full
+        self.render(live=finished is None)
 
     def error_caught(self):
         u"""⭐ RUNBOOK 10b -- the net caught an error: the footer says so, and a
@@ -6712,8 +7017,9 @@ def main(argv=None):
     # ⭐ LAYER 11 -- is a newer hato out? Once a day (`--if-due`); a critical one
     # already staged opens its card by itself, once.
     window._maybe_open_critical()
+    # ⭐ RUNBOOK 13h: `check_updates` renders -- a second render here built every
+    # pane-in-front again before the window was ever shown
     window.check_updates()
-    window.render()
     window.show()
     return app.exec()
 

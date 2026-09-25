@@ -70,13 +70,20 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
-from xml.sax.saxutils import escape
 
 from hato import startup
 #: ⛔ The contract with `hato/watch.py`'s `main`, which starts the daily run when
 #: handed it -- imported, never restated. (`hato.watch` imports only the stdlib
 #: at load, so this costs the window nothing.)
 from hato.watch import SCHEDULED_FLAG
+
+def escape(text):
+    u"""XML's three -- `&` first, then `<` and `>`: what `xml.sax.saxutils.escape`
+    does. ⭐ RUNBOOK 13i -- ITS OWN, because that module imports `urllib.request` and
+    `http.client` for this one call: 139 ms on every window start, before it shows
+    (`settings_from_disk` reads the schedule)."""
+    return text.replace(u"&", u"&amp;").replace(u"<", u"&lt;").replace(u">", u"&gt;")
+
 
 #: ⚠ The task's name is its identity. Changing it orphans whatever an older hato
 #: registered: a daily run nothing will ever remove, and a switch reading OFF

@@ -175,10 +175,27 @@ LAYER 12 — UPDATES YOU CAN SEE. RULED 2026-09-24 (Sonic: "Go do all of your le
   ├── 12d ✅ the version in the footer, one click from Settings → Updates
   ├── 12e ✅ a rate-limited check says GitHub asked hato to wait
   ├── 12f ✅ What's new for the version you have
-  └── 12z ✅ the adversarial pass -- ADVERSARY-2026-09-24.md §Layer 12: 21 fixed ·
+  └── 12z ✅ the adversarial pass -- ADVERSARY-2026-09-24.md §Layer 12: 22 fixed ·
            0 dropped · 1 deferred; m12 62 + 10 re-aimed · THE GATE 303/303 killed
            ✅ RELEASED as hato v1.0.5 (Step 6) -- the first release an install takes
            by itself
+
+LAYER 13 — NOTHING FLASHES, NOTHING GLITCHES, WHAT IS SLOW IS MEASURED. Asked 2026-09-25
+  ├── 13a ✅ no widget ever becomes a window of its own; fast redraws never crash
+  ├── 13b ✅ a download and a run rebuild only what they change
+  ├── 13c ✅ a run's progress ticks move the footer and rebuild nothing
+  ├── 13d ✅ the run's last lines are read (a bug: rows lost at a run's end)
+  ├── 13e ✅ a closed row builds no detail panel and asks the disk nothing
+  ├── 13f ✅ a style mark repolishes only a widget already polished
+  ├── 13g ✅ the tray's countdown moves the footer and rebuilds nothing
+  ├── 13h ✅ answers only Settings shows render nothing elsewhere; one render at start
+  ├── 13i ✅ the schedule without a network library (139 ms off every start)
+  ├── 13j ✅ the blacklist's filter filters (it was connected to nothing)
+  ├── 13z ✅ the adversarial pass -> register Z: a Space that could turn the daily run
+  │         off, a page thrown to its top by every rebuild of Settings, a strip in the
+  │         wrong font, a crash on a hidden row -- and the checks that missed them
+  ├── 13k ✅ the update pill's dot pulses ten seconds, then holds still (Sonic, 2026-09-25)
+  └── 1.0.6 ⏳ AUTHORIZED by Sonic, 2026-09-25 (*"go ahead"*) -- releasing
 
 LAYER 6 — release
 ```
@@ -1879,7 +1896,7 @@ it was ruled on: D12's own crash with a prototype net — the window stays up an
 > only by looking: the footer's own gap sat inside *"hato 1.0.4 │ Created by"* (V1), and
 > the wait was cut off by its own link, so every sentence line of the card now WRAPS (V2).
 >
-> ✅ **12z RUN 2026-09-24 — `ADVERSARY-2026-09-24.md` §*Layer 12*: 21 fixed · 0 dropped · 1
+> ✅ **12z RUN 2026-09-24 — `ADVERSARY-2026-09-24.md` §*Layer 12*: 22 fixed · 0 dropped · 1
 > deferred.** One adversary over the layer (8 reproduced, 6 check-only, 3 suspected), the
 > orchestrator's review, a re-shoot LOOKED state by state, and ⭐ a **stamp rehearsal** —
 > the suites over a copy stamped 1.0.5 — which found three checks failing and two gone
@@ -1899,7 +1916,69 @@ it was ruled on: D12's own crash with a prototype net — the window stays up an
 
 ---
 
-## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.4`, 2026-09-24 (`v1.0.3` and `v1.0.2` 2026-09-23, `v1.0.1` 2026-09-19). ⛔ NO PyPI, RULED
+---
+
+## ⭐ LAYER 13 — NOTHING FLASHES, NOTHING GLITCHES, AND WHAT IS SLOW IS MEASURED. Asked 2026-09-25
+
+> **Sonic, after updating to 1.0.5 (it worked):** *"When it runs the update, it seems to run
+> the test suite or something? I get a bunch of flashing windows on my screen and it's a bit
+> startling, especially for many users. Is that accurate?"* — with a screenshot of Settings
+> during a manual run: every card collapsed, its title cut through. And: *"can you look for
+> potential performance enhancements? Anything with UI, algorithmic, or anything? Have an
+> adversary scope it, but ensure that anything you do implement you see everything that it
+> impacts and note what it doesn't"*.
+>
+> ⭐ **MEASURED BEFORE ANY FIX** (`%TEMP%\hato-13\`). A recorder polled every visible
+> top-level window every 20 ms while the PUBLISHED 1.0.4 window downloaded 1.0.5 and was
+> told *Restart now*: **~50 windows of the window's own process flashed on screen during the
+> download** (270×275, 0–0.6 s each — the no-key card, popped out as a window of its own);
+> the splash (9.6 s) and the new window as designed; nothing else. Not a test suite: the
+> window. **The cause, proven two-arm in source:** `clear()` detaches widgets with
+> `setParent(None)`, and a widget added to a VISIBLE layout is shown later — Qt queues the
+> show. Rebuilt twice in one turn (a download delivers every waiting progress line at once,
+> and each whole percent rendered), the queued show lands on a detached widget and shows it
+> as a window. One progress line per turn: 0 flashes; three: 66. 🚨 **And with rows on screen
+> the same race SEGFAULTS the window** — 3 of 3, offscreen AND on the real platform. Hidden
+> before detaching: 0 flashes and no crash, in every configuration, three runs each.
+> ⚠ His screenshot is the other half: during a run `_drain` renders every tick and the pane
+> in front is rebuilt — Settings, torn down and rebuilt eight times a second, caught half
+> laid out.
+
+| Step | surfaces | What | Its proof |
+| --- | --- | --- | --- |
+| **13a** | `ui` | 🚨 **No widget ever becomes a window of its own, and fast redraws never crash.** `clear()` hides each widget before detaching it, so a queued show finds it explicitly hidden | a widget cleared before its queued show never shows · the no-key window, three progress lines per turn: 0 windows · rows, two renders per turn: no crash |
+| **13b** | `ui` | **A download and a run rebuild only what they change.** A download's progress repaints the pill/card and the Settings → Updates line IN PLACE and rebuilds no pane (it rebuilt the front pane at every whole percent — 13a's trigger); a run's live ticks do not rebuild Settings (the glitch in the screenshot): it is rebuilt at the run's start and end and on every action | 100 progress lines rebuild no pane and the Updates line reads each percent · a run's ticks leave Settings' widgets the same objects; its end rebuilds them |
+| **13c** | `ui` | **A run's progress ticks rebuild nothing.** Mid-run the stream is ONLY progress lines (the rows arrive at the end), and every 120 ms tick rebuilt the pane in front — 0.9–2.2 s each at 64 subtitled rows, a window frozen for the run. A tick with no news paints the footer's live line alone (`_render_live`); an unknown kind of line fails SAFE, to a full render. ⚠ Touches `_drain` only; ⛔ not the run's start or end, `_poll_reads`, the Runner | progress ticks keep the Subtitles and Needs-you widgets and move the footer; a row rebuilds |
+| **13d** | `ui` | 🚨 **The run's last lines are read.** `finished()` joins the reader threads, and what they queued after the tick's drain was lost — 40 rows written, 14 shown (1 of 3); a lost `busy` read as "done". Drained once more, through the tick's own handler | a run whose last row and `busy` arrive after `finished()`: both taken, no *last run* stamped |
+| **13e** | `ui` | **A closed row builds no detail panel** — built for every row and hidden, it was ~21 widgets, a drop-shadow button and a `stat` of the video per row, every render. ⚠ The two walks that inspect everything built now open every row first | no panel and no `stat` while closed; opening one builds one |
+| **13f** | `ui` | **A style mark repolishes only a polished widget** — 516 unpolish/polish pairs per build at 64 rows, each undone at show. A live widget: exactly as before. 🚨 **One casualty, found by 13z (Z13-2):** the Needs-you strip measured its lead unpolished; code that MEASURES a fresh widget polishes it first | the mark's unit check · the strip measured with REAL fonts at 12 pt, in a child process (⚠ the 64 standard shots proved the default font only: there the two pads round alike) |
+| **13g** | `ui` | **The tray's countdown moves the footer only** — it rebuilt the pane in front at every 3-second look; its start and end still render in full | a countdown's ticks keep the rows and move the footer |
+| **13h** | `ui` | **Answers only Settings shows render nothing elsewhere** (memory, blacklist); `main()` renders once, not twice, before showing | the answers on Subtitles keep its rows; on Settings they render · `main()` RUN to its show in a child: one render, its folders on screen, no network module (13z, Z13-7 — reading its source let two regressions through) |
+| **13i** | `delivery` | **The schedule without a network library** — `xml.sax.saxutils` imported `urllib.request` + `http.client` for one `escape`: 139 ms on every window start | a fresh interpreter importing `hato.schedule` loads neither · the escape equals XML's |
+| **13j** | `ui` | **The blacklist's filter filters** — built and connected to nothing since the card was made (found by the scope); the wiring walk now requires every text field to be connected too | typing filters, a rebuild keeps the words, clearing shows all · the walk finds a dead field |
+| **13z** | `ui` · `harness` | ✅ **The adversarial pass over Layer 13 → register Z (`ADVERSARY-2026-09-25.md`).** 9 findings, and 2 more of the same class found measuring them. 🚨 **Typing a space in Settings could turn the daily run OFF** — a rebuild hid the field and Qt handed the keyboard to the title bar's daily-run switch (Z13-1); the window even OPENED with the keyboard there (Z13-11). `clear()` parks the keyboard; a rebuild of Settings keeps the words, cursor and place and does not finish the person's edit; the window holds the keyboard at start. 🚨 **Every rebuild of Settings threw the page to its top** (Z13-10: the rebuilt page was laid out empty before its queued show) — shown at once now. **The minute repaints Settings in place** (P-F for Settings); **a look mid-run rebuilds no Settings** (Z13-3); **the strip is polished before it is measured** (Z13-2); **no fade on a row nobody can see** (Z13-9, a crash that predates Layer 13); **the filter says what it leaves** (Z13-4). And four checks that could not see what they named, made to (Z13-5…8) | 55 mutants over Layer 13, 55 killed · the checks named in the register's Z rows |
+| **13k** | `ui` | ⭐ **The update pill's dot pulses TEN SECONDS, then holds still** — ruled by Sonic, 2026-09-25: *"do the ten seconds"*. It pulsed for as long as an update waited: ~60 repaints a second (8 ms of CPU every second) to say what the pill's words already said. Ten seconds from each NEW thing the pill says; a render that says nothing new starts nothing; hidden, it forgets. ⚠ Touches `UpdatePill` only; ⛔ not the footer's dot, which reports a run — and a run ends | the dot pulses, stops at ten seconds at rest, stays still through a render, pulses again for new words and for the pill offered again · M13-56…59 |
+| **1.0.6** | `delivery` | ⏳ **AUTHORIZED** — Sonic, 2026-09-25: *"yea, and do the ten seconds. go ahead"*. Step 6's sequence, the stamp rehearsal first | Step 6 |
+
+---
+
+## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.5`, 2026-09-24 (`v1.0.4` the same day, `v1.0.3` and `v1.0.2` 2026-09-23, `v1.0.1` 2026-09-19). ⛔ NO PyPI, RULED
+
+> ⭐ **`v1.0.5` IS LIVE — THE FIRST RELEASE AN INSTALL TOOK BY ITSELF** — LAYER 12 and its
+> adversarial pass. ⭐ **One step went IN FRONT of the sequence: the STAMP REHEARSAL** — the
+> suites over a COPY stamped 1.0.5 — which found five checks tied to the real version number
+> (three failing, two vacuous) before the stamp did. Then: stamp `1.0.5` (`sha256:d957e21f…`, 83
+> files — the rehearsal's own hash) → the full runner **33 suites / 2,467 checks** over the
+> stamped tree (its first run tripped by Sonic's own hato writing his store; re-run GREEN) →
+> freeze → smoke **45/45** (the first run's one red was its own reader — register T2; the
+> control and the final run 45/45) → `update-manifest` (signed; read back 3/3) → sync →
+> `4d87a21` → `tests` **12/12 jobs on the FIRST push** → `_release_1_0_0.py --go`: tag `v1.0.5`,
+> THREE assets → `verify-release` **10 held · 0 failed · 0 skipped** — ⭐ `an_install_takes_it`
+> RAN: a copy at 1.0.4 heard *ready 1.0.5* → `release` **2/2** on the tag. ⭐ **Then the first
+> REAL auto-update, end to end** (`e2e_104_to_105.py`): the PUBLISHED 1.0.4 zip asked GitHub,
+> downloaded and proved 1.0.5 (23 s), handed off to 1.0.5's swapper — *success*, *Updated to
+> 1.0.5*, *hato 1.0.5* in the footer, 1.0.4 kept (9/9). Before it all, the gate over Layers 11 +
+> 12: 303 mutants, 303 killed.
 
 > ⭐ **`v1.0.4` IS LIVE — THE FIRST RELEASE THAT UPDATES ITSELF** — LAYER 11, D12 and 10b.
 > Stamp `1.0.4` (`sha256:e6a857f5…`, 83 files) → the full runner **33 suites / 2,424 checks**

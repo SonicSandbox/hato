@@ -1311,3 +1311,64 @@ def test_an_automatic_check_that_could_not_tell_erases_nothing_known(qapp):
     window._update_checked(None, [dict(NOW104)])
     assert not window.update_pill.isVisibleTo(window), \
         u"the control: an answer that DOES tell -- 1.0.5 withdrawn -- is taken"
+
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 13 -- a download rebuilds no pane (RUNBOOK 13b)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("tab", [gui_app.TAB_SET, gui_app.TAB_SUBS])
+def test_a_download_rebuilds_no_pane_and_says_its_percent_in_place(qapp, tab):
+    u"""🚨 13b: every whole percent rebuilt the pane in front -- a hundred rebuilds a
+    download, and with several lines waiting in one turn the trigger of 13a's flashing
+    windows and crash. The pill/card and Settings -> Updates' line are repainted in
+    place; nothing else on screen reads a download's progress."""
+    window = frame(decision=ready())
+    window.state.updates.downloading = (0, 0)        # as `stage_update` leaves it
+    settings_card(window)
+    window.show_tab(tab)
+    standing = (window._ucard if tab == gui_app.TAB_SET
+                else window.findChildren(gui_app.SubRow)[0])
+    total = 77000000                                  # every whole percent exact
+    for pct in range(0, 101):
+        window._update_progress({u"type": u"progress", u"done": total * pct // 100,
+                                 u"total": total})
+        if pct == 42 and tab == gui_app.TAB_SET:
+            assert u"downloading — 42%" in window._urest.text(), window._urest.text()
+    now = (window._ucard if tab == gui_app.TAB_SET
+           else window.findChildren(gui_app.SubRow)[0])
+    assert now is standing, u"a progress line rebuilt the pane"
+    assert window.state.updates.downloading == (total, total), u"the control: it was read"
+
+
+def test_the_pills_dot_pulses_ten_seconds_for_each_new_thing_it_says_then_holds_still(
+        qapp):
+    u"""⭐ SONIC, 2026-09-25: *"do the ten seconds"*. The pill's dot pulsed for as long as
+    an update waited -- ~60 repaints a second (8 ms of CPU every second), to say what
+    the pill's own words already said. It pulses for ten seconds from each NEW thing
+    the pill says, then holds still; a render that says nothing new starts nothing."""
+    from PyQt6.QtCore import QVariantAnimation
+    pill = gui_app.UpdatePill()
+
+    def pulsing():
+        return pill.dot._anim.state() == QVariantAnimation.State.Running
+    ready = (u"hato 1.0.6 is ready", u"Restart", updating.TO_CARD)
+    pill.paint_answer(ready)
+    assert pulsing(), u"the pill appeared with a still dot"
+    assert pill._settle.isActive() and pill._settle.interval() == 10000, (
+        u"no ten seconds were set", pill._settle.isActive(), pill._settle.interval())
+    pill._settle.timeout.emit()                          # ... ten seconds pass
+    assert not pulsing(), u"the dot pulsed on past its ten seconds"
+    assert pill.dot._phase == 0.0, u"it held still mid-pulse, not at rest"
+    pill.paint_answer(ready)                             # a render, nothing new said
+    assert not pulsing(), u"a render that said nothing new started it again"
+    closing = (u"hato 1.0.6 installs when you close hato", u"Restart now",
+               updating.TO_CARD)
+    pill.paint_answer(closing)
+    assert pulsing(), u"something new was said beside a still dot"
+    pill.paint_answer(None)
+    assert not pulsing() and pill.isHidden() and not pill._settle.isActive()
+    # ⚠ the SAME words as before it hid: a pill that remembered them across a hide
+    # came back still and passed a re-offer of different words (M13-59 survived)
+    pill.paint_answer(closing)                           # ... and offered again
+    assert pulsing(), u"offered again, the pill came back still"
+
