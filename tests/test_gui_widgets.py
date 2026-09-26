@@ -6664,21 +6664,27 @@ def test_a_long_reason_for_downloading_wraps_inside_the_window(qapp):
             u"format of their own, so taking them out would mean CONVERTING them; "
             u"tsubasa takes subtitles out of MKV only")
     window = lay_out(make(rows=[dict(added(6), not_taken=long)], running=False))
-    window.show_tab(gui_app.TAB_SUBS)
-    click(_sub_row(window, 6))
-    lay_out(window)
-    pane = window.panes[gui_app.TAB_SUBS]
-    assert pane.horizontalScrollBar().maximum() == 0, (
-        u"the pane scrolls sideways: a detail line runs past the window's edge")
-    said, = [w for w in pane.findChildren(QLabel)
-             if w.text().startswith(u"The Japanese subtitles inside")]
-    right = said.mapTo(pane.viewport(), said.rect().topRight()).x()
-    assert right <= pane.viewport().width(), (right, pane.viewport().width())
-    # ⚠ Against a one-line sibling in the same style -- the *written* line's file --
-    # not the font's line spacing: a label's height carries its style's padding.
-    one, = [w for w in pane.findChildren(QLabel) if w.text() == u"ep06.ja.ass"]
-    assert said.height() > 1.5 * one.height(), (said.height(), one.height())
-    window.hide()
+    # ⚠ HIDDEN IN `finally` (1.0.8's first CI run): failing before its hide(), this
+    # check left a SHOWN window, and macOS aborted the whole suite at the next GC.
+    try:
+        window.show_tab(gui_app.TAB_SUBS)
+        click(_sub_row(window, 6))
+        lay_out(window)
+        pane = window.panes[gui_app.TAB_SUBS]
+        assert pane.horizontalScrollBar().maximum() == 0, (
+            u"the pane scrolls sideways: a detail line runs past the window's edge")
+        said, = [w for w in pane.findChildren(QLabel)
+                 if w.text().startswith(u"The Japanese subtitles inside")]
+        right = said.mapTo(pane.viewport(), said.rect().topRight()).x()
+        assert right <= pane.viewport().width(), (right, pane.viewport().width())
+        # ⚠ Against a one-line sibling in the same style -- the *written* line's file --
+        # not the font's line spacing: a label's height carries its style's padding.
+        # ⚠ By its END: the fixture's path is a WINDOWS path, and on POSIX a backslash
+        # is a filename character -- there the label holds the whole path.
+        one, = [w for w in pane.findChildren(QLabel) if w.text().endswith(u"ep06.ja.ass")]
+        assert said.height() > 1.5 * one.height(), (said.height(), one.height())
+    finally:
+        window.hide()
 
 # ===========================================================================
 # ⭐ 14z -- THE LAYER 14 PASS (ADVERSARY 2026-09-25 §Layer 14, 14z): the window
@@ -6871,12 +6877,14 @@ def test_a_problem_line_wraps_and_keeps_the_words_that_say_why(qapp):
             u"WEB-DL AVC AAC][MultiSub][ABCD1234].ja.ass could not be written: [WinError 5] "
             u"Access is denied")
     window = lay_out(make(rows=[dict(broke(3), reason=long)], running=False))
-    window.show_tab(gui_app.TAB_PICK)
-    lay_out(window)
-    pane = window.panes[gui_app.TAB_PICK]
-    said, = [w for w in pane.findChildren(QLabel) if u"Access is denied" in w.text()]
-    assert said.wordWrap(), u"a problem line that cuts engine prose at the window's edge"
-    assert pane.horizontalScrollBar().maximum() == 0, u"the pane scrolls sideways"
-    right = said.mapTo(pane.viewport(), said.rect().topRight()).x()
-    assert right <= pane.viewport().width(), (right, pane.viewport().width())
-    window.hide()
+    try:                                   # ⚠ a shown window left behind aborts macOS
+        window.show_tab(gui_app.TAB_PICK)
+        lay_out(window)
+        pane = window.panes[gui_app.TAB_PICK]
+        said, = [w for w in pane.findChildren(QLabel) if u"Access is denied" in w.text()]
+        assert said.wordWrap(), u"a problem line that cuts engine prose at the window's edge"
+        assert pane.horizontalScrollBar().maximum() == 0, u"the pane scrolls sideways"
+        right = said.mapTo(pane.viewport(), said.rect().topRight()).x()
+        assert right <= pane.viewport().width(), (right, pane.viewport().width())
+    finally:
+        window.hide()
