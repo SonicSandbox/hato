@@ -134,5 +134,50 @@ def only_as(reason):
     return tuple(re.findall(r"\.([a-z0-9]+)", found.group(1)))
 
 
+# ---------------------------------------------------------------------------
+# ⭐ RUNBOOK 14c -- a video that already has Japanese subtitles INSIDE it
+# ---------------------------------------------------------------------------
+# Ruled by Sonic 2026-09-25 (*"I take all your leans. Go"*): ONE choice of three in
+# Settings → Subtitle format -- leave them there, download from jimaku anyway, or save
+# them beside the video, as a file. Two config keys spell it: `skip_embedded` (read by
+# every hato since 1.0.0) and `extract_embedded` (1.0.8). ⭐ Here because the run, the
+# window and `hato problems` all have to read the pair ONE way.
+
+#: The choice, as `embedded_choice` answers it.
+EMBEDDED_LEAVE = u"leave"
+EMBEDDED_FETCH = u"fetch"
+EMBEDDED_SAVE = u"save"
+
+
+def embedded_choice(skip_embedded, extract_embedded):
+    u"""The two keys, as the one choice they make. -> leave · fetch · save
+
+    ⭐ `extract_embedded` WINS. The window writes both together; a file saying both
+    -- by hand -- asks for the more particular thing, and the run, the window and
+    `hato problems` read it alike because all three ask this.
+    """
+    if extract_embedded:
+        return EMBEDDED_SAVE
+    return EMBEDDED_LEAVE if skip_embedded else EMBEDDED_FETCH
+
+
+def of_codec(codec):
+    u"""The family a subtitle TRACK comes out as, by its codec. -> `ass`, `srt` or None
+
+    ⚠ ONLY to put the preferred kind first when a video holds several Japanese
+    tracks (14c) -- and for a PLAN's guess from the header (14z, C5). ⛔ Never what
+    a RUN takes out: that is tsubasa's to say, and it refuses by name whatever it
+    does not take.
+    """
+    word = (codec or u"").upper()
+    if u"ASS" in word or u"SSA" in word:
+        return u"ass"
+    if word in (u"S_TEXT/UTF8", u"S_TEXT/ASCII"):
+        return u"srt"
+    return None
+
+
 __all__ = ["PREFERENCES", "DEFAULT_PREFERENCE", "FAMILIES", "order", "accepts",
-           "accepts_any", "fallback_words", "kinds_words", "waiting_reason", "only_as"]
+           "accepts_any", "fallback_words", "kinds_words", "waiting_reason", "only_as",
+           "EMBEDDED_LEAVE", "EMBEDDED_FETCH", "EMBEDDED_SAVE", "embedded_choice",
+           "of_codec"]

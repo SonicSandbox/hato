@@ -104,6 +104,9 @@ dependencies = [
     #          language goes) as Japanese. On 0.1.7 a user's `.jp.srt` read as
     #          no language, and hato fetched a second subtitle beside a Japanese
     #          one -- the report RUNBOOK 9c answers. 271 of 17,790 real names.
+    #   0.1.9  ⭐ the first release that TAKES a subtitle track out of an MKV and
+    #          writes it (`extract_subtitle`) -- *"Save them beside the video, as
+    #          a file"* (RUNBOOK 14c) has nothing under it before it.
     #
     # ⛔ The cost, stated so it is not rediscovered: a floor at the latest release
     # drifts with every tsubasa release that hato comes to rely on.
@@ -113,7 +116,7 @@ dependencies = [
     # The same JSON reports provides_extra parsing, trash, gui, vad, all, and
     # requires_dist anitopy>=2.1 and guessit>=3.4 for parsing. Their notices
     # ship in THIRD_PARTY_LICENSES.md, which both licences require.
-    "tsubasa-sync[parsing]>=0.1.8",
+    "tsubasa-sync[parsing]>=0.1.9",
 
     # Built and tested against 2.28.2. The floor is REASONED rather than
     # measured, and says so: the four names hato uses -- Session,

@@ -119,11 +119,22 @@ def open_problems(cfg, db, cache, now=None):
             continue                    # ⭐ resolved on disk -- and the DB is not told
         if not _same_video(video, problem.video_hash):
             continue                    # gone, unreadable, or a different rip
-        if cfg.skip_embedded and _left_inside(video, lang):
+        # ⚠ LEAVE only: under *Save them beside the video* (14c) the next run takes
+        # them out -- or downloads, and the row is a real one until it does.
+        if formats.embedded_choice(cfg.skip_embedded, cfg.extract_embedded) \
+                == formats.EMBEDDED_LEAVE and _left_inside(video, lang):
             continue                    # ⭐ Z14-4 -- the next run leaves it alone
         kept.append(problem)
     parsed = _parsed(p.video_path for p in kept)
-    rows = [_row(p, parsed.get(paths.normalised(p.video_path)), lang, cache)
+    # ⭐ 14z (C4) -- UNDER *Save them beside the video*, WHY IT WAS NOT TAKEN OUT. The
+    # run's row said so and the DB never held it, so once the run was over every
+    # remembered row -- the pick, both strips -- said nothing. From the header
+    # (`pipeline.why_not_taken`): these rows are asked for often, a walk costs seconds.
+    saving = formats.embedded_choice(cfg.skip_embedded, cfg.extract_embedded) \
+        == formats.EMBEDDED_SAVE
+    rows = [_row(p, parsed.get(paths.normalised(p.video_path)), lang, cache,
+                 _why_not_taken(p.video_path, lang, cfg.prefer_format) if saving
+                 else None)
             for p in kept]
     rows.sort(key=_order)
     return rows
@@ -195,6 +206,16 @@ def _left_inside(video, lang):
         return False
 
 
+def _why_not_taken(video, lang, prefer):
+    u"""⭐ 14z (C4) -- `pipeline.why_not_taken` for one remembered video. -> words or
+    None. ⚠ A video that cannot be read says nothing here: its row says why."""
+    try:
+        return pipeline.why_not_taken(video, present.read_tracks(video, lang), lang,
+                                      prefer) or None
+    except Exception:                   # noqa: BLE001 -- the row stays as it was
+        return None
+
+
 def _parsed(videos):
     u"""{normalised path: tsubasa's item}, for every folder these videos sit in.
 
@@ -241,7 +262,7 @@ def _outcome(latest, candidates):
     return latest.outcome
 
 
-def _row(problem, item, lang, cache):
+def _row(problem, item, lang, cache, not_taken=None):
     u"""One problem -> the NDJSON object a run would have printed for it."""
     latest = problem.latest
     video = problem.video_path
@@ -263,6 +284,7 @@ def _row(problem, item, lang, cache):
         jimaku_entry=latest.jimaku_entry, jimaku_filename=latest.jimaku_filename,
         candidates_offered=None, retry_after=latest.retry_after, tried_before=earlier,
         newest_offered=latest.newest_offered)
+    result.not_taken = not_taken                            # ⭐ 14z (C4)
     row = report.as_dict(result)
     row[u"source"] = SOURCE
     return row

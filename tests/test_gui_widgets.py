@@ -50,6 +50,7 @@ from PyQt6.QtWidgets import (QApplication, QLabel, QLineEdit, QPushButton,
 from hato.gui import app as gui_app
 from hato.gui import branding, theme
 from hato.gui import run as gui_run
+from hato import formats
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GUI_DIR = os.path.join(os.path.dirname(HERE), "hato", "gui")
@@ -6332,7 +6333,7 @@ def test_a_space_on_a_settings_control_keeps_the_keyboard_there_and_tab_moves_on
         monkeypatch.setattr(gui_app.HatoWindow, name,
                             lambda self, *a, _n=name, **k: called.append(_n))
     for name in (u"format.embedded:fetch", u"format.prefer:srt", u"format.fallback",
-                 u"folders.recurse"):
+                 u"folders.recurse", u"format.embedded:save"):
         window = make(running=False, auto=True)
         window.show()
         window.activateWindow()
@@ -6383,7 +6384,7 @@ def test_every_settings_control_the_keyboard_reaches_keeps_a_name_of_its_own(qap
     for what, fields in [(u"both notes, surasura on", None)] + _update_shapes():
         window = make(running=False, old_tray=True, prefer_format=u"srt",
                       surasura_dir=u"D:\\surasura", tray_reads_updates=False,
-                      update_key_in_file=True)
+                      update_key_in_file=True, extract_embedded=True)
         if fields is not None:
             shape = updating.Updates(current=u"1.0.4", frozen=fields.pop(u"frozen"))
             shape.now = 1000000.0
@@ -6408,10 +6409,22 @@ def test_every_settings_control_the_keyboard_reaches_keeps_a_name_of_its_own(qap
         twice = sorted(set(n for n in names if names.count(n) > 1))
         assert not twice, u"%s: two controls share a name: %s" % (what, twice)
         reached.update(names)
+    # ⚠ 14z (B-1) -- only the CHOSEN radio of a choice is a Tab stop (every shape here
+    # saves), so *leave* and *fetch* are reached by the arrow keys -- named below.
     wanted = {u"when.daily", u"when.restart_tray", u"format.restart_tray",
-              u"format.embedded:leave", u"format.embedded:fetch", u"surasura.choose",
-              u"updates.auto", u"updates.restart_tray", u"blacklist.sweep"}
+              u"surasura.choose",
+              u"updates.auto", u"updates.restart_tray", u"blacklist.sweep",
+              u"format.embedded:save", u"format.embedded.restart_tray"}   # 14c
     assert wanted <= reached, u"the shapes never built %s" % sorted(wanted - reached)
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    radios = window.panes[gui_app.TAB_SET].findChildren(gui_app.Radio)
+    assert len(radios) == 5 and all(r.property(gui_app.KEEP) for r in radios), (
+        [r.property(gui_app.KEEP) for r in radios])
+    # ⚠ And no two alike (the 14z gate: M14-14 survived once unchosen radios left the
+    # Tab walk above -- Z14-3's rule is every control's, a Tab stop or not)
+    named = [r.property(gui_app.KEEP) for r in radios]
+    assert len(set(named)) == len(named), named
 
 
 def test_the_choices_tip_says_the_download_is_timed_against_the_subtitles_inside():
@@ -6422,3 +6435,448 @@ def test_the_choices_tip_says_the_download_is_timed_against_the_subtitles_inside
     tip = u" ".join(gui_app.EMBEDDED_TIP.split())
     assert u"timed against the subtitles inside it" in tip, tip
     assert u"the one inside" not in tip, tip
+
+# ===========================================================================
+# ⭐ LAYER 14c -- *"Save them beside the video, as a file"* (RUNBOOK 14c)
+# ===========================================================================
+
+SAVE_WORDS = u"Save them beside the video, as a file"
+
+
+def taken(episode=5, track=3, name=u"Full Subs"):
+    u"""A row whose subtitle was TAKEN OUT of the video, in the wire's shape
+    (`report.as_dict`): CONFIDENT, written, `taken_from` -- and no jimaku file,
+    nothing timed, nothing downloaded, no original kept."""
+    row = added(episode)
+    row.update({u"jimaku_entry": None, u"jimaku_filename": None, u"candidates_tried": 0,
+                u"candidates_offered": 0, u"tsubasa": None, u"kept_path": None,
+                u"api_calls": 0, u"bytes_downloaded": 0, u"tried_before": [],
+                u"newest_offered": None, u"not_taken": None,
+                u"taken_from": {u"track": track, u"codec": u"S_TEXT/ASS", u"format": u"ass",
+                                u"name": name, u"events": 412}})
+    return row
+
+
+def _sub_row(window, episode):
+    for row in window.panes[gui_app.TAB_SUBS].findChildren(gui_app.SubRow):
+        if row.row.get(u"episode") == episode:
+            return row
+    raise AssertionError(u"no Subtitles row for episode %s" % episode)
+
+
+def test_the_third_choice_writes_both_keys_in_one_write(qapp):
+    u"""⭐ RUNBOOK 14c (ruled 2026-09-25): the third choice, *"Save them beside the video,
+    as a file"*. ⭐ ONE `hato config` with BOTH keys -- it applies every `--set` as one
+    change; two children would leave the file half-applied between them. And back."""
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    _embedded_choice(window, SAVE_WORDS).click()
+    assert window.state.embedded_choice() == formats.EMBEDDED_SAVE
+    # ⭐ 14z (C-4) -- SAVE WRITES `skip_embedded = true`: the older key says LEAVE, so a
+    # file whose newer key is taken away -- by hand, by Go back -- means leave them there,
+    # never download anyway (metered, and not what was chosen).
+    assert (window.state.skip_embedded, window.state.extract_embedded) == (True, True)
+    assert len(window.spawned) == 1, window.spawned
+    said = u" ".join(window.spawned[-1])
+    assert u"--set skip_embedded=true --set extract_embedded=true" in said, said
+    assert _embedded_choice(window, SAVE_WORDS).isChecked(), u"rebuilt, the card forgot it"
+    _embedded_choice(window, u"Leave them there").click()
+    said = u" ".join(window.spawned[-1])
+    assert u"--set skip_embedded=true --set extract_embedded=false" in said, said
+    assert window.state.embedded_choice() == formats.EMBEDDED_LEAVE
+    _embedded_choice(window, u"Download from jimaku anyway").click()
+    said = u" ".join(window.spawned[-1])
+    assert u"--set skip_embedded=false --set extract_embedded=false" in said, said
+
+
+def test_the_three_choices_are_one(qapp):
+    u"""Z14-1's rule for three: exactly one chosen, whatever is clicked -- and it is the
+    one CLICKED, in the card and in force. ⚠ Not compared with the window's own reader
+    of the keys: a reader broken to ignore `extract_embedded` agreed with the card it
+    had drawn wrong, and the gate's M14-50 survived that version of this check."""
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    words = (u"Leave them there", u"Download from jimaku anyway", SAVE_WORDS)
+    choices = (formats.EMBEDDED_LEAVE, formats.EMBEDDED_FETCH, formats.EMBEDDED_SAVE)
+    for clicked in (2, 2, 0, 1, 2, 1):
+        _embedded_choice(window, words[clicked]).click()
+        shown = [_embedded_choice(window, w).isChecked() for w in words]
+        assert shown.count(True) == 1, (words[clicked], shown)
+        assert shown.index(True) == clicked, (words[clicked], shown)
+        assert window.state.embedded_choice() == choices[clicked], (
+            words[clicked], window.state.embedded_choice())
+
+
+def test_saving_is_read_back_when_the_window_opens(qapp, tmp_path, monkeypatch):
+    u"""⛔ A setting the window writes and never reads back looks unsaved. And ⭐ a file
+    saying BOTH keys saves (`formats.embedded_choice`), as the run reads it."""
+    config = tmp_path / u"config.toml"
+    monkeypatch.setenv(u"HATO_CONFIG", str(config))
+    for text in (u"extract_embedded = true\n",
+                 u"skip_embedded = true\nextract_embedded = true\n"):
+        config.write_text(text, encoding="utf-8")
+        state = gui_app.settings_from_disk()
+        assert state.embedded_choice() == formats.EMBEDDED_SAVE, text
+        assert state.extract_key_in_file is True, text
+        # ⭐ 14z (B-10) -- THE RADIO DRAWN, not the window's reader of the keys: radios
+        # made to read `skip_embedded` first opened on *Leave* while the run saved.
+        window = make(running=False, skip_embedded=state.skip_embedded,
+                      extract_embedded=state.extract_embedded)
+        window.show_tab(gui_app.TAB_SET)
+        assert _embedded_choice(window, SAVE_WORDS).isChecked(), (
+            text, u"the card drew another choice than the run makes")
+    config.write_text(u"skip_embedded = false\n", encoding="utf-8")
+    state = gui_app.settings_from_disk()
+    assert state.embedded_choice() == formats.EMBEDDED_FETCH
+    assert state.extract_key_in_file is False
+    # ⭐ 14z (B-11) -- IN THE FILE, not away from its default: a hand-written `false` is
+    # refused by an older hato all the same -- read from the FILE at open, never set.
+    config.write_text(u"extract_embedded = false\n", encoding="utf-8")
+    assert gui_app.settings_from_disk().extract_key_in_file is True
+
+
+def test_an_older_tray_is_told_it_cannot_read_saving(qapp, tmp_path, monkeypatch):
+    u"""🚨 `config.NEWER_THAN_1_0_7`: 1.0.7 and before REFUSE `extract_embedded`, so
+    once *Save them beside the video* is chosen every run an older tray starts stops
+    at config.toml. Two arms through the window's own poll, from a REAL pid file:
+    1.0.7's exact line -> said, with the fix; this build's -> nothing."""
+    monkeypatch.setenv(u"HATO_CACHE", str(tmp_path))
+    for line, said in ((u"retries,formats,updates", True),
+                       (u"retries,formats,updates,extract", False)):
+        _tray_says(line)
+        window = make(running=False, extract_embedded=True)
+        # ⭐ 14z (B-13) -- Settings on screen FIRST and no `show_tab` after the poll: the
+        # poll's OWN repaint is what must put the note there -- a check that re-rendered
+        # could not see a poll that forgot to.
+        window.show_tab(gui_app.TAB_SET)
+        timer = window.follow_other_runs(every_ms=3600000)
+        timer.stop()
+        timer.timeout.emit()
+        assert window.state.tray_reads_extract is (not said), line
+        text = _flat(window.panes[gui_app.TAB_SET])
+        assert (u"cannot read this setting" in text) is said, (line, text)
+        if said:
+            _kept(window, u"format.embedded.restart_tray")
+
+
+def test_the_older_trays_note_on_saving_sits_under_the_choice(qapp):
+    u"""Z14-2's rule: a note sits under the rows it speaks for -- this one under the
+    three choices, never among the format pair's. ⚠ By the card's LAYOUT."""
+    window = make(running=False, tray_reads_extract=False, extract_embedded=True)
+    window.show_tab(gui_app.TAB_SET)
+    qapp.processEvents()
+    body = _format_body(window)
+    save = _row_of(body, SAVE_WORDS)
+    note = _row_of(body, u"cannot read this setting")
+    assert save < note, (u"the note is row %d, the choice it speaks for ends at %d"
+                         % (note, save))
+
+
+def test_the_key_in_the_file_is_said_even_when_saving_is_not_chosen(qapp):
+    u"""An older hato refuses the KEY, whatever its value -- the rule 9a #1 paid for.
+    Two arms: in the file -> said; not -> nothing, the choice left alone."""
+    for in_file in (True, False):
+        window = make(running=False, tray_reads_extract=False,
+                      extract_key_in_file=in_file)
+        window.show_tab(gui_app.TAB_SET)
+        text = _flat(window.panes[gui_app.TAB_SET])
+        assert (u"cannot read this setting" in text) is in_file, (in_file, text)
+
+
+def test_restarting_the_tray_takes_the_note_on_saving_away_at_once(qapp, monkeypatch):
+    u"""After *Restart the tray* the tray is this build's: the note goes now."""
+    window = make(running=False, tray_reads_extract=False, extract_embedded=True)
+    window.show_tab(gui_app.TAB_SET)
+    assert u"cannot read this setting" in _flat(window.panes[gui_app.TAB_SET]), u"the control"
+    monkeypatch.setattr(window, u"stop_watcher", lambda: None)
+    monkeypatch.setattr(window, u"start_watcher", lambda: None)
+    _kept(window, u"format.embedded.restart_tray").click()
+    assert window.state.tray_reads_extract is True
+    assert u"cannot read this setting" not in _flat(window.panes[gui_app.TAB_SET])
+
+
+def test_a_row_taken_from_the_video_says_so_with_no_percentage_and_the_track_on_hover(qapp):
+    u"""⭐ Ruled: *"its row says 'taken from the video' where the jimaku file's name
+    goes, no match %, the track on hover."* ⛔ Not even the dash a row never timed
+    shows -- there is no percentage to be missing."""
+    window = make(rows=[taken(5), added(6)], running=False)
+    window.show_tab(gui_app.TAB_SUBS)
+    row = _sub_row(window, 5)
+    assert row.nm.text() == u"taken from the video", row.nm.text()
+    assert row.pc.text() == u"", row.pc.text()
+    tip = u" ".join(row.nm.toolTip().split())
+    for words in (u"Track 3 inside the video", u"Full Subs", u".ass", u"412 lines",
+                  u"nothing was downloaded"):
+        assert words in tip, (words, tip)
+    control = _sub_row(window, 6)
+    assert control.nm.text().startswith(u"[NanakoRaws]") and control.pc.text() == u"82%", (
+        u"the control: a download's row keeps its file and percentage")
+
+
+def test_the_detail_panel_says_which_track_it_was_taken_from(qapp):
+    u"""The row's depth, behind a click: which track, as what -- and ⛔ no *original
+    kept* line: nothing was downloaded to keep."""
+    shown = u" ".join(gui_app.texts(gui_app.detail_panel(taken(5))))
+    assert u"taken from" in shown and u"track 3 of the video" in shown, shown
+    assert u".ass, 412 lines" in shown, shown
+    assert u"original kept" not in shown, shown
+
+
+def test_a_download_the_choice_did_not_want_says_why_on_its_row(qapp):
+    u"""⭐ Ruled: *"a video hato cannot take subtitles out of is downloaded for instead,
+    and its row says why"* -- on hover and behind the click in Subtitles, and on a
+    pick's line in Needs you."""
+    why = u"frieren S2 - 06.mp4 is an MP4 file -- tsubasa takes subtitles out of MKV only"
+    fetched = dict(added(6), not_taken=why)
+    picking = dict(needs_you(54), not_taken=why)
+    window = make(rows=[fetched, picking], running=False)
+    window.show_tab(gui_app.TAB_SUBS)
+    tip = u" ".join(_sub_row(window, 6).nm.toolTip().split())
+    assert u"could not be taken out" in tip and u"MP4" in tip, tip
+    shown = u" ".join(gui_app.texts(gui_app.detail_panel(fetched)))
+    assert u"downloaded" in shown and u"could not be taken out" in shown, shown
+    window.show_tab(gui_app.TAB_PICK)
+    heads = window.panes[gui_app.TAB_PICK].findChildren(gui_app.PickHead)
+    tips = [u" ".join(h.toolTip().split()) for h in heads]
+    assert any(u"could not be taken out" in t for t in tips), tips
+
+
+def test_the_choices_tip_says_what_saving_does():
+    u"""The ⓘ's third paragraph: the video's own subtitles, nothing downloaded -- and
+    the ruled fallback, said where the choice is made."""
+    tip = u" ".join(gui_app.EMBEDDED_TIP.split())
+    for words in (SAVE_WORDS, u"nothing is downloaded", u"its row says why"):
+        assert words in tip, (words, tip)
+    # ⚠ 14z (A-9) -- the frozen build cannot read an MP4's tracks at all (no ffmpeg):
+    # *"anything but an MKV is downloaded for"* was a promise it could not keep
+    assert u"anything but an MKV" not in tip, tip
+
+
+def test_a_long_reason_for_downloading_wraps_inside_the_window(qapp):
+    u"""🚨 LOOKED, 2026-09-25 (14c): tsubasa's reason names the video, and a release
+    name runs long -- the detail panel's *downloaded* line ran off the window's
+    edge and the pane scrolled sideways, the sentence cut. ⭐ It wraps, inside the
+    ruled window: no sideways scroll, every word within the pane, more than one
+    line. ⚠ No one-line control arm: this platform draws every glyph an em wide,
+    so here even the shortest such sentence wraps -- the mutant is the control."""
+    long = (u"[Erai-raws] Sousou no Frieren 2nd Season - 06 [1080p CR WEB-DL AVC AAC]"
+            u"[MultiSub][ABCD1234].mp4 is an MP4 file -- its subtitles have no file "
+            u"format of their own, so taking them out would mean CONVERTING them; "
+            u"tsubasa takes subtitles out of MKV only")
+    window = lay_out(make(rows=[dict(added(6), not_taken=long)], running=False))
+    window.show_tab(gui_app.TAB_SUBS)
+    click(_sub_row(window, 6))
+    lay_out(window)
+    pane = window.panes[gui_app.TAB_SUBS]
+    assert pane.horizontalScrollBar().maximum() == 0, (
+        u"the pane scrolls sideways: a detail line runs past the window's edge")
+    said, = [w for w in pane.findChildren(QLabel)
+             if w.text().startswith(u"The Japanese subtitles inside")]
+    right = said.mapTo(pane.viewport(), said.rect().topRight()).x()
+    assert right <= pane.viewport().width(), (right, pane.viewport().width())
+    # ⚠ Against a one-line sibling in the same style -- the *written* line's file --
+    # not the font's line spacing: a label's height carries its style's padding.
+    one, = [w for w in pane.findChildren(QLabel) if w.text() == u"ep06.ja.ass"]
+    assert said.height() > 1.5 * one.height(), (said.height(), one.height())
+    window.hide()
+
+# ===========================================================================
+# ⭐ 14z -- THE LAYER 14 PASS (ADVERSARY 2026-09-25 §Layer 14, 14z): the window
+# ===========================================================================
+
+_PRESSES = (u"_toggle_auto", u"_toggle_watch", u"_toggle_startup", u"set_auto_update",
+            u"start_run")
+
+
+def _shown(window, qapp):
+    window.show()
+    window.activateWindow()
+    window.show_tab(gui_app.TAB_SET)
+    qapp.processEvents()
+    return window
+
+
+def test_the_keyboard_follows_the_choice_and_tab_lands_on_it(qapp, monkeypatch):
+    u"""🚨 14z (B-1) -- REAL: an arrow key clicks the neighbour BEFORE it moves, and the
+    rebuild handed the keyboard back to the radio the arrow LEFT -- unseen, a painted
+    radio shows no focus -- so a Space chose that one back. And Tab into a choice landed
+    on its FIRST radio, whatever was chosen. ⭐ The keyboard follows the choice, a Space
+    on it writes nothing, and only the chosen radio is a Tab stop."""
+    from PyQt6.QtTest import QTest
+    called = []
+    for name in _PRESSES:
+        monkeypatch.setattr(gui_app.HatoWindow, name,
+                            lambda self, *a, _n=name, **k: called.append(_n))
+    window = _shown(make(running=False), qapp)            # Leave them there, chosen
+    try:
+        leave = _kept(window, u"format.embedded:leave")
+        leave.setFocus(Qt.FocusReason.TabFocusReason)
+        QTest.keyClick(leave, Qt.Key.Key_Down)
+        qapp.processEvents()
+        assert window.state.embedded_choice() == formats.EMBEDDED_FETCH, u"the arrow chose"
+        held = QApplication.focusWidget()
+        assert held is not None and held.property(gui_app.KEEP) == u"format.embedded:fetch", (
+            u"the keyboard stayed on %r" % (held.property(gui_app.KEEP) if held else None))
+        before = list(window.spawned)
+        QTest.keyClick(held, Qt.Key.Key_Space)
+        qapp.processEvents()
+        assert window.spawned == before, u"a Space on the chosen radio wrote a setting"
+        assert window.state.embedded_choice() == formats.EMBEDDED_FETCH
+    finally:
+        window.hide()
+    window = _shown(make(running=False, extract_embedded=True), qapp)     # Save, chosen
+    try:
+        _kept(window, u"format.fallback").setFocus(Qt.FocusReason.TabFocusReason)
+        for _tab in range(6):
+            QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Tab)
+            name = QApplication.focusWidget().property(gui_app.KEEP) or u""
+            if name.startswith(u"format.embedded:"):
+                break
+        assert name == u"format.embedded:save", u"Tab into the choice landed on %r" % name
+    finally:
+        window.hide()
+    assert called == [], called
+
+
+def test_a_tray_note_hands_the_keyboard_to_the_choice_it_spoke_for(qapp, monkeypatch):
+    u"""🚨 14z (B-2) -- REAL, Z14-3's *"a press that REMOVES it"* road through a new door:
+    Space on the note's *Restart the tray* took the note away, the keyboard parked one
+    Tab from the daily switch -- Space, Tab, Space turned the daily run over. ⭐ It goes
+    to the choice the note spoke for: a radio already chosen, where a Space does
+    nothing. Both notes: the embedded choice's and the format pair's."""
+    from PyQt6.QtTest import QTest
+    called = []
+    for name in _PRESSES:
+        monkeypatch.setattr(gui_app.HatoWindow, name,
+                            lambda self, *a, _n=name, **k: called.append(_n))
+    monkeypatch.setattr(gui_app.HatoWindow, u"stop_watcher", lambda self: None)
+    monkeypatch.setattr(gui_app.HatoWindow, u"start_watcher", lambda self: None)
+    for note, choice, fields in (
+            (u"format.embedded.restart_tray", u"format.embedded:save",
+             dict(tray_reads_extract=False, extract_embedded=True)),
+            (u"format.restart_tray", u"format.prefer:srt",
+             dict(tray_reads_formats=False, prefer_format=u"srt"))):
+        window = _shown(make(running=False, auto=True, **fields), qapp)
+        try:
+            button = _kept(window, note)
+            button.setFocus(Qt.FocusReason.TabFocusReason)
+            QTest.keyClick(button, Qt.Key.Key_Space)
+            qapp.processEvents()
+            held = QApplication.focusWidget()
+            assert held is not None and held.property(gui_app.KEEP) == choice, (
+                note, held.property(gui_app.KEEP) if held else None)
+            before = list(window.spawned)
+            QTest.keyClick(held, Qt.Key.Key_Space)          # the chosen radio: nothing
+            # ⚠ A Tab, and NO Space after it: a Space on whatever comes next could open a
+            # folder dialog nobody closes -- the claim is where the keyboard is, not them
+            QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Tab)
+            went = QApplication.focusWidget().property(gui_app.KEEP)
+            assert went != u"when.daily", (u"%s: one Tab from where the keyboard landed is "
+                                           u"the daily switch" % note)
+            assert called == [] and window.spawned == before, (
+                note, called, window.spawned[len(before):])
+        finally:
+            window.hide()
+
+
+def test_settings_are_written_one_at_a_time_in_click_order(qapp):
+    u"""🚨 14z (B-5) -- REAL, rare: two quick clicks on a busy machine left the card on
+    the second choice and the FILE on the first (7 of 20 back to back): each `hato
+    config` reads the file, changes it and writes it back, and nothing ordered two of
+    them. ⭐ One at a time: the second starts only once the first has exited."""
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    reads = []
+    window._read = lambda argv, done, each=None: reads.append((argv, done)) or object()
+    _embedded_choice(window, u"Download from jimaku anyway").click()
+    _embedded_choice(window, SAVE_WORDS).click()
+    writes = [r for r in reads if u"config" in r[0]]
+    assert len(writes) == 1, u"the second write started before the first exited: %s" % writes
+    assert u"skip_embedded=false" in u" ".join(writes[0][0]), writes[0][0]
+    writes[0][1](None, [])                                # the first child exits
+    writes = [r for r in reads if u"config" in r[0]]
+    assert len(writes) == 2 and u"extract_embedded=true" in u" ".join(writes[1][0]), writes
+
+
+def test_any_write_takes_an_older_trays_stale_note_away(qapp):
+    u"""14z (B-6) -- MINOR: each *key in the file* flag was reset only by its own setter.
+    A hand-written `extract_embedded = false` under a 1.0.7 tray: the note is said; tick
+    the fallback box -- the writer rewrites the whole file, the key is gone -- and the
+    note goes with it. ⭐ One place after every write (`_file_rewritten`)."""
+    window = make(running=False, tray_reads_extract=False, extract_key_in_file=True)
+    window.show_tab(gui_app.TAB_SET)
+    assert u"cannot read this setting" in _flat(window.panes[gui_app.TAB_SET]), u"the control"
+    _kept(window, u"format.fallback").click()
+    assert u"cannot read this setting" not in _flat(window.panes[gui_app.TAB_SET]), (
+        u"another setting's write dropped the key, and the note stayed")
+
+
+def test_the_embedded_choice_asks_what_needs_you_once_it_has_landed(qapp):
+    u"""14z (B-8) -- MINOR: choosing *Leave them there* over a video whose download was
+    refused, the open window kept the pick until reopened -- `hato problems` listed it
+    no longer. ⭐ Once the write has LANDED -- never before -- what needs the person is
+    asked again."""
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    reads = []
+    window._read = lambda argv, done, each=None: reads.append((argv, done)) or object()
+    _embedded_choice(window, u"Download from jimaku anyway").click()
+    assert [a for a, _d in reads if u"problems" in a] == [], u"asked before the write landed"
+    reads[0][1](None, [])
+    assert any(u"problems" in a for a, _d in reads[1:]), [a for a, _d in reads]
+
+
+def _show_tips(window):
+    pane = window.panes[gui_app.TAB_SUBS]
+    return [c.toolTip() for h in pane.findChildren(QWidget) if h.objectName() == u"showhead"
+            for c in h.findChildren(QWidget) if c.toolTip()]
+
+
+def test_a_show_s_info_names_the_entry_of_a_row_that_has_one(qapp):
+    u"""14z (B-9) -- MINOR: a show whose FIRST row was taken out of the video said
+    *"entry (none)"* over episodes from 11446, and one all taken out said it had been
+    looked up."""
+    window = make(rows=[taken(5), added(6)], running=False)
+    window.show_tab(gui_app.TAB_SUBS)
+    tips = u" ".join(_show_tips(window))
+    assert u"jimaku entry 11446" in tips and u"(none)" not in tips, tips
+    window = make(rows=[taken(5), taken(7)], running=False)
+    window.show_tab(gui_app.TAB_SUBS)
+    tips = u" ".join(_show_tips(window))
+    assert u"Taken out of the videos themselves" in tips and u"looked up once" not in tips, tips
+
+
+def test_both_strips_say_why_the_subtitles_inside_were_not_taken_out(qapp):
+    u"""⭐ 14z (C4) -- once a run is over a remembered row carries its *why* (`hato
+    problems`), and the strips say it: *not on jimaku yet* and *had a problem* both said
+    nothing of it."""
+    why = (u"its Japanese subtitle track is a FORCED one -- signs and songs only, not a "
+           u"whole subtitle")
+    window = make(rows=[dict(not_yet(24), not_taken=why), dict(broke(3), not_taken=why)],
+                  running=False)
+    window.show_tab(gui_app.TAB_PICK)
+    text = _flat(window.panes[gui_app.TAB_PICK])
+    assert u"not on jimaku yet" in text and u"had a problem" in text, text
+    assert text.count(u"could not be taken out") == 2, text
+    # ⚠ LOOKED: the why after a reason with no full stop ran on into one sentence
+    assert u". The Japanese subtitles inside this video" in text, text
+
+
+def test_a_problem_line_wraps_and_keeps_the_words_that_say_why(qapp):
+    u"""🚨 14z (B-4) -- REAL, LOOKED: the *had a problem* strip cut 14c's own error at
+    the window's width exactly where it said why -- *"…could not be written: [WinError 5]
+    Access is denied"* -- with no hover. ⭐ It wraps: every word inside the pane."""
+    long = (u"the Japanese subtitles inside the video (track 3, .ass, 412 lines) were taken "
+            u"out, but not saved: [Erai-raws] Sousou no Frieren 2nd Season - 03 [1080p CR "
+            u"WEB-DL AVC AAC][MultiSub][ABCD1234].ja.ass could not be written: [WinError 5] "
+            u"Access is denied")
+    window = lay_out(make(rows=[dict(broke(3), reason=long)], running=False))
+    window.show_tab(gui_app.TAB_PICK)
+    lay_out(window)
+    pane = window.panes[gui_app.TAB_PICK]
+    said, = [w for w in pane.findChildren(QLabel) if u"Access is denied" in w.text()]
+    assert said.wordWrap(), u"a problem line that cuts engine prose at the window's edge"
+    assert pane.horizontalScrollBar().maximum() == 0, u"the pane scrolls sideways"
+    right = said.mapTo(pane.viewport(), said.rect().topRight()).x()
+    assert right <= pane.viewport().width(), (right, pane.viewport().width())
+    window.hide()

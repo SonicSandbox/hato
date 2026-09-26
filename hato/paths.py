@@ -371,3 +371,54 @@ def under_any(path, folders):
         if len(parts) < len(target) and target[:len(parts)] == parts:
             return True
     return False
+
+
+#: ⭐ 14z (ADVERSARY 2026-09-25, A-1) -- the right a new file needs in a folder, and
+#: the right to make a folder for one.
+_FILE_ADD_FILE, _FILE_ADD_SUBDIRECTORY = 0x0002, 0x0004
+
+
+def cannot_write(folder):
+    u"""Why `folder` cannot take a new file -- or None when it can, or when this
+    cannot tell. ⛔ It ASKS; it never writes (a media folder's only write is
+    tsubasa's -- `03-permissions.md`, Whitelist 1).
+
+    🚨 THE LAYER 14 PASS (A-1) -- A RUN THAT NEVER ENDED. In a folder whose
+    permissions deny adding a file, Python's `tempfile.mkstemp` -- under tsubasa's
+    writer, on every road that writes -- reads Windows' ACCESS_DENIED as *"that name
+    is taken"* and tries the next one, up to 2,147,483,647 times: one core at 100%,
+    the run lock held, the tray *"busy"*, the daily task stuck (measured: 40,052
+    attempts in 8 s). ⭐ So a run asks FIRST, the way Windows decides it: the folder
+    opened for the right a new file needs (`FILE_ADD_FILE`) -- or, for an `--out`
+    mirror not made yet, the nearest folder that is there, for the right to make
+    one. ⚠ Never `os.access` on Windows: it reads the READ-ONLY attribute, never the
+    permissions -- which is exactly why mkstemp believes it may try again.
+    """
+    folder = os.path.abspath(os.fspath(folder))
+    right, probe = _FILE_ADD_FILE, folder
+    while not os.path.isdir(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return None                    # nothing there at all: the writer says
+        right, probe = _FILE_ADD_SUBDIRECTORY, parent
+    if not _is_windows():
+        if os.access(probe, os.W_OK | os.X_OK):
+            return None
+        return u"%s cannot be written" % probe
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL(u"kernel32", use_last_error=True)
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                   wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+                                   wintypes.HANDLE]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    # share everything, OPEN_EXISTING, BACKUP_SEMANTICS (the one way to open a folder)
+    handle = kernel.CreateFileW(probe, right, 0x7, None, 3, 0x02000000, None)
+    if handle is None or handle == wintypes.HANDLE(-1).value:
+        if ctypes.get_last_error() == 5:           # ERROR_ACCESS_DENIED
+            return (u"%s cannot be written -- its permissions do not let you add a file"
+                    % probe)
+        return None                        # any other answer is not this check's
+    kernel.CloseHandle(handle)
+    return None

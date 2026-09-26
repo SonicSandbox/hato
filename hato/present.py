@@ -278,6 +278,10 @@ class Presence(object):
         video = os.fspath(video)
         folder = os.fspath(folder) if folder is not None else os.path.dirname(video)
         stem = os.path.splitext(os.path.basename(video))[0]
+        # ⭐ 14z (A-6) -- ON WINDOWS A NAME IS ONE NAME IN ANY CASE (`normcase`; POSIX
+        # is left exact). A video renamed by case only after its subtitle was saved
+        # read as having none -- and every run after ended ERROR *"already there"*.
+        same = os.path.normcase(stem)
         untagged = []
         for name in self._names(folder):
             side = _read(name)
@@ -290,9 +294,9 @@ class Presence(object):
             # named sidecar, not untagged, and fetched over (ADVERSARY 2026-09-23,
             # 9b x 9c). ⚠ No language is read here -- only whether the name IS
             # the video's name; tsubasa still reads every tag (`LEDGER-HOT.md`).
-            exact = os.path.splitext(name)[0] == stem
+            exact = os.path.normcase(os.path.splitext(name)[0]) == same
             if not exact:
-                if side.stem != stem:
+                if os.path.normcase(side.stem) != same:
                     continue
                 if side.lang == self.lang:
                     if u"forced" in side.flags:
@@ -474,7 +478,12 @@ def read_tracks(video, lang, reader=None):
                       u"reason -- which is itself the fault")
     tracks = tuple(answer.tracks)
     for track in tracks:
-        if track.text and track.lang == wanted:
+        # ⭐ 14z (ADVERSARY 2026-09-25, C1) -- A FORCED TRACK IS NOT THE SUBTITLES
+        # INSIDE. Signs and songs only: 06 §6 has always said *"a forced sub is not a
+        # full sub"* and the present-check below has always honoured it -- this never
+        # asked. Measured: a video whose only Japanese track was signs-only was left
+        # alone under *Leave them there* -- no whole subtitle, ever.
+        if track.text and track.lang == wanted and not getattr(track, u"forced", False):
             return Tracks(EMBEDDED,
                           u"an embedded %s text track is already there (track %s, %s) -- "
                           u"already in sync, so nothing was fetched"

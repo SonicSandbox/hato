@@ -368,6 +368,9 @@ class State(object):
         #: ⭐ RUNBOOK 14a -- `skip_embedded`: TRUE leaves a video's own Japanese
         #: subtitles (the ruled default); FALSE downloads from jimaku anyway
         self.skip_embedded = True
+        #: ⭐ RUNBOOK 14c -- `extract_embedded`: take them OUT and save them beside
+        #: the video. ⚠ It wins over `skip_embedded`: `embedded_choice()` reads both
+        self.extract_embedded = False
         self.key_hint = None
         #: ⭐ What jimaku said the last time a key was entered, and whether it
         #: worked. ⛔ Set ONLY on key entry -- Sonic: *"just on the key entry,
@@ -419,6 +422,11 @@ class State(object):
         #: whatever their values: an older hato refuses the KEY, and a hand-written
         #: `prefer_format = 'ass'` stopped its runs as surely as `'srt'`.
         self.format_keys_in_file = False
+        #: ⭐ 14c -- False when a tray IS running whose runs cannot read
+        #: `extract_embedded` (1.0.7 and before). Read from its pid file, like the two
+        #: above -- and `extract_key_in_file` when config.toml carries the key.
+        self.tray_reads_extract = True
+        self.extract_key_in_file = False
         #: the soft and hard retry windows in days, as `hato problems` reports them.
         self.retry_days = 1
         self.hard_days = 30
@@ -452,6 +460,11 @@ class State(object):
         self.tray_reads_updates = True
         #: config.toml carries `auto_update` -- which an older hato REFUSES.
         self.update_key_in_file = False
+
+    def embedded_choice(self):
+        u"""⭐ RUNBOOK 14c -- the choice in force: leave · fetch · save. ⭐ Through
+        `formats.embedded_choice`, the one reader the run and `hato problems` ask."""
+        return formats.embedded_choice(self.skip_embedded, self.extract_embedded)
 
     def daily(self):
         u"""⭐ D2 -- the daily run's time while one is REGISTERED, else None.
@@ -666,14 +679,18 @@ def episode_tail(episodes):
     return u"eps %s" % u", ".join(str(n) for n in known)
 
 
-#: ⭐ RUNBOOK 14a (ruled 2026-09-25, *"I take all your leans"*) -- what hato does
-#: with a video that already has Japanese subtitles inside it: (`skip_embedded`,
-#: the words, the hint). ⭐ ONE CHOICE, never two boxes that untick each other
-#: (Sonic picked picture B). ⚠ Its third choice -- take them out and save them
-#: beside the video -- is 14c's, and appears only once it works.
+#: ⭐ RUNBOOK 14a/14c (ruled 2026-09-25, *"I take all your leans"*) -- what hato
+#: does with a video that already has Japanese subtitles inside it: (the choice,
+#: as `formats.embedded_choice` names it, the words, the hint). ⭐ ONE CHOICE,
+#: never boxes that untick each other (Sonic picked picture B). ⭐ The third --
+#: taken out and saved beside the video, by tsubasa -- came with 1.0.8, once it
+#: worked: never shown greyed out before then (ruled).
 EMBEDDED_CHOICES = (
-    (True, u"Leave them there", u"· nothing downloaded"),
-    (False, u"Download from jimaku anyway", u"· timed against the ones inside"),
+    (formats.EMBEDDED_LEAVE, u"Leave them there", u"· nothing downloaded"),
+    (formats.EMBEDDED_FETCH, u"Download from jimaku anyway",
+     u"· timed against the ones inside"),
+    (formats.EMBEDDED_SAVE, u"Save them beside the video, as a file",
+     u"· nothing downloaded"),
 )
 #: ⭐ The substance behind the choice -- including Sonic's own understanding
 #: (2026-09-25): *"an .ass sub you download may not be the same exact line
@@ -685,7 +702,12 @@ EMBEDDED_TIP = (
     u"Download from jimaku anyway fetches a separate subtitle file for it, "
     u"timed against the subtitles inside it — the best reference there is: "
     u"the same rip. It is jimaku's own file, in its own format, so its lines need not "
-    u"match the ones inside line for line.")
+    u"match the ones inside line for line.\n\n"
+    u"Save them beside the video, as a file takes the subtitles out of the video and "
+    u"saves them next to it — for surasura, or a player that reads only files. They "
+    u"are the video's own, in their own format and already in sync; nothing is "
+    u"downloaded. A video they cannot be taken out of is downloaded for instead, and "
+    u"its row says why.")
 
 
 #: 🚨 ONE TOOLTIP PER SKIP, AND EACH ONE HAS TO BE TRUE OF ITS OWN ROW.
@@ -704,8 +726,8 @@ QUIET_TIPS = {
     gui_run.INSIDE_VIDEO:
         u"The Japanese subtitles are inside the video file itself, so there is "
         u"correctly no separate subtitle beside it — your player will find "
-        u"them. To download one from jimaku as well — for surasura, say — "
-        u"choose it in Settings → Subtitle format.",
+        u"them. To download one from jimaku as well — for surasura, say — or to "
+        u"save them beside it as a file, choose it in Settings → Subtitle format.",
     gui_run.RETRYING:
         u"hato downloaded subtitles for this and none of them lined up with "
         u"your copy, so nothing was written rather than writing one that is "
@@ -1141,6 +1163,29 @@ class Radio(QAbstractButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedSize(self.BOX, self.BOX)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        # ⭐ 14z (ADVERSARY 2026-09-25, B-1) -- ONLY THE CHOSEN ONE IS A TAB STOP, as in
+        # a radio group everywhere: Tab into a choice lands on what IS chosen, and the
+        # arrow keys move between them. Tab landed on the FIRST -- unseen, the painted
+        # radio shows no focus (Z14-10) -- and a Space there chose it.
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.toggled.connect(self._tab_stop)
+
+    def _tab_stop(self, on):
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus if on else Qt.FocusPolicy.ClickFocus)
+
+    def chosen(self):
+        u"""⭐ 14z (B-1) -- the radio of this one's choice that IS chosen: its group's,
+        else its auto-exclusive siblings'. -> Radio (itself, when none is)."""
+        group = self.group()
+        if group is not None:
+            return group.checkedButton() or self
+        parent = self.parentWidget()
+        for sibling in (parent.findChildren(
+                Radio, options=Qt.FindChildOption.FindDirectChildrenOnly)
+                if parent is not None else ()):
+            if sibling.isChecked():
+                return sibling
+        return self
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1506,11 +1551,17 @@ def button(text, parent=None, accent=False):
 #: `objectName`: the sheet styles buttons by that (`btnGo`, `x`). Every control
 #: Settings builds carries one, and a walk checks it.
 KEEP = "hato_keep"
+#: ⭐ 14z (B-2) -- where the keyboard goes when the control it was on is GONE after
+#: the rebuild: a tray note's *Restart the tray*, taken away by its own press.
+KEEP_THEN = "hato_keep_then"
 
 
-def kept(widget, name):
-    u"""`widget`, known to the keyboard as `name` across a Settings rebuild. -> widget"""
+def kept(widget, name, then=None):
+    u"""`widget`, known to the keyboard as `name` across a Settings rebuild -- and,
+    gone after one, `then` names the control the keyboard goes to instead. -> widget"""
     widget.setProperty(KEEP, name)
+    if then:
+        widget.setProperty(KEEP_THEN, then)
     return widget
 
 
@@ -1729,16 +1780,25 @@ class SubRow(Clickable):
         self.ep = label(episode_text(row.get(u"episode")), u"ep", self)
         self.ep.setFixedWidth(COL_EP)
 
+        # ⭐ RUNBOOK 14c -- a subtitle TAKEN OUT of the video was never timed: NO
+        # percentage (ruled) -- not even the dash a row never timed shows
+        taken = gui_run.taken_from(row)
         percent = gui_run.match_percent(row)
-        self.pc = label(u"—" if percent is None else u"%d%%" % percent,
-                        u"pc", self)
+        self.pc = label(u"" if taken else u"—" if percent is None
+                        else u"%d%%" % percent, u"pc", self)
         self.pc.setFixedWidth(COL_PC)
         self.pc.setAlignment(Qt.AlignmentFlag.AlignRight
                              | Qt.AlignmentFlag.AlignVCenter)
         mark(self.pc, u"tier", tier(row))
 
-        self.nm = Elide(row.get(u"jimaku_filename") or u"", self, u"nm")
+        # ⭐ 14c -- where the jimaku file's name goes: *taken from the video*, the
+        # track on hover (ruled) -- and a download the choice did not want says why
+        self.nm = Elide(gui_run.TAKEN_WORDS if taken else row.get(u"jimaku_filename")
+                        or u"", self, u"nm")
         self.nm.setFixedWidth(COL_NAME)
+        tip = gui_run.taken_words(row) or gui_run.not_taken_words(row)
+        if tip:
+            self.nm.setToolTip(wrap(safe(tip)))
 
         #: [!] ON HOVER ONLY -- eight static markers down a calm list is eight
         #: things to look at for no information. Qt has no transition, so the
@@ -1798,6 +1858,12 @@ class SubRow(Clickable):
         self._chev_fade.setOpacity(1.0 if self._expanded else 0.0)
 
 
+#: ⭐ RUNBOOK 14c -- a detail line whose value WRAPS instead of running off the
+#: window's edge. LOOKED, 2026-09-25: tsubasa's reason names the video, a release
+#: name runs long, and the pane scrolled sideways with the sentence cut at the edge.
+WRAPS = object()
+
+
 def detail_panel(row, parent=None):
     u"""Everything the row does not show, revealed on click.
 
@@ -1835,10 +1901,23 @@ def detail_panel(row, parent=None):
         tail = u" · %d segments" % len(segments) if len(segments) > 1 else u""
         lines.append((u"verdict", safe(verdict), tail))
 
+    # ⭐ RUNBOOK 14c -- taken out of the video: which track, as what
+    taken = gui_run.taken_from(row)
+    if taken:
+        events = taken.get(u"events")
+        lines.append((u"taken from", u"track %s of the video" % taken.get(u"track"),
+                      u" · .%s, %s line%s" % (taken.get(u"format") or u"?", events,
+                                              u"" if events == 1 else u"s")))
+
     written = row.get(u"output_path")
     if written:
         lines.append((u"written", os.path.basename(written),
                       u", beside the video"))
+
+    # ⭐ 14c -- asked to take them out, and could not: said, in the row
+    not_taken = gui_run.not_taken_words(row)
+    if not_taken:
+        lines.append((u"downloaded", safe(not_taken), WRAPS))
 
     kept = row.get(u"kept_path")
     if kept:
@@ -1862,11 +1941,14 @@ def detail_panel(row, parent=None):
         line.setContentsMargins(0, 0, 0, 0)
         line.setSpacing(0)
         lead = label(value, u"detval", strip)
+        wraps, tail = tail is WRAPS, (None if tail is WRAPS else tail)
         mark(lead, u"lead", tail is not None)
-        line.addWidget(lead)
+        lead.setWordWrap(wraps)
+        line.addWidget(lead, 1 if wraps else 0)
         if tail:
             line.addWidget(label(tail, u"detval", strip))
-        line.addStretch(1)
+        if not wraps:
+            line.addStretch(1)
         grid.addWidget(strip, index, 1)
 
     # ⭐ OPEN THE VIDEO. Sonic, 2026-09-18: *"if you click somewhere on the
@@ -1968,6 +2050,11 @@ class PickHead(Clickable):
         box.addWidget(self.ep)
         box.addWidget(who)
         box.addWidget(self.best, 1)
+        # ⭐ RUNBOOK 14c -- the choice asked to take this one's subtitles out and it
+        # could not: the row says why hato went to jimaku (ruled)
+        why = gui_run.not_taken_words(row)
+        if why:
+            self.setToolTip(wrap(safe(why)))
 
     def set_state(self, picked, tried, best_rate, wait=u"", pending=None,
                   word=None, late=False):
@@ -2388,6 +2475,9 @@ class HatoWindow(Styled):
         # replaces it, exactly as it replaces `spawn`.
         self._reading = []
         self._read_timer = None
+        #: ⭐ 14z (B-5) -- `hato config` writes waiting their turn, and one in flight
+        self._settings_queue = []
+        self._settings_writing = False
         self._problems_in_flight = False
         #: ⭐ A2 -- a refresh asked for while one was in flight, owed afterwards
         self._problems_again = False
@@ -2893,13 +2983,21 @@ class HatoWindow(Styled):
             meta.append(season_text(season))
         meta.append(u"%d added" % added)
         box.addWidget(label(u" · ".join(meta), u"showmeta", head))
-        entry = rows[0].get(u"jimaku_entry") if rows else None
+        # ⭐ 14z (B-9) -- THE ENTRY OF A ROW THAT HAS ONE: a row taken out of the video
+        # has none, so a show whose first row was taken said *"entry (none)"* over
+        # episodes from 11446 -- and a show all taken out said it had been looked up.
+        entry = next((row.get(u"jimaku_entry") for row in rows
+                      if row.get(u"jimaku_entry") is not None), None)
         calls = sum(int(row.get(u"api_calls") or 0) for row in rows)
-        box.addWidget(info_dot(
-            u"Matched to jimaku entry %s. %d API call%s for this show. "
-            u"A show is looked up once and then remembered."
-            % (entry if entry is not None else u"(none)", calls,
-               u"" if calls == 1 else u"s"), head))
+        if rows and all(gui_run.taken_from(row) for row in rows):
+            said = (u"Taken out of the videos themselves — nothing was looked up on "
+                    u"jimaku for this show.")
+        else:
+            said = (u"Matched to jimaku entry %s. %d API call%s for this show. "
+                    u"A show is looked up once and then remembered."
+                    % (entry if entry is not None else u"(none)", calls,
+                       u"" if calls == 1 else u"s"))
+        box.addWidget(info_dot(said, head))
         box.addStretch(1)
         return head
 
@@ -3216,7 +3314,11 @@ class HatoWindow(Styled):
                                       now, state.watching,
                                       state.daily()) if soonest else u""
             # ⚠ A LIST OF NAMES, SO IT FLOWS (`Flowing`, LOOKED 2026-09-23).
-            detail = Flowing(u"— %s%s" % (names, u" · %s" % when if when else u""), strip)
+            # ⭐ 14z (C4) -- AND WHY the subtitles inside them were not taken out, once
+            # the run is over too (`hato problems` carries it now)
+            inside = gui_run.not_taken_line(not_yet)
+            detail = Flowing(u"— %s%s%s" % (names, u" · %s" % when if when else u"",
+                                            u". %s." % inside if inside else u""), strip)
             # ⭐ AND THE MANUAL CHOICE, ONE CLICK AWAY -- `05-interface.md`'s
             # *"unless prompted is a Retry on one row"*, which was never built.
             again = button(u"Look again now", strip)
@@ -3263,10 +3365,19 @@ class HatoWindow(Styled):
             #: trailing stretch, an eliding label is allotted ZERO width and
             #: renders as nothing at all. Present, correct, invisible.
             for row in broken[:4]:
-                box.addWidget(Elide(
-                    u"— %s: %s" % (episode_name(row) or row.get(u"name") or u"",
-                                   safe(row.get(u"reason"), u"see the log")),
-                    strip, u"had"), 1)
+                # ⭐ 14z (B-4) -- IT WRAPS. The reason is ENGINE PROSE -- a path, a Windows
+                # error -- and an eliding line cut 14c's own at exactly the words that
+                # said why (*"…could not be written: [WinError 5]…"*), with no hover: the
+                # fourth instance of `LEDGER.md`'s trap. (C4) And why not taken out.
+                why = gui_run.not_taken_words(row)
+                said = safe(row.get(u"reason"), u"see the log")
+                if why:
+                    # ⚠ Two sentences: LOOKED, a reason with no full stop ran on into
+                    # the why -- *"see the log The Japanese subtitles…"*
+                    said = u"%s. %s" % (said.rstrip(u". "), why)
+                box.addWidget(plain(u"— %s: %s" % (
+                    episode_name(row) or row.get(u"name") or u"", said),
+                    u"had", strip, wrapped=True))
             if len(broken) > 4:
                 box.addWidget(label(u"— and %d more" % (len(broken) - 4), u"had", strip))
             column.addWidget(strip)
@@ -3555,6 +3666,7 @@ class HatoWindow(Styled):
         elif focused is not None and pane.isAncestorOf(focused) \
                 and focused.property(KEEP):
             held[u"control"] = focused.property(KEEP)          # Z14-3 (`kept`)
+            held[u"then"] = focused.property(KEEP_THEN)        # 14z, B-2
         area = getattr(self, u"_bl_area", None)
         if area is not None:
             try:
@@ -3586,8 +3698,20 @@ class HatoWindow(Styled):
             # ⭐ Z14-3 -- the control rebuilt under the same name takes the keyboard
             # back. ⛔ One that is gone gets nothing: the keyboard stays where
             # `clear()` parked it, never on a neighbour (the next folder's ✕)
-            for new in self.panes[TAB_SET].widget().findChildren(QWidget):
-                if new.property(KEEP) == name:
+            # ⭐ 14z (B-2) -- UNLESS IT NAMED WHERE TO GO (`kept(then=)`): a tray note's
+            # *Restart the tray* is gone once pressed, and the keyboard parked one Tab
+            # from the daily switch -- Space, Tab, Space turned the daily run over. It
+            # goes to the choice the note spoke for. (B-1) And a RADIO hands it to the
+            # one its choice has CHOSEN: an arrow key clicks the neighbour BEFORE it
+            # moves, so the rebuild found the keyboard on the radio it had LEFT, and a
+            # Space there chose that one back.
+            widgets = self.panes[TAB_SET].widget().findChildren(QWidget)
+            for wanted in (name, held.get(u"then")):
+                new = next((w for w in widgets
+                            if wanted and w.property(KEEP) == wanted), None)
+                if new is not None:
+                    if isinstance(new, Radio):
+                        new = new.chosen()
                     new.setFocus(Qt.FocusReason.OtherFocusReason)
                     break
         area = getattr(self, u"_bl_area", None)
@@ -3969,7 +4093,7 @@ class HatoWindow(Styled):
             pair.addWidget(said, 1)
             restart = button(u"Restart the tray", old)
             restart.clicked.connect(self.restart_watcher)
-            kept(restart, u"format.restart_tray")
+            kept(restart, u"format.restart_tray", then=u"format.prefer:%s" % state.prefer_format)
             pair.addWidget(restart)
             body.addWidget(old)
         # ⭐ RUNBOOK 14a -- a video whose own file already holds a Japanese text track:
@@ -3992,21 +4116,44 @@ class HatoWindow(Styled):
         # rows keep their widgets; the group makes the two one choice, and gives the
         # arrow keys a way between them.
         group = QButtonGroup(card)
-        for skip, text, hint in EMBEDDED_CHOICES:
+        chosen = state.embedded_choice()
+        for which, text, hint in EMBEDDED_CHOICES:
             choice = QWidget(card)
             line = QHBoxLayout(choice)
             line.setContentsMargins(14, 0, 0, 0)
             line.setSpacing(8)
             radio = Radio(choice)
             group.addButton(radio)
-            radio.setChecked(state.skip_embedded == skip)
-            radio.clicked.connect(lambda _c=False, s=skip: self._set_embedded(s))
-            kept(radio, u"format.embedded:%s" % (u"leave" if skip else u"fetch"))
+            radio.setChecked(chosen == which)
+            radio.clicked.connect(lambda _c=False, w=which: self._set_embedded(w))
+            kept(radio, u"format.embedded:%s" % which)
             line.addWidget(radio)
             line.addWidget(label(text, None, choice))
             line.addWidget(label(hint, u"hint", choice))
             line.addStretch(1)
             body.addWidget(choice)
+        if (state.old_tray or not state.tray_reads_extract) and (
+                chosen == formats.EMBEDDED_SAVE or state.extract_key_in_file):
+            # 🚨 RUNBOOK 14c -- AN OLDER hato CANNOT READ `extract_embedded`: it
+            # refuses a setting it has never heard of, so every run the old tray
+            # starts stops at the file (`config.NEWER_THAN_1_0_7`) -- and whenever
+            # the KEY is in the file, whatever its value. ⭐ Under the choice it
+            # speaks for, as Z14-2 ruled for the format pair's.
+            old = QWidget(card)
+            pair = QHBoxLayout(old)
+            pair.setContentsMargins(14, 2, 0, 0)
+            pair.setSpacing(8)
+            said = label(u"The hato in your tray is an older version and cannot read "
+                         u"this setting — its runs stop until it is restarted.",
+                         u"hint", old)
+            said.setWordWrap(True)
+            pair.addWidget(said, 1)
+            restart = button(u"Restart the tray", old)
+            restart.clicked.connect(self.restart_watcher)
+            kept(restart, u"format.embedded.restart_tray",
+                 then=u"format.embedded:%s" % chosen)
+            pair.addWidget(restart)
+            body.addWidget(old)
         return card
 
     def _card_key(self, parent):
@@ -4198,7 +4345,7 @@ class HatoWindow(Styled):
             return None
         path = os.path.abspath(path)
         self.state.surasura_dir = path
-        self.spawn(gui_run.argv_for_config(u"--set", u"surasura_dir=%s" % path))
+        self._write_setting(u"--set", u"surasura_dir=%s" % path)
         self.render()
         return path
 
@@ -4206,7 +4353,7 @@ class HatoWindow(Styled):
         u"""Turn the integration off. ⛔ Nothing already copied is removed --
         those files are surasura's now, not hato's to take back."""
         self.state.surasura_dir = u""
-        self.spawn(gui_run.argv_for_config(u"--set", u"surasura_dir="))
+        self._write_setting(u"--set", u"surasura_dir=")
         self.render()
 
     def _card_blacklist(self, parent):
@@ -4455,6 +4602,9 @@ class HatoWindow(Styled):
             updates = self.tray_reads_updates()                 # LAYER 11
             changed = changed or updates != self.state.tray_reads_updates
             self.state.tray_reads_updates = updates
+            extract = self.tray_reads_extract()                 # 14c
+            changed = changed or extract != self.state.tray_reads_extract
+            self.state.tray_reads_extract = extract
             # ⭐ A DATE PASSES WITH NOTHING ELSE CHANGING (ADVERSARY 2026-09-22
             # A16). An open window held a waited row hidden past its date, and
             # *"retrying in 30m"* read the same five hours later. Once a minute,
@@ -4899,6 +5049,9 @@ class HatoWindow(Styled):
             u.card = u"ready"
         elif action == updating.ASK_BACK:
             u.card = u"back"
+            # ⭐ 14z (C-1/C-2) -- what going back will change, said BEFORE the press
+            from hato import update
+            u.back_changes = update.going_back_words(u.kept)
         elif action == updating.COPY:
             QApplication.clipboard().setText(u"git pull")
         else:
@@ -5382,6 +5535,10 @@ class HatoWindow(Styled):
             u.card = None
             self.render()
             return None
+        # ⭐ 14z (C-1/C-2) -- the file the kept version can read, as its card said: once
+        # the hand-off started (a failed one changes nothing), before this window closes
+        # (the swapper waits for it, so the kept tray reads the new file).
+        update.settings_for_going_back(u.kept)
         self._handed_off = True
         self.quit_app()
         return True
@@ -5405,10 +5562,9 @@ class HatoWindow(Styled):
         u"""The *Update automatically* switch -- through the CLI, the one writer."""
         u = self.state.updates
         u.auto = bool(on)
-        self.spawn(gui_run.argv_for_config(u"--set", u"auto_update=%s"
-                                           % (u"true" if on else u"false")))
-        # ⚠ written only while switched OFF (`config.NEWER_THAN_1_0_3`)
-        self.state.update_key_in_file = not on
+        # ⚠ written only while switched OFF (`config.NEWER_THAN_1_0_3`) -- the flag that
+        # says so is `_file_rewritten`'s, after every write (14z, B-6)
+        self._write_setting(u"--set", u"auto_update=%s" % (u"true" if on else u"false"))
         if on and updating.downloads_by_itself(u):
             self.stage_update()
         self.render()
@@ -5604,7 +5760,7 @@ class HatoWindow(Styled):
         for folder in fresh:
             flags.extend([u"--add-folder", folder])
         self.state.folders = list(self.state.folders) + fresh
-        self.spawn(gui_run.argv_for_config(*flags))
+        self._write_setting(*flags)
         self.render()
         self.start_run()
         return fresh
@@ -5624,7 +5780,7 @@ class HatoWindow(Styled):
         for folder in fresh:
             flags.extend([u"--add-skip", folder])
         self.state.skip_folders = list(self.state.skip_folders) + fresh
-        self.spawn(gui_run.argv_for_config(*flags))
+        self._write_setting(*flags)
         self.render()
         return fresh
 
@@ -6060,6 +6216,48 @@ class HatoWindow(Styled):
     #: How often a child being read is polled. A `poll()`, so it costs nothing.
     READ_MS = 150
 
+    def _write_setting(self, *args, **kw):
+        u"""⭐ 14z (ADVERSARY 2026-09-25, B-5) -- `hato config <args>`, IN CLICK ORDER: one
+        child at a time, the next once the last has exited. Each child reads config.toml,
+        changes it and writes it back, and nothing ordered two of them: two quick clicks
+        on a busy machine left the card on the second and the FILE on the first (7 of 20
+        back to back, measured) -- or lost the change made a moment before outright.
+        `then=(finished, events)`, once this one has landed. -> None"""
+        self._settings_queue.append((gui_run.argv_for_config(*args), kw.get(u"then")))
+        self._file_rewritten()
+        if not self._settings_writing:
+            self._write_next()
+
+    def _write_next(self):
+        while self._settings_queue:
+            argv, then = self._settings_queue.pop(0)
+
+            def landed(finished, events, then=then):
+                self._settings_writing = False
+                if then is not None:
+                    then(finished, events)
+                self._write_next()
+            self._settings_writing = True
+            try:
+                started = self._read(argv, landed)
+            except Exception:
+                self._settings_writing = False
+                raise
+            if started is not None:
+                return                       # the next one starts when this has exited
+            # ⚠ The suite's `spawn` starts nothing: in order, at once.
+            self._settings_writing = False
+
+    def _file_rewritten(self):
+        u"""⭐ 14z (B-6) -- after ANY write, which newer keys config.toml holds: exactly
+        those away from their defaults, because the writer rewrites the whole file
+        (`config.dumps`). Each flag was set only by its OWN setter, so another setting's
+        write -- which drops a hand-written key too -- left an older tray's note standing
+        over a file that tray could read again."""
+        self.state.format_keys_in_file = False     # the values decide (`_card_format`)
+        self.state.extract_key_in_file = False     # the value decides (SAVE chosen)
+        self.state.update_key_in_file = not self.state.updates.auto
+
     def _read(self, argv, done, each=None):
         u"""Start `argv` through the ONE spawn seam and call `done(run, events)`
         once it has exited and both pipes are drained. Never blocks.
@@ -6278,8 +6476,8 @@ class HatoWindow(Styled):
         sends exists in the schema.
         """
         self.state.watch = not self.state.watch
-        self.spawn(gui_run.argv_for_config(
-            u"--set", u"watch=%s" % (u"true" if self.state.watch else u"false")))
+        self._write_setting(
+            u"--set", u"watch=%s" % (u"true" if self.state.watch else u"false"))
         if self.state.watch:
             self.start_watcher()
         else:
@@ -6346,6 +6544,17 @@ class HatoWindow(Styled):
         except Exception:                     # noqa: BLE001 -- a guess must not crash
             return True
 
+    @staticmethod
+    def tray_reads_extract():
+        u"""-> False when a tray IS running whose runs cannot read `extract_embedded`
+        (14c): every hato before 1.0.8. No tray, or one saying `extract`, -> True."""
+        try:
+            from hato import watch as _watch
+            caps = _watch.watching_capabilities()
+            return caps is None or u"extract" in caps
+        except Exception:                     # noqa: BLE001 -- a guess must not crash
+            return True
+
     def restart_watcher(self):
         u"""⭐ V1 -- replace an older tray with this build's. -> the argv, or None."""
         self.stop_watcher()
@@ -6353,6 +6562,7 @@ class HatoWindow(Styled):
         self.state.old_tray = False
         self.state.tray_reads_formats = True
         self.state.tray_reads_updates = True          # LAYER 11
+        self.state.tray_reads_extract = True          # 14c
         self.render()
         return argv
 
@@ -6396,9 +6606,8 @@ class HatoWindow(Styled):
 
     def _toggle_recurse(self):
         self.state.recurse = not self.state.recurse
-        self.spawn(gui_run.argv_for_config(
-            u"--set", u"recurse=%s" % (u"true" if self.state.recurse
-                                       else u"false")))
+        self._write_setting(
+            u"--set", u"recurse=%s" % (u"true" if self.state.recurse else u"false"))
         self.render()
 
     def _set_prefer(self, fmt):
@@ -6407,10 +6616,8 @@ class HatoWindow(Styled):
         if fmt == self.state.prefer_format:
             return
         self.state.prefer_format = fmt
-        self.spawn(gui_run.argv_for_config(u"--set", u"prefer_format=%s" % fmt))
-        # ⚠ The writer rewrites the file and keeps these keys only away from their
-        # defaults (`config.dumps`) -- so from here the VALUES say what is in it.
-        self.state.format_keys_in_file = False
+        self._write_setting(u"--set", u"prefer_format=%s" % fmt)
+        # ⚠ What the file holds from here: `_file_rewritten`, after EVERY write (14z, B-6)
         self.render()
 
     def _toggle_fallback(self):
@@ -6418,22 +6625,37 @@ class HatoWindow(Styled):
         one is not on jimaku. ⚠ Takes effect at the next run: the wait an
         episode was given for its format ends when this allows it."""
         self.state.format_fallback = not self.state.format_fallback
-        self.spawn(gui_run.argv_for_config(
+        self._write_setting(
             u"--set", u"format_fallback=%s" % (u"true" if self.state.format_fallback
-                                               else u"false")))
-        self.state.format_keys_in_file = False       # ⚠ as `_set_prefer`
+                                               else u"false"))
         self.render()
 
-    def _set_embedded(self, skip):
-        u"""⭐ RUNBOOK 14a -- leave a video's own Japanese subtitles (`skip`), or
-        download from jimaku anyway. Written through `hato config`, as every
-        setting is; ⚠ takes effect at the next run. ⚠ Every hato since 1.0.0 reads
-        `skip_embedded`, so no tray has to be told anything."""
-        if skip == self.state.skip_embedded:
+    def _set_embedded(self, choice):
+        u"""⭐ RUNBOOK 14a/14c -- the one choice: leave a video's own Japanese
+        subtitles, download from jimaku anyway, or take them out and save them
+        beside it. Written through `hato config`, as every setting is; ⚠ takes
+        effect at the next run.
+
+        ⭐ BOTH KEYS IN ONE WRITE -- `hato config` applies every `--set` as one
+        change: two writes would leave the file half-applied between them. ⚠ Every
+        hato since 1.0.0 reads `skip_embedded`; `extract_embedded` is 1.0.8's, kept
+        in the file only while SAVE is chosen (`config.NEWER_KEYS`) -- and the card
+        says so under an older tray."""
+        if choice == self.state.embedded_choice():
             return
-        self.state.skip_embedded = skip
-        self.spawn(gui_run.argv_for_config(
-            u"--set", u"skip_embedded=%s" % (u"true" if skip else u"false")))
+        # ⭐ 14z (C-4) -- SAVE WRITES `skip_embedded = true`: the older key says LEAVE, so
+        # a file whose newer key is taken away -- by hand, by Go back -- means *leave
+        # them there*, never *download anyway* (metered, and not what was chosen).
+        skip = choice != formats.EMBEDDED_FETCH
+        extract = choice == formats.EMBEDDED_SAVE
+        self.state.skip_embedded, self.state.extract_embedded = skip, extract
+        # ⭐ 14z (B-8) -- once it has landed, what needs the person is asked again: a
+        # video left to its own track stopped needing a pick, and the open window kept
+        # offering one until it was reopened.
+        self._write_setting(
+            u"--set", u"skip_embedded=%s" % (u"true" if skip else u"false"),
+            u"--set", u"extract_embedded=%s" % (u"true" if extract else u"false"),
+            then=lambda _finished, _events: self.refresh_problems())
         self.render()
 
     def take_other_format(self, rows):
@@ -6454,8 +6676,9 @@ class HatoWindow(Styled):
             return self.look_again(rows)
         self.state.format_fallback = True
         self.render()
-        return self._read(gui_run.argv_for_config(u"--set", u"format_fallback=true"),
-                          lambda finished, _events: self.fallback_written(finished, rows))
+        return self._write_setting(
+            u"--set", u"format_fallback=true",
+            then=lambda finished, _events: self.fallback_written(finished, rows))
 
     def fallback_written(self, finished, rows):
         u"""`take_other_format`'s write has exited. -> the look-again's argv, or None.
@@ -6494,7 +6717,7 @@ class HatoWindow(Styled):
             return
         self.state.schedule = value
         self.state.schedule_said = u""
-        self.spawn(gui_run.argv_for_config(u"--set", u"schedule=%s" % value))
+        self._write_setting(u"--set", u"schedule=%s" % value)
         if self.state.auto:
             said = u""
             try:
@@ -6507,13 +6730,13 @@ class HatoWindow(Styled):
 
     def _remove_folder(self, path):
         self.state.folders = [f for f in self.state.folders if f != path]
-        self.spawn(gui_run.argv_for_config(u"--remove-folder", path))
+        self._write_setting(u"--remove-folder", path)
         self.render()
 
     def _remove_skip(self, path):
         self.state.skip_folders = [f for f in self.state.skip_folders
                                    if f != path]
-        self.spawn(gui_run.argv_for_config(u"--remove-skip", path))
+        self._write_setting(u"--remove-skip", path)
         self.render()
 
     # -- the run -----------------------------------------------------------
@@ -6970,6 +7193,9 @@ def settings_from_disk(state=None):
         state.prefer_format = cfg.prefer_format
         state.format_fallback = cfg.format_fallback
         state.skip_embedded = cfg.skip_embedded          # ⭐ RUNBOOK 14a
+        state.extract_embedded = cfg.extract_embedded    # ⭐ RUNBOOK 14c
+        # ⭐ 14c -- whether the FILE carries the key, which an older hato refuses
+        state.extract_key_in_file = cfg.origin(u"extract_embedded") == u"config.toml"
         state.updates.auto = cfg.auto_update          # ⭐ LAYER 11
         state.update_key_in_file = cfg.origin(u"auto_update") == u"config.toml"
         # ⭐ 9a -- whether the FILE carries either key, which is what an older
@@ -7152,6 +7378,7 @@ def main(argv=None):
     window.state.old_tray = window.tray_is_old()       # V1 -- an older tray keeps nothing
     window.state.tray_reads_formats = window.tray_reads_formats()   # 9a #1
     window.state.tray_reads_updates = window.tray_reads_updates()   # LAYER 11
+    window.state.tray_reads_extract = window.tray_reads_extract()   # 14c
     window.state.waits = gui_run.load_waits()          # 4c -- the waits chosen before
     window.refresh_problems()
     window.refresh_blacklist()

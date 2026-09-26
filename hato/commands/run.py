@@ -142,9 +142,11 @@ def register(parser):
     # there already is a japanese track on it"* -- for a poor embedded track (an SDH
     # rip) when a fansub file is wanted instead. ⚠ Not wasteful: that embedded track
     # becomes the reference the download is timed against.
+    # ⚠ 14c: and it DOWNLOADS -- even when config.toml says to save the ones inside.
     parser.add_argument("--even-if-embedded", action="store_true",
                         help="fetch even for a video that already carries a Japanese "
-                             "track. Default: such videos are skipped for free")
+                             "track -- even when config.toml says to save it beside the "
+                             "video. Default: such videos are skipped for free")
     parser.add_argument("--allow-ai", action="store_true",
                         help="allow machine-generated subtitles as candidates")
     parser.add_argument("--no-color", action="store_true",
@@ -171,10 +173,10 @@ class World(object):
     """
 
     __slots__ = ("client", "db", "resolutions", "kitsu", "cache",
-                 "downloader", "engine", "reader")
+                 "downloader", "engine", "reader", "extractor")
 
     def __init__(self, client, db, resolutions, kitsu=None, cache=None,
-                 downloader=None, engine=None, reader=None):
+                 downloader=None, engine=None, reader=None, extractor=None):
         self.client = client
         self.db = db
         self.resolutions = resolutions
@@ -183,6 +185,7 @@ class World(object):
         self.downloader = downloader
         self.engine = engine
         self.reader = reader
+        self.extractor = extractor              # ⭐ 14c
 
     def close(self):
         for owned in (self.db,):
@@ -570,6 +573,7 @@ def run(args):
             candidates=args.candidates,
             archives=True if args.archives else None,
             skip_embedded=False if args.even_if_embedded else None,
+            extract_embedded=False if args.even_if_embedded else None,
             allow_ai=True if args.allow_ai else None,
             recurse=False if args.no_recurse else None,
             force=args.force, dry_run=args.dry_run,
@@ -648,7 +652,7 @@ def run(args):
                 settings, client=world.client, db=world.db,
                 resolutions=world.resolutions, kitsu=world.kitsu, cache=world.cache,
                 downloader=world.downloader, engine=world.engine, reader=world.reader,
-                on_progress=_progress_emitter(args))
+                extractor=world.extractor, on_progress=_progress_emitter(args))
             if lock.note:
                 run_report.notes.append(lock.note)
             # ⭐ INSIDE the lock and before `world.close()`: the snapshot and the

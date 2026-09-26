@@ -1067,6 +1067,30 @@ def go_back_pending(install_dir, current, root=None):
     return path
 
 
+def settings_for_going_back(version, path=None):
+    u"""⭐ 14z (ADVERSARY 2026-09-25, C-1/C-2) -- config.toml made readable by the kept
+    `version` before it runs (`config.make_readable_by`). -> [what changed, in words].
+    ⛔ Called once the hand-off has STARTED -- a failed one changes nothing -- and before
+    this process exits: the swapper waits for it, so the kept tray reads the new file.
+    ⛔ Never raises: a file that cannot be read or written is left as it is, and the
+    swapper's own proof still puts this version back if the kept one cannot start."""
+    from hato import config
+    try:
+        return config.make_readable_by(version, path)
+    except (config.ConfigError, OSError):
+        return []
+
+
+def going_back_words(version, path=None):
+    u"""⭐ 14z -- what `settings_for_going_back` would change, in words, for the Go back
+    card BEFORE the press. -> [words]. Nothing written; never raises."""
+    from hato import config
+    try:
+        return config.readable_by(config.load(path), version)[1]
+    except (config.ConfigError, OSError):
+        return []
+
+
 def skip(version, path=None):
     u"""Remember `version` as one not to install automatically; None forgets it
     (*Try again*: the manual choice, one click away)."""

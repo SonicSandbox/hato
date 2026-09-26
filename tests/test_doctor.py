@@ -135,7 +135,8 @@ def collect(**kw):
 
 
 REQUIRED = ["key", "search", "rate limit", "files", "download", "tsubasa",
-            "self_check", "track reader", "anitopy", "guessit", "unrar", "py7zr", "cache",
+            "self_check", "track reader", "extractor", "anitopy", "guessit", "unrar",
+            "py7zr", "cache",
             "config", "api calls"]
 
 
@@ -247,6 +248,37 @@ def test_the_track_reader_line_says_missing_and_blocked_when_it_does_not(monkeyp
     line = next(l for l in collect(session=FakeSession()).lines if l.label == "track reader")
     assert line.state == doctor.MISSING
     assert "embedded_subs" in line.text and "4b" in line.text
+
+def test_the_extractor_line_says_whether_saving_them_beside_the_video_can_work(
+        monkeypatch):
+    u"""⭐ RUNBOOK 14c -- *Save them beside the video* takes a track out through
+    tsubasa's `extract_subtitle` (0.1.9). Two arms: exported -> OK, named; not
+    -> MISSING, and what the choice does instead."""
+    import tsubasa
+    monkeypatch.setattr(tsubasa, "__all__", list(tsubasa.__all__) + ["extract_subtitle"])
+    line = next(l for l in collect(session=FakeSession()).lines if l.label == "extractor")
+    assert line.state == doctor.OK and "tsubasa.extract_subtitle" in line.text
+    monkeypatch.setattr(tsubasa, "__all__",
+                        [n for n in tsubasa.__all__ if n != "extract_subtitle"])
+    line = next(l for l in collect(session=FakeSession()).lines if l.label == "extractor")
+    assert line.state == doctor.MISSING, line.text
+    assert "0.1.9" in line.text and "downloads instead" in line.text, line.text
+
+
+def test_the_config_line_says_refused_when_every_run_would_stop(monkeypatch, tmp_path):
+    u"""⭐ 14z (C-3) -- FOUND IS NOT READ: the doctor said *found* beside a file every run
+    refused -- a key hato has never heard of, a newer hato's. FAILED, with hato's own
+    words; a file hato reads is found, as before."""
+    cfg = tmp_path / "config.toml"
+    monkeypatch.setenv("HATO_CONFIG", str(cfg))
+    # ⚠ Not named like a *key*: a key-shaped field is refused by its own rule first
+    cfg.write_text(u"a_setting_from_a_newer_hato = true\n", encoding="utf-8")
+    line = next(l for l in collect(session=FakeSession()).lines if l.label == "config")
+    assert line.state == doctor.FAILED and "REFUSED" in line.text, (line.state, line.text)
+    assert any("unknown key" in extra for extra in line.extra), line.extra
+    cfg.write_text(u"skip_embedded = true\n", encoding="utf-8")
+    line = next(l for l in collect(session=FakeSession()).lines if l.label == "config")
+    assert line.state == doctor.OK and "found" in line.text, (line.state, line.text)
 
 
 def _parser_line(ro, name):

@@ -176,6 +176,12 @@ audience.**
 
 ## Release shape
 
+> ⭐ **14z — two more checks on the BUILT bytes, run by every release's smoke:** 5d, *Save them
+> beside the video* through the frozen CLI over a real MKV (the track out at 0 requests, the next
+> run present, the doctor's extractor OK and tsubasa at the floor); and the rehearsal's arm 3,
+> *Go back* with that choice saved, against the REAL released version (C-1: the published 1.0.7
+> refused the key 1.0.8 writes).
+
 > ⚠ **Read `doctrine/release` before running the release block. Pipe nothing inside it.**
 
 **GitHub releases first.** PyPI later, and the same PyO3 sdist trap tsubasa documents
@@ -229,6 +235,7 @@ handles that; hato inherits it and must not defeat it** by pinning the accel ext
 | ⭐ **v1.0.4** | `hato-1.0.4-windows-x64.zip` + `update.json` + `update.json.sig`, 2026-09-24 — LAYER 11 (hato updates itself), D12, 10b. Stamp `sha256:e6a857f5…`, 83 files; zip `sha256 70664555…7d58`, 77,016,517 bytes; suite 33 suites / 2,424 checks; smoke **45/45** against the copy unpacked outside the repo, the update REHEARSAL both ways. ⭐ **Tag `41e1515`, every gate green:** `tests` 12/12 jobs **on the first push**, `release` 2/2, and `verify-release` 9 held / 1 skipped by design (the three published assets identical to the local files). ⚠ `min_from` 1.0.4 — the first release with an updater; a 1.0.3 install is updated by hand, once |
 | ⭐ **v1.0.5** | `hato-1.0.5-windows-x64.zip` + `update.json` + `update.json.sig`, 2026-09-24 — LAYER 12 (updates you can see) and its adversarial pass. Stamp `sha256:d957e21f…`, 83 files; zip `sha256 aec32726…97bf`, 77,034,241 bytes; suite 33 suites / 2,467 checks; smoke **45/45** against the copy unpacked outside the repo, the REHEARSAL updating the released 1.0.4 both ways. ⭐ **Tag `4d87a21`, every gate green:** `tests` 12/12 jobs **on the first push**, `release` 2/2, and `verify-release` **10 held / 0 skipped** — `an_install_takes_it` RAN: a copy at 1.0.4 heard *ready 1.0.5*. ⭐ **The first real auto-update:** the published 1.0.4 took the published 1.0.5 end to end (9/9) |
 | ⭐ **v1.0.6** | `hato-1.0.6-windows-x64.zip` + `update.json` + `update.json.sig`, 2026-09-25 — LAYER 13 (nothing flashes, nothing glitches, what was slow is measured), its adversarial pass, and the pill's dot (Sonic's ruling). Stamp `sha256:f2dad263…`, 83 files — the stamp rehearsal's own hash; zip `sha256 ad6722fa…b187a`, 77,042,111 bytes; the stamped runner 33 suites / 2,499 checks; smoke **45/45** against the copy unpacked outside the repo, the REHEARSAL updating the released 1.0.5 both ways. ⭐ **Tag `927a28f`, every gate green:** `tests` 12/12 jobs **on the first push**, `release` 2/2, `verify-release` **10 held / 0 skipped** (a copy at 1.0.4 heard *ready 1.0.6*). ⭐ **The published 1.0.5 took the published 1.0.6 end to end** (9/9) — ⚠ the one download 1.0.5's own code makes: an open 1.0.5 window may flash once more fetching it |
+| ⭐ **v1.0.7** | `hato-1.0.7-windows-x64.zip` + `update.json` + `update.json.sig`, 2026-09-25 — LAYER 14's first step (14a: *"When the video already has Japanese subtitles inside it"* — leave them there, or download from jimaku anyway) and its adversarial pass (a pick copied to surasura; a switched-back video no longer a pick; the keyboard kept across a Settings rebuild). Stamp `sha256:1b1b2588…`, 83 files — the stamp rehearsal's own hash; zip `sha256 01c99516…19141`, 77,054,334 bytes; the stamped runner 33 suites / 2,510 checks; smoke **45/45** against the copy unpacked outside the repo, the REHEARSAL updating the released 1.0.6 both ways. ⭐ **Tag `b85cffe`, every gate green:** `tests` 12/12 jobs **on the first push**, `release` 2/2, `verify-release` **10 held / 0 skipped** (a copy at 1.0.4 heard *ready 1.0.7*). ⭐ **The published 1.0.6 took the published 1.0.7 end to end** (9/9). ⚠ Still bundles tsubasa **0.1.8** — 14c needs 0.1.9 |
 
 🚨 **THE RELEASE SEQUENCE IS IN `LEDGER.md` §delivery, as *"THE RELEASE SEQUENCE THAT
 ACTUALLY HOLDS"*.** It is one list and it lives in one place; do not restate it here.

@@ -290,3 +290,91 @@ def test_a_lock_left_by_a_dead_run_is_taken_over_and_a_live_one_refuses(tmp_path
     assert rc2 == 3, text2
     assert "already in flight" in text2
     lock.unlink()
+
+# ---------------------------------------------------------------------------
+# ⭐ -j N -- side by side (ruled by Sonic 2026-09-25: "Yes to all", ruling 1)
+# ---------------------------------------------------------------------------
+
+def _sleeper(tag, seconds):
+    u"""A test that prints two lines a moment apart and asserts it has a store of its OWN:
+    `HATO_CACHE` under a folder named for its suite, the suite's own `HATO_TEST_ROOT`."""
+    return ("import os, time\n"
+            "def test_%s():\n"
+            "    print('%s-FIRST')\n"
+            "    time.sleep(%s)\n"
+            "    cache = os.environ['HATO_CACHE']\n"
+            "    root = os.environ['HATO_TEST_ROOT']\n"
+            "    assert os.path.dirname(cache) == root, (cache, root)\n"
+            "    assert os.path.basename(root) == %r, root\n"
+            "    assert os.environ['TSUBASA_CACHE'].startswith(root)\n"
+            "    print('%s-LAST')\n" % (tag, tag, seconds, tag, tag))
+
+
+def _sleepers(tmp_path, seconds=(2, 2, 2)):
+    names = ("slow_a", "slow_b", "slow_c")[:len(seconds)]
+    files = dict(("test_%s.py" % n, _sleeper(n, s)) for n, s in zip(names, seconds))
+    suites = [dict(suite(n, "test_%s.py" % n), cmd=["-m", "pytest", "tests/test_%s.py" % n,
+                                                     "-q", "-s"]) for n in names]
+    return project(tmp_path, suites, files), names
+
+
+def _elapsed(text):
+    u"""-> (the run's own total, the sum of its suites' times), from the SUMMARY."""
+    import re
+    total = float(re.search(r"\d+ suite\(s\), \d+ checks, ([\d.]+)s", text).group(1))
+    each = [float(m) for m in re.findall(r"^  PASS\s+\S+\s+.*?([\d.]+)s\s*$", text, re.M)]
+    return total, sum(each)
+
+
+def test_side_by_side_runs_the_suites_at_once_and_prints_each_as_one_block(tmp_path):
+    u"""⭐ `-j 3`: three suites that each sleep 2 s take about one suite's time, not
+    three -- measured as the run's own total against the sum of its suites'. ⛔ And
+    each suite's output reads as ONE block under its own heading: no line of one
+    suite between another's heading and its end."""
+    proj, names = _sleepers(tmp_path)
+    rc, text = run(proj, "-j", "3")
+    text = text.replace("\r\n", "\n")          # ⚠ Windows' stdout writes \r\n into the pipe
+    assert rc == 0 and "GREEN" in text, text
+    total, each = _elapsed(text)
+    assert total < 0.7 * each, (u"side by side took %.1f s against %.1f s of suites -- "
+                                u"they ran one after another" % (total, each))
+    for name in names:
+        head = text.index("\n  %s\n" % name)
+        block = text[head:]
+        rest = [n for n in names if n != name]
+        end = min([block.index("\n  %s\n" % n) for n in rest if ("\n  %s\n" % n) in block]
+                  + [block.index("SUMMARY")])
+        mine = block[:end]
+        assert "%s-FIRST" % name in mine and "%s-LAST" % name in mine, (name, mine)
+        for other in rest:
+            assert "%s-FIRST" % other not in mine, (u"%s's lines inside %s's block"
+                                                     % (other, name))
+
+
+def test_one_after_another_gives_each_suite_its_own_store_too(tmp_path):
+    u"""Each suite its own temp root in BOTH modes -- serial never needed to share
+    one, and a shared tsubasa cache once let two suites' records collide."""
+    proj, _names = _sleepers(tmp_path, seconds=(0, 0))
+    rc, text = run(proj)
+    assert rc == 0 and "GREEN" in text, text
+
+
+def test_the_summary_keeps_the_configured_order_however_the_suites_finish(tmp_path):
+    u"""The slow first suite finishes LAST side by side; the summary still lists it
+    first -- a log that moves its rows with the machine's load cannot be compared
+    with yesterday's."""
+    proj, names = _sleepers(tmp_path, seconds=(3, 0))
+    rc, text = run(proj, "--jobs=2")
+    assert rc == 0, text
+    summary = text[text.index("SUMMARY"):]
+    assert summary.index(names[0]) < summary.index(names[1]), summary
+
+
+def test_the_jobs_flag_needs_a_number_of_at_least_one(tmp_path):
+    proj = project(tmp_path, [suite("a", "test_a.py")], {"test_a.py": GOOD})
+    rc, text = run(proj, "-j")
+    assert rc == 3 and "-j needs" in text, text
+    rc, text = run(proj, "-j", "0")
+    assert rc == 3 and "at least one" in text, text
+    rc, text = run(proj, "-j2")
+    assert rc == 0 and "GREEN" in text, text

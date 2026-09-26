@@ -540,6 +540,36 @@ def test_go_back_asks_first_then_hands_off_with_the_current_swapper(qapp, handed
     assert window.quit_calls == [u"quit"]
 
 
+def test_going_back_says_first_what_it_changes_and_leaves_a_file_the_kept_one_reads(
+        qapp, handed, monkeypatch, tmp_path):
+    u"""⭐ 14z (C-1/C-2) -- REAL against the published 1.0.7: after *Save them beside the
+    video*, Go back put 1.0.8 back every time (the kept tray REFUSED `extract_embedded`),
+    or left a 1.0.7 whose every run refused its settings. ⭐ The card says what changes
+    BEFORE the press; the file is rewritten once the hand-off started -- and a hand-off
+    that fails changes nothing."""
+    from hato import config
+    from hato.commands import update as command
+    path = tmp_path / "config.toml"
+    monkeypatch.setenv("HATO_CONFIG", str(path))
+    config.save(config.with_changes(config.load(path), extract_embedded=True), path)
+    monkeypatch.setattr(command, "install_dir", lambda: str(tmp_path / "install"))
+    monkeypatch.setattr(update, "go_back_pending",
+                        lambda install, current, root=None: str(tmp_path / "pending.json"))
+    for works in (False, True):
+        window = frame(decision={u"type": u"update", u"kind": u"none", u"version": u"1.0.8"},
+                       kept=u"1.0.7")
+        if not works:
+            window._hand_off_update = lambda *a, **k: False
+        card = settings_card(window)
+        press(dict((b.text(), b) for b in card.findChildren(QPushButton))[u"Go back to 1.0.7"])
+        said = u" ".join(l.text() for l in window.update_veil.card.findChildren(QLabel))
+        assert u"Going back also changes a setting" in said and u"Leave them there" in said, said
+        press(card_buttons(window)[u"Go back"])
+        text = path.read_text(encoding="utf-8")
+        assert (u"extract_embedded" in text) is (not works), (works, text)
+    assert u"skip_embedded = true" in path.read_text(encoding="utf-8")
+
+
 def test_from_source_the_card_copies_git_pull_and_has_no_switch(qapp):
     window = frame(decision=ready(kind=u"tell", reason=u"source"), frozen=False)
     window.update_switch = None

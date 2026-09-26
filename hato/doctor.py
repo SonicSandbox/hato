@@ -541,11 +541,17 @@ def collect(session=None, capture_dir=None, sleep=time.sleep, rng=None,
             else:
                 cfg_path, source = paths.config_path()
                 folder_ok = _writable(cfg_path.parent)
-                ro.add(label, OK if folder_ok else FAILED,
-                       "%s  %s" % (cfg_path, "found" if cfg_path.is_file()
+                # ⭐ 14z (C-3) -- FOUND IS NOT READ. This said *found* beside a file
+                # every run refused (a key an older hato never heard of): the doctor is
+                # the one place a person asks, and it answered about existence.
+                refused = _refused(cfg_path)
+                ro.add(label, OK if folder_ok and not refused else FAILED,
+                       "%s  %s" % (cfg_path, "REFUSED -- every run stops here" if refused
+                                   else "found" if cfg_path.is_file()
                                    else "not found -- documented defaults in use"),
-                       ["folder %s  (from %s)" % ("writable" if folder_ok else "NOT writable",
-                                                  source)])
+                       ([refused] if refused else [])
+                       + ["folder %s  (from %s)" % ("writable" if folder_ok
+                                                    else "NOT writable", source)])
         except paths.PathError as exc:
             ro.add(label, FAILED, str(exc))
 
@@ -563,6 +569,19 @@ def collect(session=None, capture_dir=None, sleep=time.sleep, rng=None,
     ro.add("api calls", OK, "%d metered · %d unmetered download%s"
            % (ro.metered, ro.unmetered, "" if ro.unmetered == 1 else "s"))
     return ro
+
+
+def _refused(path):
+    u"""⭐ 14z (C-3) -- why hato refuses config.toml at `path`, or u"" (missing is the
+    documented defaults, never a refusal)."""
+    from hato import config
+    if not path.is_file():
+        return u""
+    try:
+        config.load(path)
+    except config.ConfigError as exc:
+        return u"%s" % exc
+    return u""
 
 
 def _writable(folder):
@@ -587,6 +606,7 @@ def _tsubasa_lines(ro, video):
                "a checkout on PYTHONPATH." % (type(exc).__name__, exc))
         ro.add("self_check", SKIPPED, "tsubasa is not importable")
         ro.add("track reader", SKIPPED, "tsubasa is not importable")
+        ro.add("extractor", SKIPPED, "tsubasa is not importable")
         return
     ro.add("tsubasa", OK, "%s" % getattr(tsubasa, "__version__", "?"),
            ["from %s" % Path(tsubasa.__file__).resolve().parent])
@@ -608,6 +628,7 @@ def _tsubasa_lines(ro, video):
                "tsubasa exports no public track reader yet (expected "
                "`embedded_subs`, tsubasa RUNBOOK 3f). hato's fetch loop "
                "(RUNBOOK 4b) is blocked on it.")
+        _extractor_line(ro, public)
         return
     extra = []
     if video is not None:
@@ -627,6 +648,19 @@ def _tsubasa_lines(ro, video):
     else:
         extra.append("pass --video <file> to read one video through it")
     ro.add("track reader", OK, "tsubasa.%s" % reader, extra)
+    _extractor_line(ro, public)
+
+
+def _extractor_line(ro, public):
+    u"""⭐ RUNBOOK 14c -- *Save them beside the video, as a file* takes a track out
+    through tsubasa's `extract_subtitle` (0.1.9). Without it the choice downloads
+    instead, and says why -- said here first."""
+    if "extract_subtitle" in public:
+        ro.add("extractor", OK, "tsubasa.extract_subtitle")
+    else:
+        ro.add("extractor", MISSING,
+               "this tsubasa cannot take a subtitle track out of a video (0.1.9 "
+               "can) -- 'Save them beside the video' downloads instead")
 
 
 #: The optional parsers tsubasa consults, and a name each must be able to number.

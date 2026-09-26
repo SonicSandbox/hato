@@ -29,6 +29,33 @@ import pytest
 from _fakewin import Clock as _Clock, Ops as _Ops         # tests/ is on sys.path
 from hato import swap
 
+def test_going_back_names_the_kept_version_when_its_tray_will_not_start():
+    u"""⭐ 14z (C-1) -- hato.log called the KEPT 1.0.7, going back, *"the new version"*:
+    the reason names it now. An update's words are exactly as they were."""
+    for pending, want in (({u"install": u"C:\\hato", u"to": u"1.0.7", u"going_back": True},
+                           u"1.0.7's tray closed as it started"),
+                          ({u"install": u"C:\\hato", u"to": u"1.0.8"},
+                           u"the new version's tray closed as it started")):
+        clock = _Clock()
+        said = swap._start_tray(pending, _Ops(dies_after=0), {}, clock, clock.sleep)
+        assert said == want, said
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"WinOps is the Windows swapper's")
+def test_the_real_stop_pid_ends_the_process_it_is_given():
+    u"""🚨 14z (C-6) -- `WinOps.stop_pid` used `wintypes` it never imported, and `_quietly`
+    swallowed the NameError: a rollback could not stop a stray process and left the
+    install half-swapped. The REAL call, on a child THIS check starts -- ⛔ never
+    anybody else's."""
+    child = subprocess.Popen([sys.executable, u"-c", u"import time; time.sleep(60)"])
+    try:
+        swap.WinOps().stop_pid(child.pid)
+        assert child.wait(timeout=15) is not None
+    finally:
+        if child.poll() is None:
+            child.kill()
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 SWAP_SOURCE = os.path.join(os.path.dirname(HERE), "hato", "swap.py")
 NAMES = (u"hato.exe", u"hato-cli.exe", u"hato-watch.exe", u"LICENSE")

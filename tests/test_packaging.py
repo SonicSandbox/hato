@@ -632,8 +632,9 @@ def test_the_engine_is_tsubasa_sync_and_never_the_unrelated_tsubasa():
     u"""`tsubasa` on PyPI is an unrelated AI-personas framework. Declared as
     written in the spec's first draft, hato would have installed somebody
     else's package and failed on its first `import tsubasa` -- or worse, not
-    failed. The floor is 0.1.8: the first release reading `.jp.` as Japanese,
-    which the present-check relies on (RUNBOOK 9c)."""
+    failed. The floor is 0.1.9: the first release that takes a subtitle track out
+    of a video and writes it (RUNBOOK 14c); 0.1.8 the first reading `.jp.` as
+    Japanese, which the present-check relies on (RUNBOOK 9c)."""
     cfg = _pyproject()
     reqs = _requirements(cfg)
 
@@ -643,13 +644,19 @@ def test_the_engine_is_tsubasa_sync_and_never_the_unrelated_tsubasa():
         % (len(engine), [str(r) for r, _ in reqs]))
     req = engine[0]
 
-    # 🚨 THE FLOOR IS 0.1.8 (RUNBOOK 9c, 2026-09-23), AND IT IS A CAPABILITY:
-    # the first release reading `.jp.` as Japanese, which the present-check now
-    # relies on (`test_existing`'s `.jp` check). 0.1.7 would read a user's
-    # `.jp.srt` as no language and fetch beside it. ⚠ The reasons the older
-    # floors mattered are kept below, so raising it did not delete them.
-    assert req.specifier.contains(u"0.1.8", prereleases=True), (
-        u"the engine requirement is %r, which does not admit 0.1.8" % str(req))
+    # 🚨 THE FLOOR IS 0.1.9 (RUNBOOK 14c, 2026-09-25), A CAPABILITY AGAIN: the
+    # first release that takes a subtitle track out of an MKV and writes it, which
+    # *Save them beside the video* has nothing under without. ⚠ The reasons the
+    # older floors mattered are kept below, so raising it did not delete them.
+    assert req.specifier.contains(u"0.1.9", prereleases=True), (
+        u"the engine requirement is %r, which does not admit 0.1.9" % str(req))
+    assert not req.specifier.contains(u"0.1.8", prereleases=True), (
+        u"the engine requirement is %r, which still admits 0.1.8 -- it cannot take a "
+        u"subtitle track out of a video, so 'Save them beside the video' would "
+        u"download for every one (RUNBOOK 14c)" % str(req))
+    # ⭐ 0.1.8 (RUNBOOK 9c, 2026-09-23): the first release reading `.jp.` as
+    # Japanese, which the present-check relies on (`test_existing`'s `.jp` check).
+    # 0.1.7 would read a user's `.jp.srt` as no language and fetch beside it.
     assert not req.specifier.contains(u"0.1.7", prereleases=True), (
         u"the engine requirement is %r, which still admits 0.1.7 -- it reads "
         u"`.jp.` as no language, so hato would fetch beside a Japanese `.jp.srt` "

@@ -1418,7 +1418,9 @@ def watching_pid():
 #: 🚨 A NEW BUILD NEEDS A NEW TOKEN: 1.0.2 already wrote `retries`, so a window
 #: asking only for that took a 1.0.2 tray for a current one, and said nothing
 #: while every run it started died on `prefer_format` (ADVERSARY 2026-09-23 #1).
-CAPABILITIES = (u"retries", u"formats", u"updates")
+#: `extract` -- 14c. Its runs READ `extract_embedded`; an older one's refuse a
+#: config.toml carrying it, and the window says so under the choice.
+CAPABILITIES = (u"retries", u"formats", u"updates", u"extract")
 
 
 def watching_capabilities():

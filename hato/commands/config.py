@@ -81,7 +81,8 @@ def _show(args):
         # longer lines up is still, to all of them, correct.
         # ⚠ 15 since the Layer 14 pass (Z14-6): `format_fallback`, shown at last. A
         # check asserts the column now -- one position for every row.
-        print("  %-15s = %-44s %s" % (name, shown, cfg.origin(origin_key or name)))
+        # ⚠ 16 since 14c: `extract_embedded`.
+        print("  %-16s = %-44s %s" % (name, shown, cfg.origin(origin_key or name)))
 
     row("folders", ", ".join(cfg.folders) if cfg.folders else "(none)")
     # ⚠ A SETTING NOBODY CAN SEE IS NOT A SETTING. This readout is where a
@@ -98,6 +99,7 @@ def _show(args):
     # ⚠ A setting nobody can SEE is not a setting. Both of these were added on
     # 2026-09-17 and the readout is where a person checks what is in force.
     row("skip_embedded", "true" if cfg.skip_embedded else "false")
+    row("extract_embedded", "true" if cfg.extract_embedded else "false")
     # 🚨 Z14-6 (the Layer 14 pass): these three were set in the window and never
     # shown here. A check derives every key from SCHEMA now.
     row("prefer_format", cfg.prefer_format)
@@ -215,7 +217,7 @@ def _write(args):
         return EXIT_OK
     print("config.toml  %s" % written)
     for name in sorted(changes):
-        print("  %-13s = %s" % (name, _shown(fresh, name)))
+        print("  %-16s = %s" % (name, _shown(fresh, name)))
     return EXIT_OK
 
 

@@ -119,6 +119,7 @@ class Lab(object):
         #: a verdict is; one check must not.
         self.real_tsubasa = False
         self.bytes_for = None                  # (item) -> bytes, overriding the stub
+        self.taken = []                        # ⭐ 14c -- every video a track was taken out of
 
     # -- the folder --------------------------------------------------------
 
@@ -147,6 +148,27 @@ class Lab(object):
         (video, _subtitle), = list(pairs)
         return port.stub_engine(**self.decide(os.path.basename(video)))(pairs, **kwargs)
 
+    def extractor(self, video, track, write=False, out_dir=None):
+        u"""⭐ 14c -- `tsubasa.extract_subtitle`'s shape: the track comes out as `.ass`
+        and, asked to, is WRITTEN -- `<stem>.ja.ass`, temp-plus-rename, never over one."""
+        name = os.path.basename(video)
+        self.taken.append(name)
+        got = type("Taken", (), {})()
+        got.ok, got.reason, got.ext, got.cues, got.lang = True, u"", u"ass", 3, u"ja"
+        got.index, got.codec = getattr(track, "index", track), getattr(track, "codec", u"")
+        got.write_failed, got.output_path, got.notes = False, None, ()
+        if write:
+            target = os.path.join(out_dir or os.path.dirname(video),
+                                  os.path.splitext(name)[0] + u".ja.ass")
+            if os.path.lexists(target):
+                got.write_failed, got.reason = True, u"it is already there"
+            else:
+                with open(target + u".part", "wb") as fh:
+                    fh.write(b"[Script Info]\n")
+                os.replace(target + u".part", target)
+                got.output_path = target
+        return got
+
     # -- driving -----------------------------------------------------------
 
     def install(self, monkeypatch):
@@ -164,7 +186,8 @@ class Lab(object):
                 kitsu=None, cache=Cache(self.root / "cache"),
                 downloader=self.download,
                 engine=None if self.real_tsubasa else self.engine,
-                reader=None if self.real_tsubasa else self.reader)
+                reader=None if self.real_tsubasa else self.reader,
+                extractor=None if self.real_tsubasa else self.extractor)
 
         monkeypatch.setattr(run_cmd, "build_world", build_world)
         return self
@@ -2081,3 +2104,33 @@ def test_the_launcher_never_leaves_an_empty_entry_on_pythonpath():
     assert u'set "PYTHONPATH=%HATO_HERE%;%PYTHONPATH%"' in text
     assert u'set "PYTHONPATH=%HATO_HERE%"' in text      # ...the unset branch exists
     assert u"if defined PYTHONPATH" in text
+
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 14c -- *"Save them beside the video, as a file"*, through the real entry point
+# ---------------------------------------------------------------------------
+
+def test_the_config_road_saves_them_beside_the_video_and_the_flag_downloads_instead(
+        tmp_path, monkeypatch, capsys):
+    u"""⭐ RUNBOOK 14c through `cli.main` -- the road the tray, the daily run and a
+    terminal all take: `extract_embedded = true` in config.toml takes the video's own
+    Japanese track out (zero requests), and `--even-if-embedded` -- *"fetch even for a
+    video that already carries a Japanese track"* -- downloads, whatever the file says."""
+    lab = Lab(tmp_path, names=[u"frieren S2 - 01.mkv"]).install(monkeypatch)
+    lab.tracks[u"frieren S2 - 01.mkv"] = Answer(tracks=[Track(lang=u"ja", codec=u"S_TEXT/ASS")])
+    lab.config.write_text(u"extract_embedded = true\n", encoding="utf-8")
+
+    code, out, err = lab.cli(capsys)
+
+    assert code == 0, (code, err)
+    shown = flat(out)
+    assert u"taken out · track 2" in shown and u"1 taken from the video" in shown, shown
+    assert lab.taken == [u"frieren S2 - 01.mkv"], lab.taken
+    assert lab.downloads == [], u"a track taken out asked jimaku for a download"
+    saved = lab.media / u"frieren S2 - 01.ja.ass"
+    assert saved.is_file(), sorted(p.name for p in lab.media.iterdir())
+
+    saved.unlink()
+    code, out, err = lab.cli(capsys, "--even-if-embedded")
+    assert code == 0, (code, err)
+    assert lab.downloads, u"--even-if-embedded took the track out instead of downloading"
+    assert lab.taken == [u"frieren S2 - 01.mkv"], u"the flag asked for another extraction"

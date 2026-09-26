@@ -18,6 +18,12 @@ else's server**.
 
 ## 🚨 Whitelist 1 — what it may write to the user's media folder
 
+> ⭐ **14z (A-1) — BEFORE anything is written there, the folder is ASKED, never written to**
+> (`paths.cannot_write`: the folder opened for the right a new file needs). A folder that
+> denies it is an ERROR before any request — the writer under tsubasa otherwise retried
+> for days. ⛔ Never `os.access` on Windows: it reads the read-only attribute, not the
+> permissions.
+
 ⭐ **AMENDED 2026-09-17 (Sonic): tsubasa writes the synced file; hato keeps the original.**
 hato itself writes **nothing** into a media folder.
 
@@ -26,6 +32,7 @@ hato itself writes **nothing** into a media folder.
 | Hand a finished original to tsubasa: `sync([(video, original)], write=True)` writes `<video-basename>.<lang>[.flag].<ext>` beside the video under **tsubasa's** whitelist. ⭐ On this explicit path tsubasa **supersedes nothing**, so nothing is trashed | 🚨 **Modify the video file. Ever.** Not tags, not container, not one byte |
 | The same under `--out <dir>`, mirroring the source tree — **hato computes each video's mirrored directory** and passes it as tsubasa's `out_dir` | 🚨 **Modify a subtitle hato did not create in this run** |
 | Keep every original a synced file was made from in `subs_dir` — temp-plus-rename, **never deleted** | ⛔ Delete anything. **Trash only, via tsubasa** |
+| ⭐ **14c:** have tsubasa take a video's own Japanese text track out and WRITE it — `extract_subtitle(video, track, write=True, out_dir=…)` writes `<video-basename>.<lang>.<ext>` under **tsubasa's** whitelist: atomically, the track's own format, never over a file that is there. ⛔ hato never writes those bytes itself | |
 | | ⛔ **Write into a media folder itself.** The only write there is tsubasa's |
 | | 🚨 **Hand tsubasa an original with no language tag in its name.** Measured 2026-09-17: tsubasa then writes `<video>.ass`, `unpaired(lang="ja")` reads that as *no Japanese subtitle*, and every later run fetches again. Name it `<jimaku stem>.ja.<ext>` |
 | | ⛔ **Accept a `subs_dir` inside a scanned folder.** The originals would be discovered as candidates for the videos beside them, and a tsubasa run over that folder could supersede them. Config ERROR at startup |

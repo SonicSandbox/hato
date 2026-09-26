@@ -156,7 +156,7 @@ class Settings(object):
                  "candidates", "archives",
                  "allow_ai", "recurse", "force", "dry_run", "skip_embedded",
                  "surasura_dir", "retry_now", "only", "prefer_format",
-                 "format_fallback")
+                 "format_fallback", "extract_embedded")
 
     def __init__(self, folders, lang=u"ja", out=None, subs_dir=None, candidates=3,
                  # ⚠ `archives=False`, matching `config.py`'s schema. It was True
@@ -174,7 +174,9 @@ class Settings(object):
                  dry_run=False, skip_embedded=True, skip_folders=[],
                  surasura_dir="", retry_now=False, only=(),
                  # ⭐ 9a -- `config.py`'s defaults, as the guard above requires.
-                 prefer_format=formats.DEFAULT_PREFERENCE, format_fallback=False):
+                 prefer_format=formats.DEFAULT_PREFERENCE, format_fallback=False,
+                 # ⭐ 14c -- and its default too.
+                 extract_embedded=False):
         self.folders = tuple(os.path.abspath(os.fspath(f)) for f in folders)
         # ⭐ RUNBOOK 7e. Subtrees carved OUT of `folders` -- Sonic: *"someone
         # might say 'desktop' and then not want a certain folder checked on
@@ -219,6 +221,10 @@ class Settings(object):
                              % (u", ".join(formats.PREFERENCES), prefer_format))
         self.prefer_format = prefer_format
         self.format_fallback = bool(format_fallback)
+        # ⭐ RUNBOOK 14c (Sonic, 2026-09-25) -- a video's own Japanese track TAKEN
+        # OUT and saved beside it, as a file. ⚠ It wins over `skip_embedded`
+        # (`formats.embedded_choice`).
+        self.extract_embedded = bool(extract_embedded)
 
     @classmethod
     def from_config(cls, cfg, **given):
@@ -253,7 +259,8 @@ class Settings(object):
                    retry_now=bool(given.get("retry_now")),
                    only=given.get("only") or (),
                    prefer_format=pick("prefer_format", cfg.prefer_format),
-                   format_fallback=pick("format_fallback", cfg.format_fallback))
+                   format_fallback=pick("format_fallback", cfg.format_fallback),
+                   extract_embedded=pick("extract_embedded", cfg.extract_embedded))
 
     def __repr__(self):
         return "<Settings %d folder(s), lang=%s%s%s>" % (
@@ -334,7 +341,7 @@ class VideoResult(object):
                  "reason", "jimaku_entry", "jimaku_filename", "attempts",
                  "candidates_offered", "tsubasa", "output_path", "kept_path",
                  "api_calls", "bytes_downloaded", "retry_after", "tried_before",
-                 "newest_offered")
+                 "newest_offered", "taken_from", "not_taken")
 
     def __init__(self, video, outcome, reason=u"", **fields):
         self.video = str(getattr(video, "path", video))
@@ -361,6 +368,12 @@ class VideoResult(object):
         #: ⭐ RUNBOOK 8f -- the newest episode the entry's releases offer, in this
         #: video's numbering (`episodes.newest_offered`), or None.
         self.newest_offered = None
+        #: ⭐ RUNBOOK 14c -- the track this subtitle was TAKEN OUT of the video
+        #: from: `{track, codec, format, name, events}`. None for a download.
+        self.taken_from = None
+        #: ⭐ 14c -- why the Japanese subtitles inside could not be taken out,
+        #: when the setting asked and the video was downloaded for instead.
+        self.not_taken = None
         for key, value in fields.items():
             setattr(self, key, value)
         if outcome != CONFIDENT and not (self.reason or u"").strip():
@@ -452,7 +465,8 @@ class RunReport(object):
 # ---------------------------------------------------------------------------
 
 def run(settings, *, client, db, resolutions, kitsu=None, cache=None,
-        downloader=None, engine=None, reader=None, clock=None, on_progress=None):
+        downloader=None, engine=None, reader=None, clock=None, on_progress=None,
+        extractor=None):
     u"""Walk the folders and do the read rule for every video. -> `RunReport`
 
     `client` · `db` · `resolutions`
@@ -468,6 +482,9 @@ def run(settings, *, client, db, resolutions, kitsu=None, cache=None,
         the seams `port.sync` and `present.read_tracks` already carry, passed
         through so a suite can decide a verdict or a track list without opening
         a container. Both default to the real tsubasa.
+    `extractor`
+        ⭐ RUNBOOK 14c -- `tsubasa.extract_subtitle` by default: the same kind of
+        seam, so a suite can say what a track comes out as without a container.
     `on_progress`
         ⭐ RUNBOOK 7b. `(dict) -> None`, called AS THE WORK HAPPENS. ⛔ `None` by
         default, and then no branch below it runs at all.
@@ -484,13 +501,14 @@ def run(settings, *, client, db, resolutions, kitsu=None, cache=None,
         every call is wrapped.
     """
     return _Run(settings, client, db, resolutions, kitsu, cache, downloader,
-                engine, reader, clock, on_progress).go()
+                engine, reader, clock, on_progress, extractor).go()
 
 
 class _Run(object):
 
     def __init__(self, settings, client, db, resolutions, kitsu, cache,
-                 downloader, engine, reader, clock, on_progress=None):
+                 downloader, engine, reader, clock, on_progress=None,
+                 extractor=None):
         self._progress = on_progress
         self._done = 0
         self.s = settings
@@ -502,6 +520,10 @@ class _Run(object):
         self.download = downloader if downloader is not None else client.download
         self.engine = engine
         self.reader = reader
+        #: ⭐ RUNBOOK 14c -- `tsubasa.extract_subtitle`, or a suite's own. ⚠ None on
+        #: a tsubasa from before 0.1.9: the choice then downloads, and says why.
+        self.extractor = (extractor if extractor is not None
+                          else getattr(tsubasa, u"extract_subtitle", None))
         self.clock = clock if clock is not None else time.time
         self.report = RunReport(settings)
         try:
@@ -521,6 +543,11 @@ class _Run(object):
         self._clashes = {}          # video key -> why two videos target one file
         #: video hash -> what it tried in EARLIER runs, read once (`_candidates`)
         self._earlier = {}
+        #: ⭐ 14c -- video key -> why its Japanese subtitles could not be taken
+        #: out, for the row of the download that happened instead
+        self._not_taken = {}
+        #: ⭐ 14z (A-1) -- folder key -> why it cannot take a file, or None: asked once
+        self._unwritable = {}
 
     # -- the whole run ------------------------------------------------------
 
@@ -887,6 +914,10 @@ class _Run(object):
                                u"again.")
 
     def _keep_result(self, show, result):
+        # ⭐ RUNBOOK 14c -- a video the setting asked to TAKE OUT, downloaded for
+        # instead: whichever row it ends in says why, so it is the funnel's job.
+        if result.not_taken is None:
+            result.not_taken = self._not_taken.get(_key(result.video))
         show.results.append(result)
         self.report.results.append(result)
         # ⭐ THE ONE FUNNEL (RUNBOOK 7b). Every outcome -- decided at the gate,
@@ -1006,6 +1037,37 @@ class _Run(object):
                                skip=BLACKLISTED)
 
         span = tokens.episode_span(video.name)
+        tracks = present.read_tracks(path, self.lang, reader=self.reader)
+        # ⚠ 14z (A-3) -- A TWO-EPISODE NAME STILL DECIDES AN UNREADABLE FILE: refused
+        # on its name, as it always was, below -- never an ERROR about its container.
+        if tracks.kind == present.UNREADABLE and not span:
+            # ⭐ ERROR, BEFORE ANY DOWNLOAD. tsubasa's `sync()` reads the same
+            # container, so a download would only reach the same ERROR
+            # afterwards -- and the network is metered. Its reason names the fix.
+            return VideoResult(video, ERROR,
+                               u"the video's subtitle tracks could not be read, so nothing "
+                               u"was downloaded: %s" % tracks.reason)
+        choice = formats.embedded_choice(self.s.skip_embedded, self.s.extract_embedded)
+        if tracks.kind == present.EMBEDDED and choice == formats.EMBEDDED_SAVE:
+            # ⭐ RUNBOOK 14c -- taken out and saved beside the video. One it cannot
+            # be taken out of falls through and is downloaded for, as below.
+            taken = self._take_out(video, path, folder, tracks)
+            if taken is not None:
+                return taken
+        elif choice == formats.EMBEDDED_SAVE:
+            # ⭐ 14z (C1, A-4) -- A JAPANESE TRACK THAT IS NOT A WHOLE TEXT ONE -- signs
+            # only, or pictures of text -- is no subtitles to take out: downloaded for,
+            # and its row says why (ruled). It never reached `_take_out` to say so.
+            why = _not_whole(tracks.tracks, self.lang)
+            if why:
+                self._not_taken[_key(path)] = why
+        if tracks.kind == present.EMBEDDED and choice == formats.EMBEDDED_LEAVE:
+            # ⭐ The toggle (Sonic, 2026-09-17). ON (the default) this is a free
+            # skip: the subtitle is already there and already in sync. OFF, we fall
+            # through and fetch -- and ⚠ the embedded track is then the REFERENCE
+            # `sync()` times the download against, which is the strongest reference
+            # there is: same rip, same cuts, same frame rate.
+            return VideoResult(video, SKIPPED, tracks.reason, skip=EMBEDDED)
         if span:
             # ⛔ RULED (06 §2): two subtitle files cannot cleanly become one, and
             # a wrong guess writes a half-wrong file.
@@ -1018,28 +1080,16 @@ class _Run(object):
             # reached. It came back ERROR, which `03-permissions.md` says must
             # never be conflated with a refusal. Decided on the name, before any
             # of that. Recorded in spec/06-edge-cases.md §2.
+            # ⭐ 14z (A-3) -- AND BELOW THE VIDEO'S OWN SUBTITLES, never above them.
+            # Taking a video's own track out splits nothing, yet a two-episode file
+            # whose track was to be SAVED was refused every run -- and under *Leave
+            # them there* it read as refused, not embedded. Still before any request.
             return VideoResult(
                 video, REFUSED,
                 u"the video holds episodes %s -- one subtitle cannot be split between "
                 u"them, so it is refused rather than guessed. Split the file, or pair a "
                 u"subtitle by hand with `hato sync`."
                 % u"-".join(str(n) for n in (span[0], span[-1])))
-
-        tracks = present.read_tracks(path, self.lang, reader=self.reader)
-        if tracks.kind == present.UNREADABLE:
-            # ⭐ ERROR, BEFORE ANY DOWNLOAD. tsubasa's `sync()` reads the same
-            # container, so a download would only reach the same ERROR
-            # afterwards -- and the network is metered. Its reason names the fix.
-            return VideoResult(video, ERROR,
-                               u"the video's subtitle tracks could not be read, so nothing "
-                               u"was downloaded: %s" % tracks.reason)
-        if tracks.kind == present.EMBEDDED and self.s.skip_embedded:
-            # ⭐ The toggle (Sonic, 2026-09-17). ON (the default) this is a free
-            # skip: the subtitle is already there and already in sync. OFF, we fall
-            # through and fetch -- and ⚠ the embedded track is then the REFERENCE
-            # `sync()` times the download against, which is the strongest reference
-            # there is: same rip, same cuts, same frame rate.
-            return VideoResult(video, SKIPPED, tracks.reason, skip=EMBEDDED)
         if tracks.kind in (present.NO_TRACK, present.NO_USABLE):
             # ⛔ NEVER A REFUSAL. A refusal row is keyed on a candidate and would
             # blacklist a good subtitle for ever -- including after tsubasa can
@@ -1097,6 +1147,14 @@ class _Run(object):
             # it, so the person's instruction survives a caller getting it wrong.
             return VideoResult(video, SKIPPED, skip.reason, skip=BLACKLISTED)
 
+        # ⭐ 14z (A-1) -- EVERYTHING BELOW WRITES beside the video: a re-sync, or the
+        # download road once this returns None. So the folder is asked FIRST -- one that
+        # cannot take a file hung the run for days inside the writer, and only after two
+        # metered calls. ⛔ An ERROR, nothing recorded: it is the disk, not the subtitles,
+        # and the next run asks again. ⚠ Not on a dry run, which writes nothing.
+        cannot = None if self.s.dry_run else self._cannot_write(folder)
+        if cannot:
+            return VideoResult(video, ERROR, u"nothing was downloaded: %s" % cannot)
         synced = self.db.synced(video_hash, self.lang)
         if synced is not None and synced.kept_path and os.path.isfile(synced.kept_path):
             # ⭐ THE DISK WON: the DB says synced and the present-check above
@@ -1112,6 +1170,103 @@ class _Run(object):
             if formats.accepts(kept_as, self.s.prefer_format, self.s.format_fallback):
                 return self._resync(video, root, video_hash, synced)
         return None
+
+    def _cannot_write(self, folder):
+        u"""⭐ 14z (A-1) -- `paths.cannot_write`, asked once per folder in a run."""
+        key = _key(folder)
+        if key not in self._unwritable:
+            self._unwritable[key] = paths.cannot_write(folder)
+        return self._unwritable[key]
+
+    def _take_out(self, video, path, folder, tracks):
+        u"""⭐ RUNBOOK 14c -- the video's own Japanese subtitles, TAKEN OUT and saved
+        beside it as a file. -> VideoResult, or None: download for it instead --
+        and `_not_taken` keeps why, for its row (ruled: *"a video hato cannot take
+        subtitles out of is downloaded for instead, and its row says why"*).
+
+        ⛔ tsubasa WRITES the file (`extract_subtitle(write=True)`): hato's only
+        write in a media folder is tsubasa's (`03-permissions.md`, Whitelist 1). Its
+        name is tsubasa's -- `<video>.ja.<ext>` -- in the folder the present-check
+        asks (`keep.target_dir`, so `--out` is honoured), and ⛔ never over a file
+        that is there. ⛔ Never converted: the track's own format, and its own line
+        breaks (Sonic's note, 2026-09-25). ⛔ Nothing recorded in the state DB and
+        zero requests: the file beside the video is the whole record, and the next
+        run's present-check finds it.
+        """
+        whole, why = _takeable(tracks.tracks, self.lang, self.s.prefer_format)
+        if self.extractor is None:
+            # ⚠ A tsubasa from before 0.1.9, on a source checkout: the floor says
+            # 0.1.9, and a floor is only what pip was told.
+            whole, why = (), _OLD_TSUBASA % getattr(tsubasa, u"__version__", u"?")
+        if self.s.dry_run:
+            # ⭐ 14z (C5) -- A PLAN READS THE HEADER, NEVER THE TRACK. Taking a track out
+            # walks the whole file: 6.8 s and 216 MB for one 1.45 GB episode, cold -- a
+            # season 1-3 minutes and 2.5-5 GB read just to PLAN. The header says codec,
+            # flag and language in a millisecond; what only the walk finds, the run says.
+            track, why_not = _by_header(path, whole)
+            if track is None:
+                self._not_taken[_key(path)] = why or why_not or u"tsubasa gave no reason"
+                return None
+            ext = _plan_extension(track.codec)
+            return VideoResult(video, PLANNED,
+                               u"would take the Japanese subtitles inside the video (track "
+                               u"%s, .%s) out and save them beside it -- nothing downloaded"
+                               % (track.index, ext),
+                               taken_from={u"track": track.index, u"codec": track.codec,
+                                           u"format": ext, u"events": None,
+                                           u"name": getattr(track, u"name", None) or None})
+        cannot = self._cannot_write(folder) if whole else None
+        if cannot:
+            # ⭐ 14z (A-1) -- asked before tsubasa's writer can spin on it. ⛔ No download
+            # instead: it would be saved in the same folder.
+            return VideoResult(video, ERROR, u"the Japanese subtitles inside it were not taken "
+                                             u"out: %s" % cannot)
+        got = track = None
+        for track in whole:
+            got = self.extractor(path, track, write=True, out_dir=str(folder))
+            if got.ok:
+                break
+            if _unfinished(got.reason):
+                # ⭐ 14z (A-2) -- A VIDEO STILL ARRIVING IS NOT ONE WITHOUT SUBTITLES.
+                # tsubasa refuses a track with empty stretches -- a file still being
+                # downloaded into. Downloaded for then, jimaku's file stood beside the
+                # finished video for ever and its own track was never taken out. ⛔ An
+                # ERROR, nothing recorded: the next run takes it out once it is whole.
+                return VideoResult(video, ERROR, u"the Japanese subtitles inside it could "
+                                                 u"not be taken out yet -- %s. Nothing was "
+                                                 u"downloaded; the next run tries again."
+                                   % got.reason.rstrip(u"."))
+            why = why or got.reason                # ⭐ the track wanted most names it
+        if got is None or not got.ok:
+            self._not_taken[_key(path)] = why or u"tsubasa gave no reason"
+            return None
+        taken = {u"track": got.index, u"codec": got.codec, u"format": got.ext,
+                 u"name": getattr(track, u"name", None) or None, u"events": got.cues}
+        said = (u"the Japanese subtitles inside the video (track %s, .%s, %d line%s)"
+                % (got.index, got.ext, got.cues, u"" if got.cues == 1 else u"s"))
+        if got.write_failed or not got.output_path:
+            # 🚨 AN ERROR, NEVER A REFUSAL, AND NOTHING RECORDED (`LEDGER-HOT.md`):
+            # what failed is the destination, not the subtitles -- and a download
+            # would be written to the same place.
+            return VideoResult(video, ERROR, u"%s were taken out, but not saved: %s"
+                               % (said, got.reason or u"tsubasa wrote nothing and said "
+                                                      u"nothing"),
+                               taken_from=taken)
+        # ⚠ A file landed in that folder: the listing taken before it is a lie for
+        # every later video decided against it (`_resync` says the same).
+        self.look.forget(folder)
+        if self.look.find(path, folder) is None:
+            # ⭐ 14z (A-5) -- A FILE HATO WRITES MUST BE ONE ITS OWN PRESENT-CHECK COUNTS
+            # (`LEDGER.md`). A video's name past 255 bytes had its stem TRIMMED by
+            # tsubasa -- `got.notes` said so -- and the row said *"taken from the video"*
+            # once, then ERROR every run after; players would not load it either.
+            return VideoResult(video, ERROR, u"%s were taken out and saved as %s, but "
+                                             u"players will not load it with the video%s"
+                               % (said, os.path.basename(got.output_path),
+                                  u": %s" % u"; ".join(got.notes) if got.notes else u""),
+                               taken_from=taken)
+        return VideoResult(video, CONFIDENT, u"", output_path=got.output_path,
+                           taken_from=taken)
 
     def _resync(self, video, root, video_hash, row):
         what = (u"the synced subtitle is gone and its original is still kept (%s), so it "
@@ -1890,6 +2045,101 @@ def _sentence(text):
     return text + u"."
 
 
+def _takeable(tracks, lang, prefer):
+    u"""⭐ RUNBOOK 14c -- the Japanese tracks worth taking out, best first.
+    -> (tracks, why there are none)
+
+    ⛔ NEVER A FORCED TRACK: signs and songs only, not a whole subtitle (06 §6) --
+    and saved, it is `<video>.ja.forced.<ext>`, which the present-check rightly
+    never counts, so every later run would take it out again and be refused over
+    its own file. A video whose only Japanese track is forced is downloaded for.
+    ⭐ The person's preferred format first (`formats.of_codec`), then the one the
+    file marks default, then the file's own order.
+    """
+    mine = [t for t in tracks if t.text and t.lang == lang]
+    whole = [t for t in mine if not getattr(t, u"forced", False)]
+    if not whole:
+        return (), (u"its Japanese subtitle track is a FORCED one -- signs and songs "
+                    u"only, not a whole subtitle")
+    return sorted(whole, key=lambda t: (formats.of_codec(t.codec) != prefer,
+                                        not getattr(t, u"default", False),
+                                        t.index)), u""
+
+
+#: ⭐ 14c -- a tsubasa with no `extract_subtitle` (a source checkout below the floor).
+_OLD_TSUBASA = u"this tsubasa (%s) cannot take subtitles out of a video -- 0.1.9 can"
+
+
+def _not_whole(tracks, lang):
+    u"""⭐ 14z (C1, A-4) -- why a video's Japanese track is no subtitles to take out:
+    signs only (forced), or pictures of text. -> words, or u"" when it has none."""
+    mine = [t for t in tracks if t.lang == lang]
+    if any(t.text and getattr(t, u"forced", False) for t in mine):
+        return (u"its Japanese subtitle track is a FORCED one -- signs and songs only, "
+                u"not a whole subtitle")
+    pictures = [t for t in mine if getattr(t, u"bitmap", False)]
+    if pictures:
+        return (u"its Japanese subtitles are pictures of text (%s) -- there is nothing "
+                u"to take out as a file" % (pictures[0].codec or u"an image track"))
+    return u""
+
+
+def _is_matroska(path):
+    u"""⭐ 14z (C5) -- does the file START as Matroska does? -> bool. EBML's four magic
+    bytes: tsubasa takes subtitles out of Matroska only."""
+    try:
+        with open(path, u"rb") as fh:
+            return fh.read(4) == b"\x1a\x45\xdf\xa3"
+    except OSError:
+        return False
+
+
+def _by_header(path, whole):
+    u"""⭐ 14z (C5, C4) -- the track a run would take out, judged from the HEADER.
+    -> (track, u"") or (None, why not). ⛔ Four bytes and the track list, never the
+    track: for a PLAN, and for what `hato problems` remembers -- the run itself asks
+    tsubasa, which walks the file and has the last word."""
+    if not whole:
+        return None, u""
+    if not _is_matroska(path):
+        return None, (u"%s is not an MKV file -- subtitles are taken out of MKV only"
+                      % os.path.basename(path))
+    for track in whole:
+        if formats.of_codec(track.codec):
+            return track, u""
+    return None, (u"tsubasa does not take a %s track out as a file"
+                  % (whole[0].codec or u"codec-less"))
+
+
+def _plan_extension(codec):
+    u"""The extension a plan says a track comes out as (`.srt`, `.ass`, `.ssa`)."""
+    family = formats.of_codec(codec)
+    return u"ssa" if family == u"ass" and u"SSA" in (codec or u"").upper() else family
+
+
+#: ⭐ 14z (A-2) -- tsubasa's words for a track not all there yet (its `extract`: *"holds
+#: empty bytes -- ... (a download in progress?) ... so the track is not all there"*).
+#: ⚠ ITS PROSE: the check drives the real tsubasa over a real file with a stretch
+#: zeroed, so a reworded refusal fails there, loudly -- not by downloading for a video
+#: still arriving.
+_UNFINISHED = (u"holds empty bytes", u"not all there")
+
+
+def _unfinished(reason):
+    return any(words in (reason or u"") for words in _UNFINISHED)
+
+
+def why_not_taken(path, tracks, lang, prefer):
+    u"""⭐ 14z (C4) -- why a run would NOT take `path`'s own Japanese subtitles out,
+    judged from its header (`_by_header`) -- or u"" when it would, or when there are
+    none inside. For what a finished run no longer holds: `hato problems`' rows."""
+    if tracks.kind != present.EMBEDDED:
+        return _not_whole(tracks.tracks, lang)
+    if getattr(tsubasa, u"extract_subtitle", None) is None:
+        return _OLD_TSUBASA % getattr(tsubasa, u"__version__", u"?")
+    whole, why = _takeable(tracks.tracks, lang, prefer)
+    return why if not whole else _by_header(path, whole)[1]
+
 def _best(attempts):
     u"""The attempt that came closest -- what `03-permissions.md` calls the best
     attempt. ⚠ Highest match rate, and an attempt that never measured (a failed
@@ -1910,4 +2160,4 @@ def _measured(attempts):
 __all__ = ["CONFIDENT", "REFUSED", "ERROR", "NOT_FOUND", "SKIPPED", "PLANNED",
            "PRESENT", "BLACKLISTED", "EMBEDDED", "NO_TRACK", "NEGATIVE",
            "LOW_CONFIDENCE_EXTRA", "ConfigProblem", "Settings", "Attempted",
-           "Remembered", "VideoResult", "ShowReport", "RunReport", "run"]
+           "Remembered", "VideoResult", "ShowReport", "RunReport", "run", "why_not_taken"]

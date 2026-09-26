@@ -7,6 +7,8 @@ The runner.
     python run_tests.py client rank            just those (opt-in suites too)
     python run_tests.py --verify-registration  the self-check alone, no suites
     python run_tests.py --list                 harnesses, suites, excused
+    python run_tests.py -j 4 [suites]          ⭐ SIDE BY SIDE: 4 suites at once, each in
+                                               its own temp root, longest first
 
 Seven properties, each paid for somewhere (doctrine/verification.md,
 spec/07-test-plan.md):
@@ -272,13 +274,14 @@ def snapshot(root, config):
 
 
 def suite_env(temp_root, suite):
+    root = suite_root(temp_root, suite)
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
-    env["HATO_TEST_ROOT"] = str(temp_root)
-    env["HATO_CACHE"] = str(temp_root / "data")
-    env["HATO_CONFIG"] = str(temp_root / "config.toml")
-    env["TSUBASA_CACHE"] = str(temp_root / "tsubasa")
+    env["HATO_TEST_ROOT"] = str(root)
+    env["HATO_CACHE"] = str(root / "data")
+    env["HATO_CONFIG"] = str(root / "config.toml")
+    env["TSUBASA_CACHE"] = str(root / "tsubasa")
     if suite.get("live"):
         env["HATO_LIVE"] = "1"
         env.pop("HATO_NO_NETWORK", None)
@@ -287,7 +290,7 @@ def suite_env(temp_root, suite):
         env["HATO_NO_NETWORK"] = "1"
         # ⛔ No test reads the real keystore.
         env.pop("HATO_JIMAKU_KEY", None)
-        env["HATO_KEYFILE"] = str(temp_root / "no-such-key.txt")
+        env["HATO_KEYFILE"] = str(root / "no-such-key.txt")
     extra = [str(HERE)]
     checkout = checkout_of_tsubasa()
     if checkout is not None:
@@ -307,11 +310,87 @@ def checkout_of_tsubasa():
     return (HERE / rel).resolve() if rel else None
 
 
+def take_jobs(argv):
+    u"""`-j N` / `-jN` / `--jobs N` / `--jobs=N` -> (N, argv without it). Default 1.
+
+    ⭐ SIDE BY SIDE (ruled by Sonic, 2026-09-25: *"Yes to all"*). Measured before
+    it was built: the full run was 656 s end to end on one of this machine's 8
+    cores, and 4 lanes packed longest-first come to the longest suite's own 181 s."""
+    out, jobs, i = [], 1, 0
+    while i < len(argv):
+        found = re.match(r"^(?:-j|--jobs)(?:=?(\d+))?$", argv[i])
+        if not found:
+            out.append(argv[i])
+            i += 1
+            continue
+        value = found.group(1)
+        if value is None:
+            if i + 1 >= len(argv) or not argv[i + 1].isdigit():
+                raise ToolingFault("-j needs how many suites run side by side, e.g. -j 4")
+            value = argv[i + 1]
+            i += 1
+        jobs = int(value)
+        if jobs < 1:
+            raise ToolingFault("-j %d: at least one suite has to run" % jobs)
+        i += 1
+    return jobs, out
+
+
+def suite_root(temp_root, suite):
+    u"""⭐ EACH SUITE ITS OWN TEMP ROOT -- its store, its tsubasa cache, its config,
+    its key file. Side by side two suites must not share one, and one after another
+    they never needed to: the only thing a shared tsubasa cache ever did was let two
+    suites' records collide (`test_pipeline`'s *count=67* note). The teardown still
+    removes the one run root above them all, and verifies it."""
+    root = temp_root / re.sub(r"[^A-Za-z0-9_.-]", "-", suite["name"])
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def longest_first(cfg, suites):
+    u"""The suites, longest first by their recorded times (`suite:<name>` in
+    timings.json) -- so no long suite starts last. A suite never timed goes first:
+    an unknown can be the long one."""
+    try:
+        with open(str(_timings_path(cfg)), encoding="utf-8") as fh:
+            seen = json.load(fh)
+    except (OSError, ValueError):
+        seen = {}
+
+    def cost(suite):
+        times = seen.get("suite:%s" % suite["name"])
+        return statistics.median(times[-5:]) if times else float("inf")
+    return sorted(suites, key=cost, reverse=True)
+
+
+def run_side_by_side(suites, run_dir, temp_root, jobs):
+    u"""`jobs` suites at once, each a process of its own in its own temp root.
+    ⛔ ONE BLOCK PER SUITE: each suite's whole output is printed as it finishes, by
+    this thread only -- two suites' lines never interleave, so the log reads as a
+    one-at-a-time log does. -> [result], in the order they finished."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    print("  side by side, %d at once, longest first: %s"
+          % (jobs, ", ".join(s["name"] for s in suites)))
+    sys.stdout.flush()
+    results = []
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        waiting = [pool.submit(run_suite, s, run_dir, temp_root, True) for s in suites]
+        for done in as_completed(waiting):
+            result = done.result()
+            rule(result["name"])
+            sys.stdout.write("  %s\n\n%s" % (" ".join(result["cmd"][1:]), result["output"]))
+            sys.stdout.flush()
+            results.append(result)
+    return results
+
+
 # --------------------------------------------------------------------------
 # 3. running one suite
 # --------------------------------------------------------------------------
 
-def run_suite(suite, run_dir, temp_root):
+def run_suite(suite, run_dir, temp_root, quiet=False):
+    u"""One suite, its output kept. `quiet`: side by side, where the caller prints
+    the whole block when it finishes (`run_side_by_side`)."""
     name = suite["name"]
     safe = re.sub(r"[^A-Za-z0-9_.-]", "-", name)
     log_path = run_dir / ("%s.txt" % safe)
@@ -322,17 +401,19 @@ def run_suite(suite, run_dir, temp_root):
     if is_pytest:
         cmd += ["--junitxml=%s" % junit_path, "-p", "no:cacheprovider"]
 
-    rule(name)
-    sys.stdout.write("  %s\n\n" % " ".join(cmd[1:]))
-    sys.stdout.flush()
+    if not quiet:
+        rule(name)
+        sys.stdout.write("  %s\n\n" % " ".join(cmd[1:]))
+        sys.stdout.flush()
 
     started = time.time()
     proc = subprocess.run(cmd, cwd=str(HERE), env=suite_env(temp_root, suite),
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     elapsed = time.time() - started
     output = proc.stdout.decode("utf-8", errors="replace")
-    sys.stdout.write(output)
-    sys.stdout.flush()
+    if not quiet:
+        sys.stdout.write(output)
+        sys.stdout.flush()
 
     run_dir.mkdir(parents=True, exist_ok=True)
     with open(str(log_path), "w", encoding="utf-8", newline="\n") as fh:
@@ -341,7 +422,8 @@ def run_suite(suite, run_dir, temp_root):
 
     counts = parse_junit(junit_path) if is_pytest else None
     result = {"name": name, "rc": proc.returncode, "elapsed": elapsed,
-              "log": log_path, "counts": counts, "verdict": None, "why": ""}
+              "log": log_path, "counts": counts, "verdict": None, "why": "",
+              "cmd": cmd, "output": output}
 
     if is_pytest and proc.returncode in PYTEST_TOOLING_CODES:
         result["verdict"] = "TOOLING"
@@ -495,6 +577,11 @@ def main(argv=None):
         except (AttributeError, ValueError):
             pass
     argv = sys.argv[1:] if argv is None else list(argv)
+    try:
+        jobs, argv = take_jobs(argv)
+    except ToolingFault as exc:
+        stderr("\nTOOLING FAULT -- %s" % exc)
+        return EXIT_TOOLING
     want_list = "--list" in argv
     verify_only = "--verify-registration" in argv
     unknown_flags = [a for a in argv if a.startswith("-")
@@ -571,6 +658,8 @@ def main(argv=None):
             print("  opt-in, not run by default: %-10s %s" % (s["name"], s.get("why", "")))
 
     key = "all-default" if not names else "+".join(sorted(names))
+    if jobs > 1:
+        key = "%s|j%d" % (key, jobs)      # ⚠ its own times: side by side is not serial
     exp = expected_line(cfg, key)
     print("  running %d suite(s): %s" % (len(chosen), exp or "not timed yet -- this run is the baseline"))
 
@@ -584,8 +673,15 @@ def main(argv=None):
     started = time.time()
     with RunLock(HERE / cfg["test"]["runLogDir"] / ".run.lock"):
         try:
-            for suite in chosen:
-                results.append(run_suite(suite, run_dir, temp_root))
+            if jobs == 1:
+                for suite in chosen:
+                    results.append(run_suite(suite, run_dir, temp_root))
+            else:
+                done = run_side_by_side(longest_first(cfg, chosen), run_dir,
+                                        temp_root, jobs)
+                order = [s["name"] for s in chosen]
+                # ⭐ The summary in the configured order, however they finished
+                results = sorted(done, key=lambda r: order.index(r["name"]))
         finally:
             shutil.rmtree(str(temp_root), ignore_errors=True)
     total_elapsed = time.time() - started
@@ -627,6 +723,8 @@ def main(argv=None):
     else:
         print("\n  GREEN")
         record_timing(cfg, key, total_elapsed)
+        for r in results:                 # ⭐ what `longest_first` packs by
+            record_timing(cfg, "suite:%s" % r["name"], r["elapsed"])
     if worst == EXIT_TOOLING:
         print("\n  ⚠ TOOLING FAULT -- the harness is broken, which says NOTHING about")
         print("    whether the product works. Fix the harness first.")

@@ -198,11 +198,11 @@ LAYER 13 — NOTHING FLASHES, NOTHING GLITCHES, WHAT IS SLOW IS MEASURED. Asked 
   └── 1.0.6 ✅ RELEASED 2026-09-25 -- tag 927a28f; a published 1.0.5 took it by itself
 
 LAYER 14 — SUBTITLES ALREADY INSIDE THE VIDEO. Ruled 2026-09-25 (*"I take all your leans. Go"*)
-  ├── 14a ⏳ Settings: leave them there, or download from jimaku anyway (skip_embedded, at last)
-  ├── 1.0.7 ⏳ released with 14a -- it serves surasura now
-  ├── 14b ⏳ tsubasa takes a text track out of an MKV, in its own format (tsubasa's release first)
-  ├── 14c ⏳ the third choice: save them beside the video, as a file -- "taken from the video"
-  ├── 14z ⏳ the adversarial pass
+  ├── 14a ✅ Settings: leave them there, or download from jimaku anyway (skip_embedded, at last)
+  ├── 1.0.7 ✅ RELEASED 2026-09-25 -- tag b85cffe; a published 1.0.6 took it by itself
+  ├── 14b ✅ RELEASED -- tsubasa 0.1.9 (2026-09-25): extract_subtitle, verified from PyPI
+  ├── 14c ✅ BUILT -- the third choice: save them beside the video, as a file
+  ├── 14z ✅ the adversarial pass -- 30 findings, every one ended (ADVERSARY-2026-09-25 §14z)
   └── 1.0.8 ⏳ released with 14c
 
 LAYER 6 — release
@@ -2003,15 +2003,30 @@ it was ruled on: D12's own crash with a prototype net — the window stays up an
 | Step | surfaces | What | Its proof |
 | --- | --- | --- | --- |
 | **14a** | `ui` | **Settings → Subtitle format: *"When the video already has Japanese subtitles inside it"* — ○ Leave them there · ○ Download from jimaku anyway.** The ruled `skip_embedded`, in the window at last; the row's tooltip points at it instead of at `config.toml`. ⚠ Every hato since 1.0.0 reads the key, so no older-tray note. ⛔ Touches the card, the window's state and the tooltip; not the engine | the choice reads the setting and writes it through `hato config`; the file round-trips into the window; the tooltip names Settings · the card LOOKED · ⭐ **its adversarial pass** (`ADVERSARY-2026-09-25.md` §*Layer 14*, register Z14 — ⚠ PARTIAL: an interrupt stopped the adversary, its probes were triaged and every lead reproduced): the two radios one group — clicking the chosen one emptied both circles (Z14-1) · the older tray's note back under the rows it speaks for (Z14-2) · 🚨 **every Settings control keeps the keyboard across a rebuild — Space, Tab, Space had turned the daily run OFF** (Z14-3) · a video switched back to *Leave them there* stops asking for a pick (Z14-4, DATA-F16) · a pick is copied to surasura (Z14-5) · both config readouts show every setting (Z14-6) · M14-09…21, 21 of 21 caught |
-| **1.0.7** | `delivery` | ⏳ Released with 14a — authorized with the leans | Step 6 |
-| **14b** | `data` (tsubasa) | ⏳ **tsubasa takes a text track out of an MKV, in its own format** — `.ass`/`.ssa` with their header and styles, `.srt`; the track's compression undone; ⛔ never converted; ⛔ a WebVTT track REFUSED, by name (its cue settings live in BlockAdditions — tsubasa's 3h). Checked against ffmpeg's own `-c:s copy` of the same real files. tsubasa's runbook, and its release FIRST (hato's floor rises) | tsubasa's |
-| **14c** | `data` · `ui` | ⏳ **The third choice: *"Save them beside the video, as a file"*** — the track taken out and written as `<video>.ja.<ext>` beside the video (temp-plus-rename; never over a subtitle already there), copied to surasura, the row *"taken from the video"* (no %, the track on hover); a video hato cannot take them out of is downloaded for, and says why | ⏳ |
-| **14z** | — | ⏳ the adversarial pass over Layer 14 → a register | the register |
+| **1.0.7** | `delivery` | ✅ **RELEASED 2026-09-25** — with 14a and its pass, authorized with the leans (*"I take all your leans. Go"*). Step 6's sequence, the stamp rehearsal first | Step 6 — tag `b85cffe`, every gate green |
+| **14b** | `data` (tsubasa) | ✅ **RELEASED — tsubasa 0.1.9, 2026-09-25, verified from its published bytes (Sonic kept the name `extract_subtitle` and gave the go) — tsubasa takes a text track out of an MKV, in its own format** — `.ass`/`.ssa` with their header and styles, `.srt`; the track's compression undone; ⛔ never converted; ⛔ a WebVTT track REFUSED, by name (its cue settings live in BlockAdditions — tsubasa's 3h). Checked against ffmpeg's own `-c:s copy` of the same real files. tsubasa's runbook, and its release FIRST (hato's floor rises) | tsubasa's |
+| **14c** | `data` · `ui` | ✅ **BUILT 2026-09-25 — the third choice: *"Save them beside the video, as a file"*** — the track taken out and **written by tsubasa** (`extract_subtitle(write=True)`, Whitelist 1) as `<video>.ja.<ext>` in the folder the present-check reads, its own format, never over a file that is there; copied to surasura; nothing in the state DB, zero requests. The row *"taken from the video"* (no %, the track on hover; the panel names it). A video it cannot be taken out of — not MKV, a FORCED track only (saved as `.ja.forced.` it would never count as present, and be taken out again every run), a track tsubasa refuses, a tsubasa before 0.1.9 — is downloaded for, and the row says why (`not_taken`: Mode A, `--json`, hover, the panel, a pick). A write that fails: ERROR, no negative. Several whole tracks: the preferred format, the file's default, its order. `extract_embedded` (1.0.8's key: `NEWER_THAN_1_0_7`, tray token `extract`) — both keys in ONE `hato config`; `formats.embedded_choice` the one reader; `--even-if-embedded` downloads whatever the file says. Floor `tsubasa-sync>=0.1.9` | the pipeline's 14c section (stub seam + the REAL tsubasa on a real MKV: every cue, `.srt` stays `.srt`, the next run present) · the CLI road end to end (`test_endtoend`) · the window's 14c section · M14-22…68, **every one caught** (M14-50 SURVIVED the first gate: the three-choice check compared the card with the window's own reader — re-aimed at the choice clicked, then caught) · M14-01…08/15/16/20/63 re-aimed · LOOKED: the card (picture B, exactly), the older tray's note under the choice, the row and its panel — ⚠ a long reason ran off the window's edge: the *downloaded* line wraps now (M14-67/68) |
+| **14z** | — | ✅ **RUN 2026-09-25/26 — the adversarial pass over ALL of Layer 14** (14a's fixes, tsubasa's write, 14c, the seams): three adversaries by surface, over a snapshot 0 bytes from the vault, the owner's six candidates given to the surface that owned each. **30 findings, every one ended: 24 fixed, 4 deferred, 2 dropped** — the worst: *Go back* to 1.0.7 after *Save* never held (the published 1.0.7 REFUSED the new key), a folder that cannot be written HUNG the run for days, a video still downloading got jimaku's file for ever, the keyboard sat on an unchosen radio, a dry run walked every file. `ADVERSARY-2026-09-25.md` §*14z* | the register · 34 new checks · M14-69…119 · 13 older mutants re-aimed · the anchor preflight 0 problems · the full runner **2,580 GREEN** · LOOKED (the Go back card, both strips) · the smoke's 5d and the rehearsal's arm 3 (at the release) |
 | **1.0.8** | `delivery` | ⏳ Released with 14c | Step 6 |
 
 ---
 
-## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.6`, 2026-09-25 (`v1.0.5` and `v1.0.4` 2026-09-24, `v1.0.3` and `v1.0.2` 2026-09-23, `v1.0.1` 2026-09-19). ⛔ NO PyPI, RULED
+## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.7`, 2026-09-25 (`v1.0.6` the same day, `v1.0.5` and `v1.0.4` 2026-09-24, `v1.0.3` and `v1.0.2` 2026-09-23, `v1.0.1` 2026-09-19). ⛔ NO PyPI, RULED
+
+> ⭐ **`v1.0.7` IS LIVE — LAYER 14's first step (14a) and its adversarial pass.** The sequence
+> unchanged, the stamp rehearsal first: stamp `1.0.7` (`sha256:1b1b2588…`, 83 files — the
+> rehearsal's own hash; the version-touching suites and the window's over the stamped copy, 1,025
+> passed, the same 2 skips as 1.0.6's) → the full runner **33 suites / 2,510 checks** over the
+> stamped tree → freeze (61 warnings, as 1.0.6's) → smoke **45/45** (the REHEARSAL: the released
+> 1.0.6 updated by the new swapper both ways, *Updated to 1.0.7*, 1.0.6 kept, one tray) →
+> `update-manifest` (signed; read back 3/3) → sync → `b85cffe` → `tests` **12/12 jobs on the FIRST
+> push** → `--go`: tag `v1.0.7`, THREE assets → `verify-release` **10 held · 0 failed · 0 skipped**
+> (`an_install_takes_it`: a copy at 1.0.4 heard *ready 1.0.7*) → `release` **2/2** on the tag → ⭐
+> **the published 1.0.6 took the published 1.0.7 end to end** (`e2e_update.py 1.0.6 1.0.7`, **9/9**:
+> *ready 1.0.7* from GitHub, downloaded and proved in 17 s, 1.0.7's own swapper, *Updated to 1.0.7*
+> in its window, 1.0.6 kept). Before it: the pass's mutants, **21 of 21 caught**, and every window
+> layer's, **818 of 820 caught** — the two survivors (M13-28/29) were Z14-3's restore rescuing
+> Z13-1's check; the check was re-aimed (Z14-11) and both were caught alone.
 
 > ⭐ **`v1.0.6` IS LIVE — LAYER 13 and its adversarial pass, and the pill's dot (13k).** The
 > sequence unchanged, the stamp rehearsal first: stamp `1.0.6` (`sha256:f2dad263…`, 83 files — the

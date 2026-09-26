@@ -194,12 +194,16 @@ def _apply(args):
             if stopped is not None:           # ⛔ a failed hand-off never costs the tray
                 update.start_detached(watch.watch_argv())
             raise
+        # ⭐ 14z (C-1/C-2) -- going BACK: config.toml as the kept version can read it
+        changed = update.settings_for_going_back(version) if args.rollback else []
     except update.StageError as exc:
         return _fail(args, u"%s" % exc)
     except (OSError, ValueError) as exc:
         return _fail(args, u"there is no update ready to install (%s)" % type(exc).__name__)
-    _say(args, {u"type": u"applying", u"version": version, u"pending": pending},
-         u"hato %s is installing -- hato opens again in a moment." % version)
+    _say(args, {u"type": u"applying", u"version": version, u"pending": pending,
+                u"changed": changed},
+         u"hato %s is installing -- hato opens again in a moment.%s"
+         % (version, u"".join(u" %s." % said for said in changed)))
     return EXIT_OK
 
 

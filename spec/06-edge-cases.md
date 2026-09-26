@@ -111,6 +111,7 @@ date: 2026-09-07
 | `<video>.hi.srt` | **Hindi.** Parse the language before trimming flags |
 | `<video>.ja.forced.srt` only | A forced sub is not a full sub. **Fetch the full one** |
 | Video has an **embedded Japanese text track** | ⭐ **SKIP the fetch. RULED.** It is already there and already in sync — zero network, zero alignment |
+| … and the choice is ***Save them beside the video*** (14c) | Taken out by tsubasa as `<video>.ja.<ext>`, its own format. ⛔ A **forced** track only → downloaded for (saved as `.ja.forced.` it never counts as present, and would be taken out again every run). Not MKV, a track tsubasa refuses, tsubasa < 0.1.9 → downloaded for; the row says why. Several whole tracks → the preferred format, the file's default, its order. A write that fails → **ERROR, no negative**. A dry run reads the track and writes nothing |
 | Video has an embedded **bitmap** track (PGS/VobSub) | **Not** a text subtitle. Fetch normally — tsubasa times against a bitmap track too |
 | Video has **no subtitle track at all** — a raw | ⭐ **SKIP before identification — RULED 2026-09-17.** tsubasa has nothing to time against until its audio path exists. Zero requests, zero downloads, ⛔ **never recorded as a refusal**. Output: *no subtitle track in the video — can't sync yet* |
 | The user deleted a subtitle on purpose | It comes back next run — **re-synced from its kept original, zero network**. ⚠ Documented, not a bug — the filesystem is canonical, and a deliberate absence is indistinguishable from a missing one |
@@ -150,6 +151,15 @@ date: 2026-09-07
 > while `lang` resolves to `ja`, which is the split `Result` already carries. ⭐ Its own
 > dedupe wants this independently: today `Show.ja.srt` and `Show.Japanese.srt` are two
 > languages, so neither supersedes the other and both survive a dedupe run.
+
+> ⭐ **14z (ADVERSARY 2026-09-25 §14z) — three rules this section now owns:**
+> - **A FORCED track is not the subtitles inside** — `present.read_tracks` asks now (C1): a
+>   video whose only Japanese track is signs-only is fetched for, under *Leave them there* too.
+> - **A video still ARRIVING is not one without subtitles** (A-2): tsubasa's refusal of a
+>   track with empty stretches is an ERROR, nothing recorded — never a download that stands
+>   for ever beside the finished video.
+> - **A two-episode name is decided AFTER the video's own subtitles** (A-3) — *Save* takes
+>   the track out, *Leave* leaves it — and still on its name when the container cannot be read.
 
 ## 7. State and re-runs
 

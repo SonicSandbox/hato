@@ -1652,6 +1652,31 @@ def test_rollback_hands_off_with_the_CURRENT_swapper(capsys, monkeypatch, tmp_pa
     assert (hand[u"from"], hand[u"to"], hand[u"going_back"]) == (__version__, u"0.9.9", True)
 
 
+@WINDOWS_ONLY
+def test_rollback_leaves_a_file_the_kept_version_reads_and_says_so(capsys, monkeypatch,
+                                                                     tmp_path):
+    u"""⭐ 14z (C-1/C-2) -- `hato update --apply --rollback` takes the window's care:
+    config.toml as the kept version can read it, and the words of what changed."""
+    from hato import config
+    from hato.commands import update as command
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    cfg = tmp_path / "config.toml"
+    monkeypatch.setenv("HATO_CONFIG", str(cfg))
+    config.save(config.with_changes(config.load(cfg), extract_embedded=True), cfg)
+    install = _installed(tmp_path)
+    # ⚠ Never the running version's own number: `kept_version` rightly offers no Go back
+    # to the version running (the tree says 1.0.7 until 1.0.8 is stamped)
+    kept = update.stage_root(str(install)) / u"previous" / u"1.0.6"
+    (kept / u"_internal").mkdir(parents=True)
+    for name in (u"hato.exe", u"hato-cli.exe", u"hato-watch.exe", u"hato-update.exe"):
+        (kept / name).write_bytes(b"kept " + name.encode())
+    _frozen_at(monkeypatch, install)
+    assert command.run(_args(rollback=True, json=True)) == command.EXIT_OK, capsys.readouterr()
+    said = _said(capsys)
+    assert said[u"changed"] and u"Leave them there" in said[u"changed"][0], said
+    assert u"extract_embedded" not in cfg.read_text(encoding="utf-8")
+
+
 @pytest.fixture
 def auto(monkeypatch, tmp_path):
     u"""`hato update --auto` as the tray and the daily run call it: frozen, Windows,

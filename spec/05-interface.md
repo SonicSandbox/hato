@@ -42,6 +42,10 @@ hato  ~/Anime/Katainaka S2                                     24 videos
 
 ### Mode B — `--dry-run`, the plan
 
+> ⭐ **14z (C5):** a video to take out of is planned from its HEADER — never by walking the
+> file (6.8 s and 216 MB per 1.45 GB episode, cold); the plan says why one goes to jimaku
+> instead (*"1 to fetch (1 with Japanese subtitles inside that cannot be taken out)"*).
+
 ```
 hato  ~/Anime  --dry-run                          3 folders · 68 videos
 
@@ -278,6 +282,9 @@ recurse    = true
 skip_embedded   = true    # ⭐ RULED 2026-09-17; a Settings choice since 14a (Subtitle format):
                           #   true leaves a video's own Japanese text track in place;
                           #   false downloads from jimaku anyway -- for surasura
+extract_embedded = false  # ⭐ RUNBOOK 14c, RULED 2026-09-25: true takes that track OUT and
+                          #   saves it beside the video (tsubasa writes it); WINS over
+                          #   skip_embedded. Written only once true (NEWER_THAN_1_0_7)
 prefer_format   = "ass"    # ⭐ RUNBOOK 9a, RULED 2026-09-23 -- "ass" or "srt": tried first,
                            #   and with the fallback off the ONLY kind downloaded
 format_fallback = false    # ⭐ OFF by default, ruled: an episode jimaku has only in the
@@ -307,6 +314,20 @@ window says the tray must be restarted.
 >   you keeps it a wait whatever was tried before it, and says the ones the settings refuse
 >   apart from the ones they take now (9a-5…9).
 > - *Download … instead* looks again only once the setting is WRITTEN (9a-11).
+
+> ⭐ **14c, RULED 2026-09-25 — *"Save them beside the video, as a file"* (`extract_embedded`).**
+> - One choice of three (Settings → Subtitle format). Both keys in ONE `hato config`;
+>   `formats.embedded_choice` is the one reader: `extract_embedded` wins.
+> - The track is written by **tsubasa** (`extract_subtitle(write=True)`): `<video>.ja.<ext>`
+>   where the present-check looks, its own format, never over a file. Copied to surasura.
+>   Nothing in the state DB; zero requests.
+> - Not taken out -> downloaded for, and the row says why (`not_taken`).
+> - Mode A: `✓ 01  ⊡ video  taken out · track 3  → …01.ja.ass`; *"N taken from the
+>   video"*; the plan *"N to take out of the video"*, costing no call. `--json`:
+>   `taken_from` `{track, codec, format, name, events}` and `not_taken`.
+> - `--even-if-embedded` downloads, whatever the file says.
+> - An older tray is told under the choice (its pid file lacks `extract`).
+> - The window: *"taken from the video"*, no %, the track on hover.
 
 ⚠ **The API key is NOT in this file.** It is read at runtime from
 `InfiniteVoid/keystore/hato-jimaku.txt`, or `$HATO_JIMAKU_KEY`. See `08-research.md`
@@ -526,6 +547,13 @@ as it resolves, a control lifting under the pointer). ⛔ No decoration that doe
 
 ### Sonic's rulings on the window, 2026-09-17
 
+> ⭐ **14z additions (ADVERSARY 2026-09-25 §14z).** *Go back* to a version that cannot read a
+> setting changes it as it goes — the card says so BEFORE the press (*"Going back also changes
+> a setting: “Save them beside the video, as a file” becomes “Leave them there” — 1.0.7 cannot
+> take subtitles out of a video."*). Needs you's strips and remembered picks say why a video's
+> own subtitles were not taken out (`hato problems` carries `not_taken`); a problem line wraps.
+> Settings writes go one at a time, in click order; the keyboard follows the chosen radio.
+
 | Ruled | Consequence |
 | --- | --- |
 | ⭐ **A web view is fine — but it must be the PROGRAM'S OWN WINDOW.** *"not in chrome or something. Otherwise i'd rather do tkinter"* | An embedded view with no browser chrome, no tab strip, no address bar. ⛔ A localhost URL opened in the user's browser is **refused by this ruling**, not merely discouraged |
@@ -587,6 +615,9 @@ results: list[Result] = fetch(plan, write=True)
 ```
 
 ### `Result` carries
+
+> ⭐ **14z (A-8):** `taken_from` (the track a subtitle was taken out of the video from) and
+> `not_taken` (why one the setting asked to take out was downloaded for) — what every row says.
 
 `video` · `outcome` (CONFIDENT / REFUSED / ERROR / NOT_FOUND) · `reason` ·
 `jimaku_entry` · `jimaku_filename` · `candidates_tried` · `tsubasa` (tsubasa's `Result`,

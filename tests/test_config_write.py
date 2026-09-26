@@ -55,7 +55,8 @@ def test_every_schema_key_is_written_so_a_person_can_read_what_is_in_force(tmp_p
             continue
         assert (u"\n%s = " % name) in text, name
     changed = config.with_changes(load_from(tmp_path), prefer_format=u"srt",
-                                  format_fallback=True, auto_update=False)
+                                  format_fallback=True, auto_update=False,
+                                  extract_embedded=True)
     text = config.dumps(changed)
     for name in config.NEWER_KEYS:
         assert (u"\n%s = " % name) in text, name
@@ -100,6 +101,26 @@ def test_a_file_written_with_updating_untouched_is_one_1_0_3_can_read(tmp_path):
     changed = set(_toml.loads(config.dumps(config.with_changes(fresh, auto_update=False))))
     assert untouched <= known_to_1_0_3, untouched - known_to_1_0_3          # arm 1
     assert changed - known_to_1_0_3 == {"auto_update"}                      # arm 2
+
+
+def test_a_file_written_with_saving_untouched_is_one_1_0_7_can_read(tmp_path):
+    u"""The same rule for 14c's `extract_embedded`: OFF by default, and a file that
+    never chose *Save them beside the video* must stay one 1.0.7 -- its tray, or a
+    daily task still pointing at it -- can read. Two arms against 1.0.7's key list.
+    ⭐ And *Download from jimaku anyway* is `skip_embedded`, which every hato reads:
+    choosing it adds no key an old hato refuses."""
+    from hato.config import _toml
+    known_to_1_0_7 = {"folders", "skip_folders", "lang", "out", "subs_dir", "candidates",
+                      "archives", "allow_ai", "recurse", "skip_embedded", "watch",
+                      "schedule", "surasura_dir", "prefer_format", "format_fallback",
+                      "auto_update", "log"}
+    fresh = config.with_changes(load_from(tmp_path), folders=[str(tmp_path / "Anime")],
+                                skip_embedded=False, auto_update=False)
+    untouched = set(_toml.loads(config.dumps(fresh)))
+    changed = set(_toml.loads(config.dumps(config.with_changes(fresh,
+                                                               extract_embedded=True))))
+    assert untouched <= known_to_1_0_7, untouched - known_to_1_0_7          # arm 1
+    assert changed - known_to_1_0_7 == {"extract_embedded"}                 # arm 2
 
 
 def test_the_writer_raises_when_the_schema_grows_a_key_it_does_not_carry(tmp_path):
@@ -360,6 +381,34 @@ def test_set_changes_a_value_and_show_reads_it_back(monkeypatch, tmp_path, capsy
     out = capsys.readouterr().out
     assert "candidates" in out and "5" in out
     assert "config.toml" in out
+
+
+def test_going_back_writes_the_file_the_kept_version_can_read(tmp_path):
+    u"""⭐ 14z (C-1/C-2) -- REAL against the published 1.0.7: it REFUSES
+    `extract_embedded`, so *Go back* after *Save them beside the video* failed every
+    time, or left every run refusing its settings. `config.readable_by`: every key the
+    kept version never heard of leaves the file -- ⚠ one IN the file at its default too
+    (refused all the same) -- *save* becomes *leave them there*, and the version that
+    knows the key is left alone."""
+    from hato import config
+    path = tmp_path / "config.toml"
+    config.save(config.with_changes(config.load(path), extract_embedded=True,
+                                    skip_embedded=False), path)
+    words = config.make_readable_by(u"1.0.7", path)
+    text = path.read_text(encoding="utf-8")
+    assert u"extract_embedded" not in text and u"skip_embedded = true" in text, text
+    assert len(words) == 1 and u"Leave them there" in words[0] and u"1.0.7" in words[0], words
+    assert config.make_readable_by(u"1.0.7", path) == [], u"a readable file was rewritten"
+    path.write_text(text.replace(u"[log]", u"extract_embedded = false\n\n[log]"),
+                    encoding="utf-8")
+    assert config.make_readable_by(u"1.0.7", path) == []
+    assert u"extract_embedded" not in path.read_text(encoding="utf-8"), (
+        u"a hand-written key the kept version refuses was left in the file")
+    config.save(config.with_changes(config.load(path), extract_embedded=True), path)
+    before = path.read_bytes()
+    assert config.make_readable_by(u"1.0.8", path) == [] and path.read_bytes() == before
+    assert config.unknown_to(u"1.0.7") == (u"extract_embedded",)
+    assert set(config.unknown_to(u"1.0.2")) == set(config.NEWER_KEYS)
 
 
 def test_both_readouts_show_every_setting_the_file_can_hold(monkeypatch, tmp_path, capsys):

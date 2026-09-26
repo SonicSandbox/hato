@@ -134,6 +134,62 @@ SKIP_WORDS = {
 }
 
 
+#: ⭐ RUNBOOK 14c -- what a row says where the jimaku file's name goes, when its
+#: subtitle was TAKEN OUT of the video rather than downloaded (ruled 2026-09-25).
+TAKEN_WORDS = u"taken from the video"
+
+
+def taken_from(row):
+    u"""⭐ 14c -- the track a row's subtitle was taken out of the video from. -> dict
+    or None. ⚠ Only a dict: a row from before 1.0.8 carries no such key."""
+    taken = row.get(u"taken_from")
+    return taken if isinstance(taken, dict) and taken else None
+
+
+def taken_words(row):
+    u"""⭐ 14c -- the track, in words, for the row's hover (ruled: *"the track on
+    hover"*). -> text, or u"" for a row whose subtitle was downloaded."""
+    taken = taken_from(row)
+    if not taken:
+        return u""
+    bits = [u"Track %s inside the video" % taken.get(u"track")]
+    if taken.get(u"name"):
+        bits.append(u"“%s”" % taken[u"name"])
+    if taken.get(u"format"):
+        bits.append(u".%s" % taken[u"format"])
+    events = taken.get(u"events")
+    if isinstance(events, int) and not isinstance(events, bool):
+        bits.append(u"%d line%s" % (events, u"" if events == 1 else u"s"))
+    return (u" · ".join(bits) + u" — taken out and saved beside it; nothing "
+            u"was downloaded.")
+
+
+def not_taken_words(row):
+    u"""⭐ 14c -- why a video the setting asked to TAKE OUT went to jimaku instead.
+    -> text, or u"". ⚠ The CLI's sentence (`report.not_taken_note`), told to a
+    person -- this module never imports the report or the pipeline."""
+    why = (row.get(u"not_taken") or u"").strip()
+    if not why:
+        return u""
+    return (u"The Japanese subtitles inside this video could not be taken out (%s), "
+            u"so jimaku was asked instead." % why.rstrip(u"."))
+
+
+def not_taken_line(rows):
+    u"""⭐ 14z (C4) -- a strip's why, for the rows the setting asked to TAKE OUT and
+    could not. -> text, or u"". The one reason when they share it, a count when not."""
+    whys = [(row.get(u"not_taken") or u"").strip() for row in rows]
+    whys = [why.rstrip(u".") for why in whys if why]
+    if not whys:
+        return u""
+    who = u"them" if len(whys) == len(rows) else u"%d of them" % len(whys)
+    if len(set(whys)) == 1:
+        return (u"The Japanese subtitles inside %s could not be taken out (%s), so "
+                u"jimaku was asked instead" % (u"it" if len(rows) == 1 else who, whys[0]))
+    return (u"The Japanese subtitles inside %s could not be taken out, so jimaku was "
+            u"asked instead" % who)
+
+
 def is_skipped(word):
     u"""Is this one of the words that means *nothing was requested*? -> bool
 
@@ -152,7 +208,7 @@ def interface_words():
     painting code.
     """
     return ({ADDED, NEEDS_YOU, NOT_YET, FAILED} | set(SKIP_WORDS.values())
-            | {PAIRED, FORCED, PICK_REFUSED, PICK_FAILED})
+            | {PAIRED, FORCED, PICK_REFUSED, PICK_FAILED, TAKEN_WORDS})
 
 
 # ---------------------------------------------------------------------------

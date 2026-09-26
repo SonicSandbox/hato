@@ -181,6 +181,81 @@ def _daily_run(cli, watch, keyed, store, folder):
           u"exit %d, %d new log block(s)" % (code, after - before))
 
 
+def _taken_out(cli, env, store):
+    u"""⭐ 14z (ADVERSARY 2026-09-25, C-5) -- *Save them beside the video*, through the
+    FROZEN `hato-cli.exe`, over a real MKV whose only subtitle track is Japanese text:
+    the video's own track out as a file, with no request; the next run finds it; and
+    the doctor names the extractor and a tsubasa at the floor.
+
+    ⛔ Every check of the choice in `tests/` imports hato from SOURCE. The bundle must
+    carry `tsubasa.extract_subtitle` and all it reaches for lazily -- `paths`,
+    `sidecar`, `embedded`, the Matroska reader -- and a freeze over a tsubasa below the
+    floor would pass every other gate here and quietly download instead."""
+    from hato import pipeline
+    if os.path.join(_ROOT, u"tests") not in sys.path:
+        sys.path.insert(0, os.path.join(_ROOT, u"tests"))
+    import _media                                      # the suite's real-video builder
+    where = os.path.join(store, u"inside")
+    os.makedirs(where)
+    built = _media.build(where, stem=u"frieren S2 - 01", count=12)
+    folder = os.path.dirname(str(built.video))
+    saving = dict(env)
+    saving["HATO_CONFIG"] = os.path.join(store, u"saving.toml")
+    code, out, err = run([cli, u"config", u"--set", u"skip_embedded=true",
+                          u"--set", u"extract_embedded=true", u"--json"], saving)
+    check(u"save: the choice is written", code == 0,
+          u"exit %d%s" % (code, u"" if code == 0 else u" :: " + (err or out)[-160:]))
+
+    def rows(text):
+        out = []
+        for line in (text or u"").splitlines():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+        return out
+
+    code, out, err = run([cli, folder, u"--json"], saving, timeout=180)
+    said = rows(out)
+    videos = [r for r in said if r.get(u"type") == u"video"]
+    runs = [r for r in said if r.get(u"type") == u"run"]
+    wrote = os.path.join(folder, u"frieren S2 - 01.ja.srt")
+    taken = [r for r in videos if r.get(u"taken_from")]
+    check(u"save: the frozen bytes take the video's own track out",
+          code == 0 and len(taken) == 1 and os.path.isfile(wrote),
+          u"exit %d · %d row(s), %d taken out · %s" % (code, len(videos), len(taken),
+                                                     u"written" if os.path.isfile(wrote)
+                                                     else (err or out)[-200:]))
+    text = u""
+    if os.path.isfile(wrote):
+        with open(wrote, encoding="utf-8") as handle:
+            text = handle.read()
+    check(u"save: every cue, and no request",
+          text.count(u"-->") == 12 and runs and runs[-1].get(u"api_calls") == 0,
+          u"%d cue(s) of 12 · %s API call(s)" % (text.count(u"-->"),
+                                                 runs[-1].get(u"api_calls") if runs else u"?"))
+    code, out, err = run([cli, folder, u"--json"], saving, timeout=180)
+    again = [r for r in rows(out) if r.get(u"type") == u"video"]
+    check(u"save: the next run finds it",
+          code == 0 and again and again[0].get(u"skip") == pipeline.PRESENT,
+          u"%s" % ([(r.get(u"outcome"), r.get(u"skip")) for r in again] or (err or out)[-160:]))
+    code, out, err = run([cli, u"doctor", u"--json"], saving, timeout=180)
+    lines = {}
+    try:
+        lines = dict((l["label"], l) for l in json.loads(out)["lines"])
+    except (ValueError, KeyError, TypeError):
+        pass
+    extractor = lines.get(u"extractor") or {}
+    engine = lines.get(u"tsubasa") or {}
+    try:
+        floor = tuple(int(p) for p in (engine.get(u"text") or u"").split()[0].split(u"."))
+    except (ValueError, IndexError):
+        floor = ()
+    check(u"save: the frozen doctor names the extractor, and a tsubasa at the floor",
+          extractor.get(u"state") == u"ok" and floor >= (0, 1, 9),
+          u"extractor %s · tsubasa %s" % (extractor.get(u"state"), engine.get(u"text")))
+
+
 def _log_blocks(path):
     u"""-> how many RUN blocks the log holds. ⚠ A run's header is `=== hato
     <timestamp> ===`; the watcher's own complaints are `=== hato watcher ...`,
@@ -517,6 +592,9 @@ def _drive(bundle, cli, gui, watch, env, store):
         said = lines.get(parser) or {}
         check(u"%s parses a name inside the frozen build" % parser, said.get("state") == "ok",
               said.get("text") or u"no %s line :: %s" % (parser, (err or out)[-160:]))
+
+    # -- 5d · ⭐ 14z (C-5) -- A TRACK TAKEN OUT, BY THE FROZEN BYTES --------
+    _taken_out(cli, keyed, store)
 
     # -- 6 · the WINDOW is visible, not merely alive ----------------------
     window_mb = _window(gui, env)
@@ -1049,6 +1127,64 @@ def _stop_all(install, swap):
     swap.wait_gone(install, ops, 20.0)
 
 
+def _going_back(install, root, was, store, swap):
+    u"""⭐ 14z (C-1/C-2) -- the rehearsal's arm 3: *Save them beside the video* chosen by
+    the NEW version, then *Go back* through its own CLI -- the window closed, the TRAY
+    LEFT RUNNING, the harder road: the kept tray must start on the file it reads. The
+    kept version is the RELEASED one, so it is its own parser that must accept the file.
+    ⛔ Everything stopped by its program file, inside the rehearsal's folder."""
+    ops = swap.WinOps()
+    for pid in _hato_windows(install, swap):
+        ops.stop_pid(pid)                     # the window only: the tray stays up
+    waited = 0.0
+    while _hato_windows(install, swap) and waited < 20.0:
+        time.sleep(0.5)
+        waited += 0.5
+    cli = os.path.join(install, CLI_NAME)
+    here = dict(os.environ)
+    code, out, err = run([cli, u"config", u"--set", u"skip_embedded=true",
+                          u"--set", u"extract_embedded=true", u"--json"], here)
+    with open(os.path.join(store, u"config.toml"), encoding="utf-8") as handle:
+        saved = handle.read()
+    check(u"rehearsal: the new version saves a choice the kept one never heard of",
+          code == 0 and u"extract_embedded = true" in saved,
+          u"exit %d%s" % (code, u"" if code == 0 else u" :: " + (err or out)[-160:]))
+    result = os.path.join(str(root), u"result.json")
+    since = time.time()
+    code, out, err = run([cli, u"update", u"--apply", u"--rollback", u"--json"], here)
+    applying = {}
+    for line in (out or u"").splitlines():
+        try:
+            said = json.loads(line)
+        except ValueError:
+            continue
+        if said.get(u"type") == u"applying":
+            applying = said
+    check(u"rehearsal: going back says what it changes",
+          code == 0 and any(u"Leave them there" in c for c in applying.get(u"changed") or ()),
+          u"exit %d · %s" % (code, applying.get(u"changed") or (err or out)[-200:]))
+    done, waited = {}, 0.0
+    while waited < 240.0:
+        try:
+            if os.path.getmtime(result) >= since - 2.0:
+                with open(result, encoding="utf-8") as handle:
+                    done = json.load(handle)
+                if done.get(u"status"):
+                    break
+        except (OSError, ValueError):
+            pass
+        time.sleep(1.0)
+        waited += 1.0
+    back = _version_of(cli)
+    check(u"rehearsal: Go back holds with the choice saved -- the kept tray reads the file",
+          back == was and done.get(u"status") == u"success",
+          u"installed says %s (was %s) · the swapper: %s · %s"
+          % (back, was, done.get(u"status") or u"no result", _swap_said(store)))
+    code, out, err = run([cli, u"config", u"--show"], here)
+    check(u"rehearsal: the kept version reads its settings after Go back", code == 0,
+          u"exit %d%s" % (code, u"" if code == 0 else u" :: " + (err or out)[-200:]))
+
+
 def _rehearsal(bundle, cli):
     u"""⭐ LAYER 11h -- THE REHEARSAL: an installed hato updated by the REAL swapper
     from THIS bundle, on the built bytes, both ways.
@@ -1210,6 +1346,13 @@ def _rehearsal(bundle, cli):
               len(trays) == 1 and named == trays[0],
               u"%d tray(s) running from the install %s · the pid file names %s"
               % (len(trays), trays, named))
+
+        # -- arm 3 · ⭐ 14z (C-1/C-2) -- GO BACK, WITH A SETTING THE KEPT VERSION NEVER
+        # HEARD OF. Measured against the published 1.0.7: after *Save them beside the
+        # video* its tray REFUSED config.toml, so Go back put the new version back every
+        # time -- or, with no tray, left a 1.0.7 whose every run refused its settings.
+        if was != version:
+            _going_back(install, root, was, store, swap)
     except Exception as exc:                  # noqa: BLE001 -- a failure is a FAIL line
         check(u"rehearsal ran to the end", False, u"%s: %s" % (type(exc).__name__, exc))
     finally:

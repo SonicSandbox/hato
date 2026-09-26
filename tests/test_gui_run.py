@@ -333,6 +333,25 @@ def test_the_FIVE_skips_do_not_collapse_into_one_reassuring_word():
     assert u"inside" in inside, inside
 
 
+def test_the_words_for_a_subtitle_taken_out_of_the_video():
+    u"""⭐ RUNBOOK 14c -- the row's name column, its hover, and why a download the
+    choice did not want happened. ⛔ None for a downloaded row; ⛔ the engine's
+    word never among them."""
+    taken = {u"taken_from": {u"track": 3, u"codec": u"S_TEXT/ASS", u"format": u"ass",
+                             u"name": u"Full Subs", u"events": 1}}
+    assert gui_run.taken_from(taken)[u"track"] == 3
+    said = gui_run.taken_words(taken)
+    assert said.startswith(u"Track 3 inside the video") and u"1 line " in said + u" ", said
+    assert u"Full Subs" in said and u".ass" in said, said
+    assert gui_run.taken_from({u"taken_from": None}) is None
+    assert gui_run.taken_words({}) == u"" and gui_run.not_taken_words({}) == u""
+    why = gui_run.not_taken_words({u"not_taken": u"an MP4 file."})
+    assert why == (u"The Japanese subtitles inside this video could not be taken out "
+                   u"(an MP4 file), so jimaku was asked instead."), why
+    assert gui_run.TAKEN_WORDS in gui_run.interface_words()
+    assert not any(u"refus" in w for w in gui_run.interface_words())
+
+
 def test_an_unknown_skip_still_renders_as_something():
     u"""⚠ A skip kind this GUI has never heard of must not paint a blank row.
     The engine can add one without the window being rebuilt."""

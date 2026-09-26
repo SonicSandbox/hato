@@ -453,6 +453,39 @@ def test_a_video_the_setting_leaves_to_its_own_japanese_track_is_not_listed(lab)
         "left to its own Japanese track, the video still asks for a pick -- and no run "
         "will ever download for it again")
 
+def test_a_video_the_choice_saves_is_listed_until_a_run_takes_it_out(lab):
+    """⭐ RUNBOOK 14c -- Z14-4's filter is for *Leave them there* ONLY. Under *Save
+    them beside the video* the next run takes the track out -- or, when it cannot,
+    downloads -- so the row is a real one until a run does; the file it writes then
+    settles it through the present-check. ⚠ A file saying BOTH keys saves
+    (`formats.embedded_choice`), so it is listed too."""
+    import _media
+    real = _media.build(lab.root)
+    refuse(lab, real.video, "[G] Sample Show - 01 [JPN].ass", 0.2)
+    gave_up(lab, real.video, 1)
+    for keys in ("extract_embedded = true\n",
+                 "skip_embedded = true\nextract_embedded = true\n"):
+        saving = config.parse(lab.config_text() + keys)
+        assert names(lab.rows(saving)) == {real.video.name}, (
+            "%r: the video the next run takes out was dropped from Needs you" % keys)
+
+
+def test_a_remembered_row_says_why_the_subtitles_inside_were_not_taken_out(lab):
+    """⭐ 14z (C4) -- under *Save them beside the video*, WHY IT WAS NOT TAKEN OUT rides
+    the remembered row too. The run's row said so and the DB never held it: once the
+    run was over the pick and both strips said nothing. From the HEADER, the real reader
+    over a real video whose only Japanese track is signs-only (forced)."""
+    import _media
+    real = _media.build(lab.root, forced=True)
+    refuse(lab, real.video, "[G] Sample Show - 01 [JPN].ass", 0.2)
+    gave_up(lab, real.video, 1)
+    saving = config.parse(lab.config_text() + "extract_embedded = true\n")
+    row = only(lab.rows(saving))
+    assert "FORCED" in (row["not_taken"] or ""), row["not_taken"]
+    fetching = config.parse(lab.config_text() + "skip_embedded = false\n")
+    assert only(lab.rows(fetching))["not_taken"] is None, (
+        "the why of a choice the person did not make")
+
 
 def test_a_row_with_no_recorded_path_is_passed_over_not_a_crash(lab):
     control = a_problem(lab, "Show - 10.mkv")

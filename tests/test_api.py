@@ -270,6 +270,21 @@ def test_Result_refuses_a_non_confident_outcome_with_no_reason():
         u"everything (doctrine/robustness)")
 
 
+def test_skip_embedded_given_alone_keeps_the_meaning_it_had_before_save(tmp_path,
+                                                                         monkeypatch):
+    u"""⭐ 14z (C-7) -- `scan(skip_embedded=True)` is *leave them there*, whatever the
+    file says: config.toml saying *save* WROTE `.ja.srt` into the media folder through
+    the library's explicit leave. Given ALONE, the newer key is off; given with it, or
+    not at all, the file's choice stands."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(u"extract_embedded = true\nskip_embedded = true\n", encoding="utf-8")
+    monkeypatch.setenv("HATO_CONFIG", str(cfg))
+    for given, want in ((dict(skip_embedded=True), False), (dict(skip_embedded=False), False),
+                        (dict(), True), (dict(skip_embedded=True, extract_embedded=True), True)):
+        settings = api._settings([str(tmp_path)], dict(given))
+        assert settings.extract_embedded is want, (given, settings.extract_embedded)
+
+
 def test_the_outcome_words_are_importable_so_nobody_compares_a_string_literal():
     u"""⚠ tsubasa's `certain` was a SUBSTRING of `uncertain` and that re-armed a
     real defect for every consumer that string-matched (`LEDGER.md` §Interface).
@@ -926,7 +941,9 @@ def test_every_settings_field_survives_a_round_trip(tmp_path):
     this fails loudly instead of the value being dropped."""
     bench = Bench(tmp_path, names=episodes_up_to(1))
     plan = bench.scan(lang=u"ja", candidates=2, allow_ai=True, recurse=False,
-                      archives=True, skip_embedded=False, out=str(bench.out))
+                      archives=True, skip_embedded=False, extract_embedded=True,
+                      out=str(bench.out))
+    assert plan.settings.extract_embedded is True, u"scan() dropped extract_embedded"
 
     copy = api._replace(plan.settings, dry_run=False)
 

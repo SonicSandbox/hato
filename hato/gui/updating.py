@@ -75,6 +75,9 @@ class Updates(object):
         self.auto = True
         #: the version kept for *Go back* (`update.kept_version`), or None
         self.kept = None
+        #: ⭐ 14z -- what going back to `kept` would change in config.toml, in words:
+        #: the Go back card says it BEFORE the press (`update.going_back_words`)
+        self.back_changes = []
         #: the version not to install automatically (`update.skipped`), or None
         self.skipped = None
         #: the swapper's result.json, read once at start, until dismissed
@@ -320,9 +323,15 @@ def back_card(u):
     u"""*Go back to X?* -- the same card, asking. ⭐ Reversible: the version left is
     kept, so going back can itself be undone."""
     kept = u.kept or u""
+    # ⭐ 14z (C-1/C-2) -- A SETTING THE KEPT VERSION CANNOT READ IS CHANGED AS IT GOES,
+    # and said here, before the press: a decision hato makes for a person needs a
+    # surface (`LEDGER-HOT.md`), and after the press it is the OLD version talking.
+    changes = [c for c in (getattr(u, u"back_changes", None) or ()) if c]
     return {u"title": (u"Go back to ", kept, u"?"),
             u"sub": u"You have %s" % u.current,
-            u"critical": u"", u"said": prose(u.said), u"notes": [], u"link": None,
+            u"critical": (u"Going back also changes a setting: %s." % u"; ".join(changes))
+                         if changes else u"",
+            u"said": prose(u.said), u"notes": [], u"link": None,
             u"footer": (u"hato closes, puts %s back and opens again by itself. %s is kept, "
                         u"so you can return to it — and hato won't install it again on "
                         u"its own." % (kept, u.current)),

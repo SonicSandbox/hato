@@ -2185,3 +2185,9 @@ def test_this_tray_says_it_keeps_hato_up_to_date():
     u"""⭐ A NEW BUILD NEEDS A NEW TOKEN (CAPABILITIES' own note): a window can tell
     a tray that updates hato from an older one that does not."""
     assert u"updates" in watch.CAPABILITIES
+
+
+def test_this_tray_says_its_runs_read_the_choice_to_save_them_beside_the_video():
+    u"""⭐ 14c -- the same rule: a tray whose runs can read `extract_embedded` says so,
+    so a window can tell it from an older one that would refuse config.toml."""
+    assert u"extract" in watch.CAPABILITIES

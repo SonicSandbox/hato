@@ -67,6 +67,15 @@ SCHEMA = {
     # it off is not wasteful: the embedded track becomes the reference the download
     # is timed against, which is the strongest reference there is.
     "skip_embedded": (bool, True),
+    # ⭐ RUNBOOK 14c, RULED BY SONIC 2026-09-25 (*"I take all your leans. Go"*).
+    # TRUE: a video's own Japanese text track is TAKEN OUT and saved beside the
+    # video, as a file -- tsubasa writes it (`tsubasa.extract_subtitle`), because
+    # the only write in a media folder is tsubasa's (03-permissions.md, Whitelist
+    # 1). A video it cannot be taken out of -- not an MKV, a forced track only -- is
+    # downloaded for instead, and its row says why. ⚠ It WINS over
+    # `skip_embedded`: the window writes both, and `formats.embedded_choice` is
+    # the one reader of the pair.
+    "extract_embedded": (bool, False),
     # 🚨 ADDED 2026-09-18, AND IT WAS BEING WRITTEN BEFORE IT EXISTED. The
     # window's "Watch for new videos and run" tick sent
     # `hato config --set watch=true`, the schema refused it by name, and the
@@ -121,8 +130,16 @@ NEWER_THAN_1_0_2 = ("prefer_format", "format_fallback")
 #: window reads NEWER_THAN_1_0_2 as *"the FORMAT keys are in the file"*, and an
 #: update switch there would put a format warning on the format card.
 NEWER_THAN_1_0_3 = ("auto_update",)
+#: The same rule for 1.0.8's own key (RUNBOOK 14c) -- its own tuple for the same
+#: reason: the window says a tray must be restarted under the choice it speaks for.
+NEWER_THAN_1_0_7 = ("extract_embedded",)
 #: Every key written only once set away from its default.
-NEWER_KEYS = NEWER_THAN_1_0_2 + NEWER_THAN_1_0_3
+NEWER_KEYS = NEWER_THAN_1_0_2 + NEWER_THAN_1_0_3 + NEWER_THAN_1_0_7
+#: ⭐ 14z (ADVERSARY 2026-09-25, C-1/C-2) -- which hato first refuses which keys,
+#: oldest first: `NEWER_THAN_x_y_z` names the keys a hato AT OR BELOW x.y.z has never
+#: heard of. ⛔ A key added here is a key *Go back* must be able to take away.
+NEWER_THAN = (((1, 0, 2), NEWER_THAN_1_0_2), ((1, 0, 3), NEWER_THAN_1_0_3),
+              ((1, 0, 7), NEWER_THAN_1_0_7))
 
 #: ⚠ `schedule` is HH:MM, 24-hour. A free string here would be written happily
 #: and refused later by whatever registers the task -- somewhere the person is
@@ -230,6 +247,7 @@ class Config(object):
 
     __slots__ = ("folders", "skip_folders", "lang", "out", "subs_dir",
                  "candidates", "archives", "allow_ai", "recurse", "skip_embedded",
+                 "extract_embedded",
                  "watch", "schedule", "surasura_dir", "prefer_format",
                  "format_fallback", "auto_update", "log_path", "log_keep",
                  "path", "path_source", "file_exists", "_set")
@@ -259,6 +277,7 @@ class Config(object):
             # ⚠ Z14-6 (the Layer 14 pass): never here -- and 14a made it a choice in
             # the window. A check derives every key from SCHEMA now
             "skip_embedded": self.skip_embedded,
+            "extract_embedded": self.extract_embedded,
             "watch": self.watch, "schedule": self.schedule,
             "surasura_dir": self.surasura_dir,
             "prefer_format": self.prefer_format,
@@ -366,6 +385,7 @@ def parse(text, path=None):
     cfg.allow_ai = values["allow_ai"]
     cfg.recurse = values["recurse"]
     cfg.skip_embedded = values["skip_embedded"]
+    cfg.extract_embedded = values["extract_embedded"]
     cfg.watch = values["watch"]
     schedule = values["schedule"]
     if not is_clock(schedule):
@@ -527,6 +547,7 @@ def _writable(cfg):
         "allow_ai": cfg.allow_ai,
         "recurse": cfg.recurse,
         "skip_embedded": cfg.skip_embedded,
+        "extract_embedded": cfg.extract_embedded,
         "watch": cfg.watch,
         "schedule": cfg.schedule,
         "surasura_dir": cfg.surasura_dir,
@@ -667,3 +688,72 @@ def with_changes(cfg, **changes):
     fresh.path_source = cfg.path_source
     fresh.file_exists = cfg.file_exists
     return fresh
+
+def _version(text):
+    u"""'1.0.7' -> (1, 0, 7), or None."""
+    try:
+        return tuple(int(part) for part in (u"%s" % text).strip().split(u"."))
+    except ValueError:
+        return None
+
+
+def unknown_to(version):
+    u"""⭐ 14z (C-1/C-2) -- the keys a hato at `version` has never heard of, and so
+    REFUSES. -> tuple of names. ⚠ A version that does not read as one is taken as the
+    OLDEST -- every newer key: nothing it might refuse is kept."""
+    mine = _version(version)
+    return tuple(name for top, names in NEWER_THAN
+                 if mine is None or mine <= top for name in names)
+
+
+#: ⭐ 14z -- what a newer key's setting becomes for a hato that has never heard of it,
+#: and the words for it. ⛔ The nearest SAFE choice that version has: saving a video's
+#: own subtitles becomes leaving them there -- nothing downloaded, nothing written.
+_GOING_BACK = {
+    "extract_embedded": ({"skip_embedded": True},
+                         u"“Save them beside the video, as a file” becomes “Leave them "
+                         u"there” — %s cannot take subtitles out of a video"),
+}
+
+
+def readable_by(cfg, version):
+    u"""⭐ 14z (ADVERSARY 2026-09-25, C-1/C-2) -- `cfg` as a hato at `version` can read
+    it. -> (Config, [what changed, in words]); `cfg` itself when it already can.
+
+    🚨 An older hato REFUSES a key it has never heard of (rule 2 above), so one in the
+    file stops EVERY run that version starts. Measured against the published 1.0.7:
+    *Go back* after *"Save them beside the video"* put 1.0.8 back every time -- the
+    kept tray refused the file and exited -- or, with no tray, left a 1.0.7 whose every
+    run, daily run and update refused it, Settings showing the defaults and nothing
+    saying why. So Go back first writes the file the kept version can read: each key
+    it never heard of back to its default (`dumps()` then leaves it out), and the
+    choice it stood for mapped to the nearest one that version has (`_GOING_BACK`).
+    ⚠ IN THE FILE, not away from its default: a hand-written `extract_embedded =
+    false` is refused all the same.
+    """
+    changes, words = {}, []
+    for name in unknown_to(version):
+        if cfg.origin(name) == "default":
+            continue                        # not in the file: nothing to refuse
+        if getattr(cfg, name) != SCHEMA[name][1]:
+            also, said = _GOING_BACK.get(name, ({}, u"%s goes back to its default — %%s "
+                                                    u"has no such setting" % name))
+            changes.update(also)
+            words.append(said % version)
+        changes[name] = SCHEMA[name][1]
+    if not changes:
+        return cfg, []
+    return with_changes(cfg, **changes), words
+
+
+def make_readable_by(version, path=None):
+    u"""⭐ 14z -- config.toml rewritten so a hato at `version` can read it, through the
+    one writer (`save`). -> [what changed, in words]. Raises `ConfigError` or `OSError`
+    as `load` and `save` do -- the caller decides."""
+    cfg = load(path)
+    if not cfg.file_exists:
+        return []
+    fresh, words = readable_by(cfg, version)
+    if fresh is not cfg:
+        save(fresh, cfg.path)
+    return words

@@ -111,6 +111,12 @@ SUB = u"⤷"              # ⤷
 #: ⭐ 9a -- the kind `_kind` gives a format wait, skipped or not. A report kind,
 #: never an engine one: the engine calls it NOT_FOUND, then a NEGATIVE skip.
 FORMAT_WAIT = u"format"
+#: ⭐ RUNBOOK 14c -- a subtitle TAKEN OUT of the video, written or planned. A report
+#: kind like the one above: the engine calls it CONFIDENT (or PLANNED), and
+#: `RunReport.counts()` stays the engine's.
+TAKEN = u"taken"
+#: Its mark -- the *inside the video* skip's, because that is where it came from.
+INSIDE = u"⊡"
 
 #: skip kind -> (marker, the sentence). ⚠ The sentence is per KIND, not per
 #: video: the rows are collapsed onto one line and a per-video reason could not
@@ -158,6 +164,9 @@ def _kind(result):
     and the `--json` stream read it as the ENGINE'S counts."""
     if is_format_wait(result):
         return FORMAT_WAIT
+    if getattr(result, "taken_from", None) and result.outcome in (pipeline.CONFIDENT,
+                                                                   pipeline.PLANNED):
+        return TAKEN
     return result.skip if result.outcome == pipeline.SKIPPED else result.outcome
 
 
@@ -181,6 +190,8 @@ def problem_label(result):
 #: Everything after those five is a state the mock did not happen to contain.
 SUMMARY = (
     (pipeline.CONFIDENT, u"fetched", u"fetched"),
+    # ⭐ 14c -- never "fetched": nothing was
+    (TAKEN, u"taken from the video", u"taken from the video"),
     (pipeline.PRESENT, u"skipped", u"skipped"),
     (pipeline.NO_TRACK, u"can't sync yet", u"can't sync yet"),
     (pipeline.NOT_FOUND, u"not found", u"not found"),
@@ -478,6 +489,9 @@ def _problem_rows(results, width, show_col, verbose):
         said = unwritten_note(r)
         if said:
             out.extend(wrap(said, width, first=indent + WARN + u" ", rest=indent + u"  "))
+        said = not_taken_note(r)                  # ⭐ 14c
+        if said:
+            out.extend(wrap(said, width, first=indent + WARN + u" ", rest=indent + u"  "))
         if verbose:
             out.extend(_verbose_attempts(r, indent, width))
     return out
@@ -521,6 +535,12 @@ def _skip_rows(results, width, show_col):
             block = pad(numbers, 16)
             out.extend(wrap(line, width, first=head + block + u" ",
                             rest=u" " * cells(head + block) + u" "))
+            for r in sorted(rows, key=_sort_key):
+                said = not_taken_note(r)          # ⭐ 14z (A-8): as every other row
+                if said:
+                    out.extend(wrap(u"%s: %s" % (episode(r), said), width,
+                                    first=u" " * cells(head) + WARN + u" ",
+                                    rest=u" " * (cells(head) + 2)))
     for key in sorted([k for k in order if k[0] not in known], key=lambda k: (str(k[0]), k[1])):
         # ⚠ A skip kind this module has never heard of is NAMED, not dropped.
         rows, label = groups[key], key[1]
@@ -534,6 +554,10 @@ def _skip_rows(results, width, show_col):
 def _success_rows(results, width, show_col, verbose):
     out = []
     for r in sorted(results, key=_sort_key):
+        taken = getattr(r, "taken_from", None)
+        if taken:
+            out.extend(_taken_row(r, taken, width, show_col))       # ⭐ 14c
+            continue
         t = r.tsubasa
         mark = FLAGGED if flagged(t) else OK
         if r.bytes_downloaded:
@@ -553,9 +577,37 @@ def _success_rows(results, width, show_col, verbose):
             # actually built, never from a re-counted guess at it.
             out.append(head.rstrip())
             out.append(u" " * cells(left) + tail)
+        said = not_taken_note(r)                  # ⭐ 14c
+        if said:
+            out.extend(wrap(said, width, first=u" " * 6 + WARN + u" ",
+                            rest=u" " * 8))
         if verbose:
             out.extend(_verbose_attempts(r, u" " * 6, width))
     return out
+
+
+def not_taken_note(result):
+    u"""⭐ RUNBOOK 14c -- why a video the setting asked to TAKE OUT went to jimaku
+    instead. -> text or None. ⭐ ONE sentence, for Mode A's rows and the window alike
+    (ruled: *"its row says why"*)."""
+    why = (getattr(result, "not_taken", None) or u"").strip()
+    if not why:
+        return None
+    return (u"the Japanese subtitles inside it could not be taken out (%s), so jimaku "
+            u"was asked instead" % why.rstrip(u"."))
+
+
+def _taken_row(result, taken, width, show_col):
+    u"""⭐ RUNBOOK 14c -- `✓  01   ⊡ video   taken out · track 3   → …01.ja.ass`.
+    ⛔ No percentage and no verdict: nothing was timed -- the track IS the video's.
+    ⚠ Its columns are the success row's, so the arrows line up down the block."""
+    left = u"  %s  %s%s   %s   " % (OK, show_col(result), pad(episode(result), 2),
+                                    pad(u"%s video" % INSIDE, 7))
+    head = left + pad(u"taken out %s track %s" % (DOT, taken.get(u"track")), 8 + 3 + 18)
+    tail = u"%s %s" % (ARROW, output_of(result))
+    if cells(head) + cells(tail) <= width:
+        return [(head + tail).rstrip()]
+    return [head.rstrip(), u" " * cells(left) + tail]
 
 
 def _verbose_attempts(result, indent, width=DEFAULT_WIDTH):
@@ -893,9 +945,11 @@ def render_plan(report, width=DEFAULT_WIDTH, verbose=False):
     counts = _counts(report)
     uncertain = sum(1 for show in report.shows
                     if show.resolved is not None and show.resolved.low_confidence
-                    for r in show.results if r.outcome == pipeline.PLANNED)
+                    for r in show.results if r.outcome == pipeline.PLANNED
+                    and not getattr(r, "taken_from", None))
     parts = []
     for key, word in ((pipeline.PLANNED, u"to fetch"),
+                      (TAKEN, u"to take out of the video"),         # ⭐ 14c
                       (pipeline.PRESENT, u"already present"),
                       (pipeline.NO_TRACK, u"no subtitle track"),
                       (pipeline.NEGATIVE, u"waiting to retry"),
@@ -908,13 +962,23 @@ def render_plan(report, width=DEFAULT_WIDTH, verbose=False):
         n = counts.pop(key, 0)
         if n:
             parts.append(u"%d %s" % (n, word))
+        if n and key == pipeline.PLANNED:
+            # ⭐ 14z (A-8) -- and WHY one the setting asked to take out goes to jimaku
+            inside = sum(1 for r in report.results if r.outcome == pipeline.PLANNED
+                         and not getattr(r, "taken_from", None)
+                         and getattr(r, "not_taken", None))
+            if inside:
+                parts[-1] += (u" (%d with Japanese subtitles inside that cannot be "
+                              u"taken out)" % inside)
     for key, n in counts.items():
         parts.append(u"%d %s" % (n, key))
     if uncertain:
         parts.append(u"%d uncertain" % uncertain)
 
+    # ⚠ 14c: a track taken out asks jimaku nothing -- a show of only those lists nothing
     listings = sum(1 for show in report.shows
-                   if any(r.outcome == pipeline.PLANNED for r in show.results))
+                   if any(r.outcome == pipeline.PLANNED and not getattr(r, "taken_from", None)
+                          for r in show.results))
     out.append(u"")
     out.extend(pair(u"  PLAN", u"nothing written", width))
     out.extend(wrap((u" %s " % DOT).join(parts) or u"nothing to do", width,
@@ -1023,6 +1087,10 @@ def as_dict(result):
         # ⭐ RUNBOOK 8f -- the newest episode on offer, in the video's numbering,
         # so the window can say *probably not out yet*. null when nothing says.
         "newest_offered": getattr(result, "newest_offered", None),
+        # ⭐ RUNBOOK 14c -- the track a subtitle was TAKEN OUT of the video from, and
+        # why one the setting asked to take out was downloaded for instead.
+        "taken_from": _plain(getattr(result, "taken_from", None)),
+        "not_taken": getattr(result, "not_taken", None),
     }
 
 
@@ -1063,6 +1131,6 @@ def ndjson(report):
 __all__ = ["DEFAULT_WIDTH", "DRY_RUN_SENTENCE", "WRITE_FAILED_SENTENCE",
            "cells", "clip", "pad", "pair", "wrap", "strip_ansi", "paint",
            "episode", "size", "offsets", "verdict", "flagged", "nothing_written",
-           "unwritten_note", "retry_note", "counts_line", "cost_line",
+           "unwritten_note", "not_taken_note", "retry_note", "counts_line", "cost_line",
            "render", "render_run", "render_plan", "as_dict", "run_dict",
            "tsubasa_dict", "ndjson"]

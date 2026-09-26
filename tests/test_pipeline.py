@@ -26,6 +26,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -70,6 +71,57 @@ class Answer(object):
         if not self.ok:
             raise ValueError(u"could not be read: %s" % self.reason)
         return self._tracks
+
+
+class TakenOut(object):
+    u"""`tsubasa.ExtractedSubtitle`, for the checks that decide what a track comes out
+    as without a container (RUNBOOK 14c). ⭐ It WRITES when asked, as tsubasa does --
+    `<stem>.<lang>.<ext>` in `out_dir`, else beside the video, temp-plus-rename, and
+    ⛔ never over a file that is there -- so the present-check after it is the real
+    one. `ext` defaults to the codec's own family (`.ass` stays `.ass`)."""
+
+    def __init__(self, video, track, ok=True, reason=u"", ext=None, codec=None,
+                 cues=412, lang=u"ja", fails_to_write=u"", writes_as=None, notes=()):
+        self.video = video
+        self.ok = ok
+        self.reason = u"" if ok else reason
+        self.index = getattr(track, "index", track)
+        self.codec = codec or getattr(track, "codec", u"") or u""
+        self.ext = (ext or formats.of_codec(self.codec) or u"ass") if ok else u""
+        self.cues = cues if ok else 0
+        self.lang = lang
+        self.data = u"taken out of %s\n" % os.path.basename(video) if ok else u""
+        self.data = self.data.encode("utf-8")
+        self.output_path = None
+        self.write_failed = False
+        self.notes = tuple(notes)
+        self._fails = fails_to_write
+        #: ⭐ 14z (A-5) -- the name tsubasa wrote it under when it had to change it
+        self._as = writes_as
+
+    def write(self, out_dir):
+        stem = os.path.splitext(os.path.basename(self.video))[0]
+        folder = out_dir or os.path.dirname(self.video)
+        target = os.path.join(folder, self._as or u"%s.%s.%s" % (stem, self.lang, self.ext))
+        if self._fails or os.path.lexists(target):
+            self.write_failed = True
+            self.reason = self._fails or (u"%s is already there -- nothing was written "
+                                          u"over it" % os.path.basename(target))
+            return
+        os.makedirs(folder, exist_ok=True)
+        # ⚠ 14z (A-1) -- ONE temporary name, `x` mode: never `mkstemp`, which in a folder
+        # that denies adding a file tries 2^31 names -- a witness that HANGS instead of
+        # failing, under the very mutant it exists to catch.
+        temporary = os.path.join(folder, u".taken-%d" % os.getpid())
+        try:
+            with open(temporary, "xb") as fh:
+                fh.write(self.data)
+        except OSError as exc:
+            self.write_failed = True
+            self.reason = u"%s could not be written: %s" % (os.path.basename(target), exc)
+            return
+        os.replace(temporary, target)
+        self.output_path = target
 
 
 class Blind(object):
@@ -139,6 +191,11 @@ class Lab(object):
         #: candidate name -> `port.stub_engine` keyword arguments.
         self.decide = lambda name: {}
         self.use_real_engine = False
+        #: ⭐ 14c -- video basename -> how its track comes out (`TakenOut`'s
+        #: keywords, plus `refuse`: {track index: reason}); and every extraction
+        #: asked for, as (name, track index, write, out_dir)
+        self.takes = {}
+        self.extracted = []
 
     def second_root(self, folder, *names):
         u"""⭐ A SECOND SCANNED ROOT, which `Lab` could not express until
@@ -171,6 +228,19 @@ class Lab(object):
         (video, subtitle), = list(pairs)
         return port.stub_engine(**self.decide(os.path.basename(subtitle)))(pairs, **kwargs)
 
+    def extractor(self, video, track, write=False, out_dir=None):
+        name = os.path.basename(video)
+        index = getattr(track, "index", track)
+        self.extracted.append((name, index, write, out_dir))
+        how = dict(self.takes.get(name, {}))
+        refused = how.pop("refuse", {})
+        if index in refused:
+            how.update(ok=False, reason=refused[index])
+        got = TakenOut(video, track, **how)
+        if write and got.ok:
+            got.write(out_dir)
+        return got
+
     # -- driving -----------------------------------------------------------
 
     def settings(self, **overrides):
@@ -196,7 +266,8 @@ class Lab(object):
             resolutions=self.resolutions, cache=self.cache,
             downloader=self.download,
             engine=None if self.use_real_engine else self.engine,
-            reader=None if self.use_real_engine else self.reader)
+            reader=None if self.use_real_engine else self.reader,
+            extractor=None if self.use_real_engine else self.extractor)
         self.spent = self.metered - before
         return report
 
@@ -2769,3 +2840,635 @@ def test_some_failed_downloads_and_some_refusals_are_each_counted_as_what_they_w
     assert u"1 more could not be downloaded" in row.reason, row.reason
     waiting = lab.db.negative(lab.hash_of(u"frieren S2 - 01.mkv"), u"ja")
     assert u"1 refused by timing, 1 could not be downloaded" in waiting.reason, waiting.reason
+
+
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 14c -- *"Save them beside the video, as a file"* (RUNBOOK 14c)
+# ---------------------------------------------------------------------------
+# Ruled by Sonic 2026-09-25 (*"I take all your leans. Go"*): the video's own Japanese
+# track TAKEN OUT and written beside it by tsubasa -- hato's only write in a media
+# folder is tsubasa's (Whitelist 1) -- never converted, never over a file that is
+# there; the row *"taken from the video"*; and a video it cannot be taken out of is
+# downloaded for instead, its row saying why.
+
+def _save(lab, name, tracks, **takes):
+    u"""`name`'s container holds `tracks`; its extraction comes out as `takes` says."""
+    lab.tracks[name] = Answer(tracks=tracks)
+    if takes:
+        lab.takes[name] = takes
+
+
+def test_saving_takes_the_japanese_track_out_and_writes_it_beside_the_video(tmp_path):
+    u"""⭐ The choice, end to end through the seam: tsubasa asked to WRITE, into the
+    folder the present-check reads; the row CONFIDENT with the file and the track
+    it came from; ⛔ no request, no download, no row in the state DB -- and the next
+    run finds the file and asks nothing at all."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja", codec=u"S_TEXT/ASS", index=3)])
+
+    one, = lab.run(extract_embedded=True, skip_embedded=False).results
+
+    assert one.outcome == pipeline.CONFIDENT, one.reason
+    assert one.wrote and one.skip is None
+    assert Path(one.output_path) == lab.media / u"frieren S2 - 01.ja.ass"
+    assert Path(one.output_path).is_file()
+    assert one.taken_from == {u"track": 3, u"codec": u"S_TEXT/ASS", u"format": u"ass",
+                              u"name": None, u"events": 412}, one.taken_from
+    assert lab.extracted == [(u"frieren S2 - 01.mkv", 3, True, str(lab.media))], lab.extracted
+    assert lab.spent == 0 and lab.downloads == []
+    assert lab.rows() == {pipeline.CONFIDENT: 0, pipeline.REFUSED: 0,
+                          pipeline.ERROR: 0, pipeline.NOT_FOUND: 0}, (
+        u"a subtitle taken out is recorded nowhere but on disk")
+    wire = report_module.as_dict(one)
+    assert wire[u"taken_from"][u"track"] == 3 and wire[u"not_taken"] is None
+
+    again, = lab.run(extract_embedded=True, skip_embedded=False).results
+    assert again.skip == pipeline.PRESENT, (again.outcome, again.reason)
+    assert len(lab.extracted) == 1, u"the second run took it out again"
+
+
+def test_saving_copies_the_file_to_surasura_as_every_written_subtitle_is(tmp_path):
+    u"""⭐ Ruled with the choice: *"copied to surasura"* -- the reason anybody asks for
+    a file at all. ⛔ Through the one funnel every written subtitle passes."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja", codec=u"S_TEXT/ASS")])
+    surasura = tmp_path / u"surasura"
+
+    one, = lab.run(extract_embedded=True, surasura_dir=surasura).results
+
+    assert one.wrote, one.reason
+    copied = surasura / keep.SURASURA_FOLDER / u"frieren S2 - 01.ja.ass"
+    assert copied.is_file(), u"the saved subtitle never reached surasura"
+    assert copied.read_bytes() == Path(one.output_path).read_bytes()
+
+
+def test_a_video_it_cannot_be_taken_out_of_is_downloaded_for_and_says_why(tmp_path):
+    u"""⭐ Ruled: *"a video hato cannot take subtitles out of (not MKV) is downloaded for
+    instead, and its row says why."* tsubasa's own reason, on the row of the download
+    -- through `--json` too, which is what the window reads."""
+    lab = Lab(tmp_path, names=[u"frieren S2 - 01.mp4"])
+    why = (u"frieren S2 - 01.mp4 is an MP4 file -- its subtitles have no file format of "
+           u"their own, so taking them out would mean CONVERTING them")
+    _save(lab, u"frieren S2 - 01.mp4", [Track(lang=u"ja", codec=u"S_TEXT/UTF8")],
+          ok=False, reason=why)
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert one.outcome == pipeline.CONFIDENT, one.reason
+    assert one.taken_from is None
+    assert lab.downloads, u"nothing was downloaded for a video that could not be taken out"
+    assert one.not_taken == why, one.not_taken
+    assert report_module.as_dict(one)[u"not_taken"] == why
+
+
+def test_a_download_that_fails_after_it_still_says_why_it_was_downloaded(tmp_path):
+    u"""The reason rides on WHICHEVER row the download ends in -- here a refusal,
+    which is where a person looks hardest for why hato went to jimaku at all."""
+    lab = Lab(tmp_path, names=[u"frieren S2 - 01.mp4"])
+    _save(lab, u"frieren S2 - 01.mp4", [Track(lang=u"ja")], ok=False,
+          reason=u"not a Matroska (MKV) file")
+    refuse_everything(lab)
+
+    one, = lab.run(extract_embedded=True, candidates=1).results
+
+    assert one.outcome == pipeline.REFUSED, (one.outcome, one.reason)
+    assert one.not_taken == u"not a Matroska (MKV) file"
+
+
+def test_a_forced_japanese_track_is_never_taken_out(tmp_path):
+    u"""⛔ Signs and songs only, not a whole subtitle (06 §6) -- and saved, it is
+    `<video>.ja.forced.<ext>`, which the present-check rightly never counts: every
+    later run would take it out again and be refused over its own file. Nothing is
+    asked of tsubasa; the video is downloaded for, and says so."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    signs = Track(lang=u"ja", codec=u"S_TEXT/ASS")
+    signs.forced = True
+    _save(lab, u"frieren S2 - 01.mkv", [signs])
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert lab.extracted == [], u"a forced track was handed to tsubasa to take out"
+    assert one.outcome == pipeline.CONFIDENT and lab.downloads, one.reason
+    assert u"FORCED" in (one.not_taken or u""), one.not_taken
+
+
+def test_a_saved_file_that_could_not_be_written_is_an_error_that_records_nothing(tmp_path):
+    u"""🚨 `LEDGER-HOT.md`: never turn a failed WRITE into a refusal. The subtitles came
+    out; the destination failed -- and a download would be written to the same place.
+    ERROR, tsubasa's words, no negative, nothing downloaded -- the next run tries again."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja")],
+          fails_to_write=u"frieren S2 - 01.ja.ass could not be written: [Errno 28] "
+                         u"No space left on device")
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert one.outcome == pipeline.ERROR, (one.outcome, one.reason)
+    assert u"taken out, but not saved" in one.reason, one.reason
+    assert u"No space left" in one.reason, one.reason
+    assert one.retry_after is None and lab.downloads == []
+    assert lab.rows() == {pipeline.CONFIDENT: 0, pipeline.REFUSED: 0,
+                          pipeline.ERROR: 0, pipeline.NOT_FOUND: 0}
+
+
+def test_a_dry_run_says_it_would_take_them_out_and_writes_nothing(tmp_path):
+    u"""⛔ A dry run writes nothing -- ⭐ 14z (C5) AND READS NOTHING BUT THE HEADER.
+    tsubasa's take-out walks the whole file (6.8 s and 216 MB for one 1.45 GB
+    episode, cold), so a plan asks it nothing: codec, flag and language are in the
+    header, and the lines only the walk can count are not claimed."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja", codec=u"S_TEXT/ASS")])
+
+    one, = lab.run(extract_embedded=True, dry_run=True).results
+
+    assert one.outcome == pipeline.PLANNED, (one.outcome, one.reason)
+    assert u"would take" in one.reason and u"nothing downloaded" in one.reason, one.reason
+    assert one.taken_from and one.taken_from[u"format"] == u"ass"
+    assert one.taken_from[u"events"] is None, u"a plan claimed lines only the walk counts"
+    assert lab.extracted == [], u"a dry run asked tsubasa to walk the track"
+    assert lab.names_in(lab.media) == [u"frieren S2 - 01.mkv"]
+
+
+def test_a_file_that_says_both_saves(tmp_path):
+    u"""⭐ `formats.embedded_choice`: `extract_embedded` WINS. The window writes both
+    keys together; a file saying both -- by hand -- asks for the more particular
+    thing, and the run, the window and `hato problems` read it alike."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja")])
+
+    one, = lab.run(extract_embedded=True, skip_embedded=True).results
+
+    assert one.skip is None and one.taken_from, (one.outcome, one.skip, one.reason)
+    assert formats.embedded_choice(True, True) == formats.EMBEDDED_SAVE
+    assert formats.embedded_choice(True, False) == formats.EMBEDDED_LEAVE
+    assert formats.embedded_choice(False, False) == formats.EMBEDDED_FETCH
+
+
+def test_the_preferred_format_is_taken_out_first(tmp_path):
+    u"""Two whole Japanese tracks -- an `.srt` the file marks default, and an `.ass`.
+    ⭐ The person's format preference first (Settings → Subtitle format), then the
+    file's default: `.ass` preferred takes track 3, `.srt` preferred takes track 2."""
+    for prefer, want in ((u"ass", 3), (u"srt", 2)):
+        lab = Lab(tmp_path / prefer, names=episodes_up_to(1))
+        plain = Track(lang=u"ja", codec=u"S_TEXT/UTF8", index=2)
+        plain.default = True
+        styled = Track(lang=u"ja", codec=u"S_TEXT/ASS", index=3)
+        _save(lab, u"frieren S2 - 01.mkv", [plain, styled])
+        one, = lab.run(extract_embedded=True, prefer_format=prefer).results
+        assert one.taken_from[u"track"] == want, (prefer, one.taken_from)
+
+
+def test_a_track_tsubasa_refuses_gives_way_to_the_next_one(tmp_path):
+    u"""A WebVTT track first and an `.ass` after it: the first is refused by name and
+    the second taken out. ⭐ And when every one is refused, the reason on the row is
+    the one for the track wanted most."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    vtt = Track(lang=u"ja", codec=u"S_TEXT/WEBVTT", index=2)
+    ass = Track(lang=u"ja", codec=u"S_TEXT/ASS", index=3)
+    _save(lab, u"frieren S2 - 01.mkv", [vtt, ass], refuse={2: u"a WebVTT track"})
+
+    one, = lab.run(extract_embedded=True, prefer_format=u"srt").results
+
+    assert one.taken_from and one.taken_from[u"track"] == 3, (one.outcome, one.reason)
+    lab2 = Lab(tmp_path / u"all", names=episodes_up_to(1))
+    _save(lab2, u"frieren S2 - 01.mkv", [vtt, ass],
+          refuse={2: u"a WebVTT track", 3: u"laced"})
+    two, = lab2.run(extract_embedded=True, prefer_format=u"srt").results
+    assert two.not_taken == u"a WebVTT track", two.not_taken
+
+
+def test_under_out_the_file_is_saved_in_the_mirrored_folder(tmp_path):
+    u"""⭐ The present-check and the write ask ONE function (`keep.target_dir`): under
+    `--out` the file goes to the mirror, the media folder is left alone, and the
+    second run finds it there."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja")])
+
+    one, = lab.run(extract_embedded=True, out=lab.out).results
+
+    assert Path(one.output_path).parent == lab.out, one.output_path
+    assert lab.names_in(lab.media) == [u"frieren S2 - 01.mkv"]
+    assert lab.run(extract_embedded=True, out=lab.out).results[0].skip == pipeline.PRESENT
+
+
+def test_a_tsubasa_that_cannot_take_them_out_downloads_and_says_so(tmp_path, monkeypatch):
+    u"""⚠ A source checkout on a tsubasa from before 0.1.9: the floor is what pip was
+    told, not what is on the path. The choice downloads and the row names the fix."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja")])
+    monkeypatch.delattr(tsubasa, u"extract_subtitle", raising=False)
+    lab.extractor = None
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert one.outcome == pipeline.CONFIDENT and lab.downloads, one.reason
+    assert u"0.1.9 can" in (one.not_taken or u""), one.not_taken
+
+
+@pytest.fixture(scope="module")
+def japanese_video(tmp_path_factory):
+    u"""A real video whose only subtitle track is JAPANESE -- `S_TEXT/UTF8`, tagged
+    `jpn`. ⚠ Its own cue count (71): see `real_video`'s note on tsubasa's store."""
+    return _media.build(tmp_path_factory.mktemp("inside"), stem=u"frieren S2 - 01",
+                        track_language=u"jpn", count=71)
+
+
+def test_saving_with_the_real_tsubasa_takes_the_real_track_out(japanese_video, tmp_path):
+    u"""🚨 NOTHING STUBBED: the real reader finds the Japanese track, the real
+    `tsubasa.extract_subtitle` takes it out of the real container and writes
+    `<video>.ja.srt` -- ⛔ an `.srt` track stays `.srt` -- with every cue the video
+    was muxed with, and the second run's present-check finds it and asks nothing."""
+    lab = real_lab(japanese_video, tmp_path)
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert one.outcome == pipeline.CONFIDENT, one.reason
+    written = Path(one.output_path)
+    assert written == lab.media / u"frieren S2 - 01.ja.srt", written
+    assert lab.names_in(lab.media) == [u"frieren S2 - 01.ja.srt", u"frieren S2 - 01.mkv"]
+    text = written.read_text(encoding=u"utf-8")
+    assert text.count(u"-->") == 71, text[:400]
+    for n in (1, 36, 71):
+        assert (u"行 %d" % n) in text, n
+    assert one.taken_from[u"format"] == u"srt" and one.taken_from[u"events"] == 71
+    assert lab.spent == 0 and lab.downloads == []
+
+    again, = lab.run(extract_embedded=True).results
+    assert again.skip == pipeline.PRESENT, (again.outcome, again.reason)
+    assert lab.spent == 0
+
+def _mode_a(report):
+    u"""Mode A, flat -- a phrase split across two wrapped lines is still found."""
+    return u" ".join(u" ".join(report_module.render_run(report)).split())
+
+
+def test_the_printed_run_says_taken_out_of_the_video_and_never_a_percentage(tmp_path):
+    u"""⭐ Mode A (ruled): the row says where the subtitle came from -- *taken out ·
+    track 3* -- and the file; ⛔ no percentage and no verdict (nothing was timed), and
+    the summary never calls it *fetched*: nothing was. ⚠ The ENGINE's counts stay
+    CONFIDENT -- `api.py` and `--json` read them as the engine's."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja", codec=u"S_TEXT/ASS", index=3)])
+    report = lab.run(extract_embedded=True)
+    shown = _mode_a(report)
+    assert u"⊡ video taken out · track 3 → frieren S2 - 01.ja.ass" in shown, shown
+    assert u"1 taken from the video" in shown and u"fetched" not in shown, shown
+    assert u"%" not in shown, shown
+    assert dict(report.counts()) == {pipeline.CONFIDENT: 1}, report.counts()
+
+
+def test_the_printed_run_says_why_a_video_was_not_taken_out(tmp_path):
+    u"""⭐ Ruled: *"its row says why"* -- under the download's own row in Mode A, a
+    success and a refusal alike."""
+    lab = Lab(tmp_path / u"fetched", names=[u"frieren S2 - 01.mp4"])
+    _save(lab, u"frieren S2 - 01.mp4", [Track(lang=u"ja")], ok=False, reason=u"an MP4 file.")
+    shown = _mode_a(lab.run(extract_embedded=True))
+    assert u"could not be taken out (an MP4 file), so jimaku was asked instead" in shown, shown
+    assert u"1 fetched" in shown, shown
+    lab = Lab(tmp_path / u"refused", names=[u"frieren S2 - 01.mp4"])
+    _save(lab, u"frieren S2 - 01.mp4", [Track(lang=u"ja")], ok=False, reason=u"an MP4 file")
+    refuse_everything(lab)
+    shown = _mode_a(lab.run(extract_embedded=True, candidates=1))
+    assert u"REFUSED" in shown and u"could not be taken out (an MP4 file)" in shown, shown
+
+
+def test_the_plan_counts_a_track_to_take_out_apart_and_it_costs_no_call(tmp_path):
+    u"""`--dry-run`: *"1 to take out of the video"*, never *"to fetch"* -- and the
+    estimate asks jimaku nothing for it."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja", codec=u"S_TEXT/ASS")])
+    plan = u" ".join(u" ".join(report_module.render_plan(
+        lab.run(extract_embedded=True, dry_run=True))).split())
+    assert u"1 to take out of the video" in plan and u"to fetch" not in plan, plan
+    assert u"est. 0 API calls" in plan, plan
+
+# ---------------------------------------------------------------------------
+# ⭐ 14z -- THE LAYER 14 PASS (ADVERSARY 2026-09-25 §Layer 14, 14z)
+# ---------------------------------------------------------------------------
+# One check per finding, each with its mutant (`mutants/m14.mjs`, M14-69 onward).
+
+def test_a_forced_only_japanese_track_is_not_the_subtitles_inside(tmp_path):
+    u"""⭐ 14z (C1) -- signs and songs only is no whole subtitle (06 §6): *Leave them
+    there* left such a video alone for ever. Under the default choice it is fetched
+    now -- `present.read_tracks` says FETCH, never EMBEDDED."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    signs = Track(lang=u"ja", codec=u"S_TEXT/ASS")
+    signs.forced = True
+    _save(lab, u"frieren S2 - 01.mkv", [signs])
+
+    one, = lab.run().results                       # the default: Leave them there
+
+    assert one.skip != pipeline.EMBEDDED, (one.outcome, one.skip, one.reason)
+    assert one.outcome == pipeline.CONFIDENT and lab.downloads, one.reason
+    kind = present.read_tracks(lab.media / u"frieren S2 - 01.mkv", u"ja",
+                               reader=lab.reader).kind
+    assert kind == present.FETCH, kind
+
+
+def test_a_two_episode_file_keeps_its_own_subtitles(tmp_path):
+    u"""⭐ 14z (A-3) -- taking a video's own track out splits nothing: *Save them beside
+    the video* takes it out, *Leave them there* leaves it (embedded, not refused), and
+    only a DOWNLOAD -- one subtitle for two episodes -- is refused. ⛔ No request, any."""
+    name = u"frieren S2 - 01-02.mkv"
+    for how, settings, want in ((u"save", dict(extract_embedded=True), pipeline.CONFIDENT),
+                                (u"leave", dict(), pipeline.SKIPPED),
+                                (u"fetch", dict(skip_embedded=False), pipeline.REFUSED)):
+        lab = Lab(tmp_path / how, names=[name])
+        _save(lab, name, [Track(lang=u"ja", codec=u"S_TEXT/ASS", index=3)])
+        one, = lab.run(**settings).results
+        assert one.outcome == want, (how, one.outcome, one.reason)
+        assert lab.spent == 0 and lab.downloads == [], how
+        if how == u"save":
+            assert one.taken_from and one.taken_from[u"track"] == 3, one.taken_from
+        if how == u"leave":
+            assert one.skip == pipeline.EMBEDDED, one.skip
+
+
+def test_an_unreadable_two_episode_file_is_refused_on_its_name(tmp_path):
+    u"""⚠ 14z (A-3) -- the name still decides a file whose container cannot be read:
+    REFUSED for its two episodes, never an ERROR about its tracks. The launcher's own
+    checks drive exactly this shape, and five of them went red the one time it moved."""
+    name = u"frieren S2 - 01-02.mkv"
+    lab = Lab(tmp_path, names=[name])
+    lab.tracks[name] = Answer(ok=False, reason=u"needs ffprobe")
+
+    one, = lab.run().results
+
+    assert one.outcome == pipeline.REFUSED and u"episodes 1-2" in one.reason, (
+        one.outcome, one.reason)
+
+
+def test_a_japanese_picture_track_under_save_says_why(tmp_path):
+    u"""⭐ 14z (A-4) -- pictures of text (PGS, VobSub) are no subtitles to take out:
+    under *Save them beside the video* the video is downloaded for and its row says
+    why. It never reached the take-out to say so, and said nothing anywhere."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    pgs = Track(lang=u"ja", text=False, bitmap=True, codec=u"S_HDMV/PGS", index=3)
+    _save(lab, u"frieren S2 - 01.mkv", [pgs])
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert lab.extracted == [], u"a picture track was handed to tsubasa to take out"
+    assert one.outcome == pipeline.CONFIDENT and lab.downloads, one.reason
+    assert u"pictures" in (one.not_taken or u"") and u"S_HDMV/PGS" in one.not_taken, (
+        one.not_taken)
+    assert report_module.as_dict(one)[u"not_taken"] == one.not_taken
+
+
+def test_a_track_still_arriving_is_an_error_and_nothing_is_downloaded(tmp_path):
+    u"""⭐ 14z (A-2) -- tsubasa refuses a track with empty stretches: a file still being
+    downloaded into. Downloaded for then, jimaku's file stood beside the finished video
+    for ever and its own track was never taken out. ERROR, nothing downloaded, nothing
+    recorded -- and once the file is whole, the next run takes it out."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja", codec=u"S_TEXT/ASS", index=3)],
+          refuse={3: u"an event of track 3 holds empty bytes -- a stretch of the file has "
+                     u"not been written yet (a download in progress?) or is damaged, so "
+                     u"the track is not all there"})
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert one.outcome == pipeline.ERROR, (one.outcome, one.reason)
+    assert u"not be taken out yet" in one.reason and u"next run" in one.reason, one.reason
+    assert lab.downloads == [] and lab.spent == 0 and one.retry_after is None
+    assert lab.rows() == {pipeline.CONFIDENT: 0, pipeline.REFUSED: 0,
+                          pipeline.ERROR: 0, pipeline.NOT_FOUND: 0}
+    lab.takes.clear()                                   # the download has finished
+    two, = lab.run(extract_embedded=True).results
+    assert two.outcome == pipeline.CONFIDENT and two.taken_from, (two.outcome, two.reason)
+
+
+def test_the_real_tsubasa_refusing_a_track_not_all_there_is_an_error(japanese_video,
+                                                                        tmp_path):
+    u"""🚨 THE PROSE PINNED. hato knows a track still arriving by tsubasa's own words
+    (`pipeline._UNFINISHED`), so this is the REAL tsubasa over a real file with one
+    cue's bytes zeroed -- the shape a download in progress leaves. A reworded refusal
+    fails HERE, loudly, instead of downloading for a video still arriving."""
+    lab = real_lab(japanese_video, tmp_path)
+    video = lab.media / japanese_video.video.name
+    data = bytearray(video.read_bytes())
+    cue = u"行 36".encode("utf-8")
+    at = data.find(cue)
+    assert at > 0, u"the cue's text is not stored as it was written"
+    data[at:at + len(cue)] = b"\x00" * len(cue)
+    video.write_bytes(bytes(data))
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert one.outcome == pipeline.ERROR, (one.outcome, one.reason)
+    assert u"holds empty bytes" in one.reason, one.reason
+    assert lab.downloads == [] and lab.spent == 0
+
+
+def test_a_saved_file_hato_cannot_count_is_an_error_from_the_first_run(tmp_path):
+    u"""⭐ 14z (A-5) -- a file hato writes must be one its own present-check COUNTS. A
+    video's name past 255 bytes had its stem TRIMMED by tsubasa (its note said so):
+    *"taken from the video"* once, then ERROR every run after -- and players would not
+    load it either. ERROR from the first run, with tsubasa's note."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    note = u"the name was 259 bytes and the limit is 255, so the stem was trimmed"
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja", codec=u"S_TEXT/ASS")],
+          writes_as=u"frieren S2 - 0.ja.ass", notes=(note,))
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert one.outcome == pipeline.ERROR, (one.outcome, one.reason)
+    assert u"players will not load it" in one.reason and note in one.reason, one.reason
+    assert not one.wrote and one.taken_from, one.taken_from
+
+
+def test_only_a_japanese_track_is_taken_out(tmp_path):
+    u"""⭐ 14z (A-9, its A3) -- the language decides first: an English DEFAULT `.ass`
+    beside a Japanese `.srt`, `.ass` preferred -- the Japanese one is taken out, and an
+    English track is never saved as *"the Japanese subtitles"*."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    english = Track(lang=u"en", codec=u"S_TEXT/ASS", index=2)
+    english.default = True
+    japanese = Track(lang=u"ja", codec=u"S_TEXT/UTF8", index=3)
+    _save(lab, u"frieren S2 - 01.mkv", [english, japanese])
+
+    one, = lab.run(extract_embedded=True, prefer_format=u"ass").results
+
+    assert one.taken_from and one.taken_from[u"track"] == 3, (one.outcome, one.taken_from)
+    assert [index for _n, index, _w, _o in lab.extracted] == [3], lab.extracted
+
+
+def test_saving_with_no_japanese_track_inside_asks_tsubasa_nothing(tmp_path):
+    u"""⭐ 14z (A-9, its A5) -- an English track only: nothing Japanese to take out, so
+    tsubasa is asked nothing and the row carries no *why* -- it was never the setting's
+    case. ⛔ A take-out entered without one said *"a FORCED one"* of a video with none."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"en", codec=u"S_TEXT/ASS")])
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert lab.extracted == [] and one.not_taken is None, (lab.extracted, one.not_taken)
+    assert one.outcome == pipeline.CONFIDENT and lab.downloads, one.reason
+
+
+def test_a_forced_track_beside_a_whole_one_is_never_the_one_taken_out(tmp_path):
+    u"""⛔ 14c's rule where it still decides -- the 14z gate: once a video whose ONLY
+    Japanese track is forced stopped reaching the take-out (C1), M14-27 survived. A
+    signs-only `.ass` the file marks DEFAULT, the preferred format too, beside a whole
+    `.srt`: the whole one is taken out. Saved, the forced one would be `.ja.forced.ass`,
+    which the present-check never counts -- taken out again, and refused over itself,
+    every run."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    signs = Track(lang=u"ja", codec=u"S_TEXT/ASS", index=2)
+    signs.forced = True
+    signs.default = True
+    whole = Track(lang=u"ja", codec=u"S_TEXT/UTF8", index=3)
+    _save(lab, u"frieren S2 - 01.mkv", [signs, whole])
+
+    one, = lab.run(extract_embedded=True, prefer_format=u"ass").results
+
+    assert one.taken_from and one.taken_from[u"track"] == 3, (one.outcome, one.taken_from)
+    assert [index for _n, index, _w, _o in lab.extracted] == [3], lab.extracted
+
+
+def test_the_file_s_default_decides_between_two_of_one_format(tmp_path):
+    u"""⭐ 14z (A-9, its A1) -- two Japanese `.ass` tracks: the one the file marks
+    DEFAULT is taken out, whatever their order."""
+    lab = Lab(tmp_path, names=episodes_up_to(1))
+    first = Track(lang=u"ja", codec=u"S_TEXT/ASS", index=2)
+    second = Track(lang=u"ja", codec=u"S_TEXT/ASS", index=3)
+    second.default = True
+    _save(lab, u"frieren S2 - 01.mkv", [first, second])
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert one.taken_from and one.taken_from[u"track"] == 3, one.taken_from
+
+
+def test_a_plan_says_a_video_that_is_not_an_mkv_goes_to_jimaku(tmp_path):
+    u"""⭐ 14z (C5) -- the header decides a plan: a file that does not START as
+    Matroska is planned as a download and says why -- without asking tsubasa to read
+    a byte of it."""
+    lab = Lab(tmp_path, names=[])
+    (lab.media / u"frieren S2 - 01.mp4").write_bytes(b"\x00\x00\x00\x20ftypisom" + b"x" * 32)
+    _save(lab, u"frieren S2 - 01.mp4", [Track(lang=u"ja", codec=u"S_TEXT/UTF8")])
+
+    one, = lab.run(extract_embedded=True, dry_run=True).results
+
+    assert one.outcome == pipeline.PLANNED and not one.taken_from, (one.outcome, one.reason)
+    assert u"not an MKV file" in (one.not_taken or u""), one.not_taken
+    assert lab.extracted == []
+
+
+def test_a_waiting_row_and_a_plan_say_why_it_was_not_taken_out(tmp_path):
+    u"""⭐ 14z (A-8) -- the *why* rides every row: a video waiting to retry (Mode A's
+    skip lines) and a plan's count. Both said nothing of it."""
+    signs = Track(lang=u"ja", codec=u"S_TEXT/ASS")
+    signs.forced = True
+    fetching = Lab(tmp_path / u"plan", names=episodes_up_to(1))
+    _save(fetching, u"frieren S2 - 01.mkv", [signs])
+    plan = u" ".join(u" ".join(report_module.render_plan(
+        fetching.run(extract_embedded=True, dry_run=True))).split())
+    assert u"1 to fetch (1 with Japanese subtitles inside that cannot be taken out)" in plan, (
+        plan)
+
+    lab = Lab(tmp_path / u"wait", names=[u"frieren S2 - 24.mkv"])      # jimaku has no 24
+    _save(lab, u"frieren S2 - 24.mkv", [signs])
+    first, = lab.run(extract_embedded=True).results
+    assert first.outcome == pipeline.NOT_FOUND and u"FORCED" in (first.not_taken or u""), (
+        first.outcome, first.not_taken)
+    waiting = lab.run(extract_embedded=True)
+    assert waiting.results[0].skip == pipeline.NEGATIVE, waiting.results[0].skip
+    shown = _mode_a(waiting)
+    assert u"could not be taken out (its Japanese subtitle track is a FORCED one" in shown, (
+        shown)
+
+
+def test_the_library_result_carries_what_every_row_says():
+    u"""⭐ 14z (A-8) -- `hato.api.Result` carries `taken_from` and `not_taken`, as `--json`
+    and the window do: a library caller could not tell a subtitle taken out from one
+    downloaded, nor why."""
+    from hato import api
+    taken = pipeline.VideoResult(u"a.mkv", pipeline.CONFIDENT, u"", output_path=u"a.ja.ass",
+                                 taken_from={u"track": 3})
+    fetched = pipeline.VideoResult(u"b.mp4", pipeline.CONFIDENT, u"")
+    fetched.not_taken = u"an MP4 file"
+    assert api.Result(taken).taken_from == {u"track": 3} and api.Result(taken).not_taken is None
+    assert api.Result(fetched).not_taken == u"an MP4 file"
+
+
+def _unwritable(folder):
+    u"""`folder`, made so THIS user cannot add a file to it -- Windows: an ACL deny of
+    add-file and add-folder (`icacls`); elsewhere 0o555. -> a callable that puts it back.
+    ⛔ Called in a `finally`: a folder left denied could not even be cleaned up."""
+    import subprocess
+    folder = str(folder)
+    if sys.platform.startswith("win"):
+        who = os.environ.get("USERNAME") or os.getlogin()
+        subprocess.run([u"icacls", folder, u"/deny", u"%s:(WD,AD)" % who], check=True,
+                       stdout=subprocess.DEVNULL)
+        return lambda: subprocess.run([u"icacls", folder, u"/remove:d", who], check=True,
+                                      stdout=subprocess.DEVNULL)
+    if os.geteuid() == 0:
+        pytest.skip(u"root writes anywhere: no folder can be made unwritable for it")
+    os.chmod(folder, 0o555)
+    return lambda: os.chmod(folder, 0o755)
+
+
+def test_a_folder_that_cannot_be_written_is_an_error_before_any_request(tmp_path):
+    u"""🚨 14z (A-1) -- A RUN THAT NEVER ENDED. In a folder whose permissions deny adding a
+    file, the writer under tsubasa spun for days (`tempfile.mkstemp` reads ACCESS_DENIED
+    as a name taken) -- after two metered calls on the download road, at once under
+    *Save*. The folder is asked FIRST: ERROR, tsubasa and jimaku asked nothing, nothing
+    recorded. ⚠ The download arm REFUSES every candidate, so a mutant that lets it through
+    fails fast rather than writing into the folder."""
+    for how, settings, tracks in (
+            (u"save", dict(extract_embedded=True), [Track(lang=u"ja", codec=u"S_TEXT/ASS")]),
+            (u"fetch", dict(), [Track()])):
+        lab = Lab(tmp_path / how, names=episodes_up_to(1))
+        _save(lab, u"frieren S2 - 01.mkv", tracks)
+        refuse_everything(lab)
+        put_back = _unwritable(lab.media)
+        try:
+            one, = lab.run(**settings).results
+        finally:
+            put_back()
+        assert one.outcome == pipeline.ERROR, (how, one.outcome, one.reason)
+        assert u"cannot be written" in one.reason, (how, one.reason)
+        assert lab.extracted == [] and lab.downloads == [] and lab.spent == 0, how
+        assert lab.rows() == {pipeline.CONFIDENT: 0, pipeline.REFUSED: 0,
+                              pipeline.ERROR: 0, pipeline.NOT_FOUND: 0}, how
+
+
+def test_the_folder_question_asks_and_never_writes(tmp_path):
+    u"""⭐ 14z (A-1) -- `paths.cannot_write`: None for a folder that takes a file, and for
+    an `--out` mirror not made yet under one; the reason for one that denies it -- and
+    the folder is left exactly as it was (it ASKS: the only write in a media folder is
+    tsubasa's)."""
+    from hato import paths
+    open_ = tmp_path / u"open"
+    shut = tmp_path / u"shut"
+    open_.mkdir()
+    shut.mkdir()
+    assert paths.cannot_write(open_) is None
+    assert paths.cannot_write(open_ / u"mirror" / u"S2") is None
+    put_back = _unwritable(shut)
+    try:
+        said = paths.cannot_write(shut)
+        under = paths.cannot_write(shut / u"mirror")
+    finally:
+        put_back()
+    assert said and u"cannot be written" in said and str(shut) in said, said
+    assert under and str(shut) in under, under
+    assert list(shut.iterdir()) == [] and list(open_.iterdir()) == []
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"),
+                    reason=u"Windows names are one name in any case; POSIX's are not")
+def test_a_subtitle_named_in_another_case_is_the_video_s_own(tmp_path):
+    u"""⭐ 14z (A-6) -- on Windows `Frieren` and `frieren` are one name: a video renamed by
+    case only after its subtitle was saved read as having none -- and every run after it
+    ended ERROR *"already there"*."""
+    lab = Lab(tmp_path, names=[u"Frieren S2 - 01.mkv"])
+    (lab.media / u"frieren S2 - 01.ja.ass").write_text(u"x", encoding="utf-8")
+
+    one, = lab.run(extract_embedded=True).results
+
+    assert one.skip == pipeline.PRESENT, (one.outcome, one.skip, one.reason)
+    assert lab.extracted == []
+

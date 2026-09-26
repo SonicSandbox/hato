@@ -222,6 +222,9 @@ class WinOps(object):
     def stop_pid(self, pid):
         u"""End a process this swap did not start -- only ever one running from the
         install folder being put back (`_swap_or_undo`). ⛔ Best effort."""
+        # 🚨 14z (C-6) -- NEVER IMPORTED HERE, and `_quietly` swallowed the NameError:
+        # a rollback could not stop a stray process, and left the install half-swapped.
+        from ctypes import wintypes
         k = self._kernel()
         k.OpenProcess.restype = wintypes.HANDLE
         k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
@@ -368,12 +371,21 @@ def _start_tray(pending, ops, started, clock=time.monotonic, sleep=time.sleep):
     deadline = clock() + (WAIT_FOR_TRAY if marker else TRAY_SETTLE)
     while True:
         if tray.poll() is not None:
-            return u"the new version's tray closed as it started"
+            return u"%s's tray closed as it started" % _named(pending)
         if marker and _names_pid(marker, tray.pid, since):
             return None
         if clock() >= deadline:
-            return u"the new version's tray never said it was watching" if marker else None
+            return (u"%s's tray never said it was watching" % _named(pending)) if marker \
+                else None
         sleep(POLL)
+
+
+def _named(pending):
+    u"""Who is being put in, for a reason: *the new version* -- or, going BACK, the kept
+    one by its number (14z, C-1: hato.log called the kept 1.0.7 *"the new version"*)."""
+    if pending.get(u"going_back") and pending.get(u"to"):
+        return u"%s" % pending[u"to"]
+    return u"the new version"
 
 
 def _quietly(call, *args):
@@ -420,7 +432,7 @@ def _proven(pending, ops, started, clock, sleep, seen=None):
                 return None if code == 0 else u"the new version closed as it opened"
             sleep(POLL)
     if tray is not None and tray.poll() is not None:
-        return u"the new version's tray closed as it started"
+        return u"%s's tray closed as it started" % _named(pending)
     return None
 
 

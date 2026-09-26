@@ -271,7 +271,7 @@ def _check_destination(dest):
 
 def build(dest=None, stem=u"Sample Show - 01", lang=u"ja", ext=u"srt",
           count=CUES, first=FIRST, every=EVERY, seconds=SECONDS, shift=SHIFT,
-          width=160, height=120, fps=5, track_language=u"jpn"):
+          width=160, height=120, fps=5, track_language=u"jpn", forced=False):
     u"""A real video and a shifted subtitle for it. -> `Media`
 
     `dest`
@@ -306,14 +306,14 @@ def build(dest=None, stem=u"Sample Show - 01", lang=u"ja", ext=u"srt",
     reference = write_srt(build_dir / (stem + u".reference.srt"),
                           srt(starts, seconds))
     video = media_dir / (stem + u".mkv")
-    _mux(video, reference, duration, width, height, fps, track_language)
+    _mux(video, reference, duration, width, height, fps, track_language, forced)
     subtitle = write_srt(cache_dir / (u"%s.%s.%s" % (stem, lang, ext)),
                          srt(starts, seconds, shift=shift))
     return Media(root, media_dir, cache_dir, video, subtitle, starts, shift,
                  duration, reference, owned)
 
 
-def _mux(video, reference, duration, width, height, fps, track_language):
+def _mux(video, reference, duration, width, height, fps, track_language, forced=False):
     u"""testsrc + anullsrc + the cues, into one Matroska file.
 
     ⚠ `-crf 51 -preset ultrafast` on a 160x120 5 fps source keeps a five-minute
@@ -331,6 +331,7 @@ def _mux(video, reference, duration, width, height, fps, track_language):
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "8k",
         "-c:s", "srt", "-metadata:s:s:0", "language=%s" % track_language,
+    ] + ([u"-disposition:s:0", u"forced"] if forced else []) + [
         "-t", "%.3f" % duration, str(video),
     ]
     done = subprocess.run(command, stdout=subprocess.PIPE,
