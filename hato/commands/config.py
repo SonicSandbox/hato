@@ -79,7 +79,9 @@ def _show(args):
         # came before it and pushed its own value past the column. Caught by LOOKING
         # at the readout -- every check here asserts content, and a column that no
         # longer lines up is still, to all of them, correct.
-        print("  %-13s = %-44s %s" % (name, shown, cfg.origin(origin_key or name)))
+        # ⚠ 15 since the Layer 14 pass (Z14-6): `format_fallback`, shown at last. A
+        # check asserts the column now -- one position for every row.
+        print("  %-15s = %-44s %s" % (name, shown, cfg.origin(origin_key or name)))
 
     row("folders", ", ".join(cfg.folders) if cfg.folders else "(none)")
     # ⚠ A SETTING NOBODY CAN SEE IS NOT A SETTING. This readout is where a
@@ -96,9 +98,14 @@ def _show(args):
     # ⚠ A setting nobody can SEE is not a setting. Both of these were added on
     # 2026-09-17 and the readout is where a person checks what is in force.
     row("skip_embedded", "true" if cfg.skip_embedded else "false")
+    # 🚨 Z14-6 (the Layer 14 pass): these three were set in the window and never
+    # shown here. A check derives every key from SCHEMA now.
+    row("prefer_format", cfg.prefer_format)
+    row("format_fallback", "true" if cfg.format_fallback else "false")
     row("watch", "true" if cfg.watch else "false")
     row("schedule", cfg.schedule)
     row("surasura_dir", cfg.surasura_dir or "(off)")
+    row("auto_update", "true" if cfg.auto_update else "false")
     row("log.path", str(cfg.log_path_resolved), "log.path")
     row("log.keep", str(cfg.log_keep), "log.keep")
     return EXIT_OK

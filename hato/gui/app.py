@@ -103,7 +103,8 @@ try:
                               QVariantAnimation, pyqtSignal)
     from PyQt6.QtGui import (QColor, QDesktopServices, QFont, QPainter,
                              QPalette, QPen)
-    from PyQt6.QtWidgets import (QAbstractButton, QApplication, QDialog,
+    from PyQt6.QtWidgets import (QAbstractButton, QApplication, QButtonGroup,
+                                 QDialog,
                                  QFileDialog,
                                  QFrame,
                                  QGraphicsDropShadowEffect,
@@ -364,6 +365,9 @@ class State(object):
         #: do. `config.toml`'s defaults: `.ass`, and the other kind never.
         self.prefer_format = formats.DEFAULT_PREFERENCE
         self.format_fallback = False
+        #: ⭐ RUNBOOK 14a -- `skip_embedded`: TRUE leaves a video's own Japanese
+        #: subtitles (the ruled default); FALSE downloads from jimaku anyway
+        self.skip_embedded = True
         self.key_hint = None
         #: ⭐ What jimaku said the last time a key was entered, and whether it
         #: worked. ⛔ Set ONLY on key entry -- Sonic: *"just on the key entry,
@@ -662,6 +666,28 @@ def episode_tail(episodes):
     return u"eps %s" % u", ".join(str(n) for n in known)
 
 
+#: ⭐ RUNBOOK 14a (ruled 2026-09-25, *"I take all your leans"*) -- what hato does
+#: with a video that already has Japanese subtitles inside it: (`skip_embedded`,
+#: the words, the hint). ⭐ ONE CHOICE, never two boxes that untick each other
+#: (Sonic picked picture B). ⚠ Its third choice -- take them out and save them
+#: beside the video -- is 14c's, and appears only once it works.
+EMBEDDED_CHOICES = (
+    (True, u"Leave them there", u"· nothing downloaded"),
+    (False, u"Download from jimaku anyway", u"· timed against the ones inside"),
+)
+#: ⭐ The substance behind the choice -- including Sonic's own understanding
+#: (2026-09-25): *"an .ass sub you download may not be the same exact line
+#: breaks etc as the srt from the video."*
+EMBEDDED_TIP = (
+    u"A Japanese subtitle track inside the video is already timed to it, and "
+    u"your player shows it, so by default nothing is downloaded — and nothing "
+    u"reaches surasura either: it only receives a subtitle hato writes.\n\n"
+    u"Download from jimaku anyway fetches a separate subtitle file for it, "
+    u"timed against the subtitles inside it — the best reference there is: "
+    u"the same rip. It is jimaku's own file, in its own format, so its lines need not "
+    u"match the ones inside line for line.")
+
+
 #: 🚨 ONE TOOLTIP PER SKIP, AND EACH ONE HAS TO BE TRUE OF ITS OWN ROW.
 #: The single tooltip these replace said *"Every episode already carries a
 #: Japanese track, so it is already in sync and nothing was requested"* --
@@ -669,8 +695,8 @@ def episode_tail(episodes):
 #: kept none of them, and was waiting a day to try again.
 #:
 #: ⛔ None of these tells a person to change a setting that is not in the
-#: window. `skip_embedded` is `config.toml` only, so it is named as a file key
-#: and not as a Settings switch.
+#: window. ⭐ RUNBOOK 14a: `skip_embedded` is a Settings choice now, so the tip
+#: names Settings -- it named `config.toml` for as long as it was not.
 QUIET_TIPS = {
     gui_run.SKIPPED:
         u"The Japanese subtitle is already sitting beside the video, so "
@@ -678,7 +704,8 @@ QUIET_TIPS = {
     gui_run.INSIDE_VIDEO:
         u"The Japanese subtitles are inside the video file itself, so there is "
         u"correctly no separate subtitle beside it — your player will find "
-        u"them. To fetch one anyway, set skip_embedded = false in config.toml.",
+        u"them. To download one from jimaku as well — for surasura, say — "
+        u"choose it in Settings → Subtitle format.",
     gui_run.RETRYING:
         u"hato downloaded subtitles for this and none of them lined up with "
         u"your copy, so nothing was written rather than writing one that is "
@@ -1100,6 +1127,9 @@ class Radio(QAbstractButton):
     [!] PAINTED, because a native radio leaks Windows blue into this palette --
     the mock's note on exactly this control. ⚠ Auto-exclusive: its siblings
     under the same parent are one group, and clicking the chosen one keeps it.
+    🚨 SO A CHOICE LAID OUT IN ROWS PUTS ITS RADIOS IN ONE `QButtonGroup` (the Layer
+    14 pass, Z14-1): a radio alone in its row's widget is NO group to Qt, and a click
+    on the chosen one UNCHECKED it -- neither choice shown, the setting unchanged.
     """
 
     BOX = 14
@@ -1462,6 +1492,26 @@ def button(text, parent=None, accent=False):
     if accent:
         btn.setObjectName(u"btnGo")
     return lift(btn)
+
+
+#: 🚨 THE LAYER 14 PASS (Z14-3) -- THE NAME A SETTINGS CONTROL IS KNOWN BY ACROSS A
+#: REBUILD. A Space on any control that rebuilds Settings left the keyboard parked at
+#: the top of the page (Z13-1's fix: never on a control that acts) -- and ONE Tab from
+#: there reached the daily-run switch, which shows no focus: Space, Tab, Space turned the
+#: daily run OFF. Measured on the real platform from the embedded choice, a Prefer
+#: radio and the fallback box, 3 of 3. ⭐ `_settings_held` asks the focused control for
+#: its name and `_settings_restore` hands the keyboard to the control rebuilt under it.
+#: ⛔ A name that is gone after the rebuild gets nothing -- the keyboard stays parked,
+#: never on a neighbour, which could be the next folder's ✕. ⚠ A PROPERTY, never
+#: `objectName`: the sheet styles buttons by that (`btnGo`, `x`). Every control
+#: Settings builds carries one, and a walk checks it.
+KEEP = "hato_keep"
+
+
+def kept(widget, name):
+    u"""`widget`, known to the keyboard as `name` across a Settings rebuild. -> widget"""
+    widget.setProperty(KEEP, name)
+    return widget
 
 
 def link_label(text, url, name=None, parent=None):
@@ -3485,7 +3535,9 @@ class HatoWindow(Styled):
     def _settings_held(self):
         u"""What a rebuild of Settings must not take from the person (the Layer 13
         pass, Z13-1 and Z13-10). -> dict: the text field being typed in -- its
-        name, words, cursor and selection -- and the blacklist listing's place.
+        name, words, cursor and selection -- any other control the keyboard is on,
+        by its `kept` name (the Layer 14 pass, Z14-3), and the blacklist listing's
+        place.
 
         ⛔ THE REBUILD IS NOT THE PERSON FINISHING THEIR EDIT. The field is
         silenced before `clear()` hides it: its focus-out judged a half-typed
@@ -3500,6 +3552,9 @@ class HatoWindow(Styled):
             held[u"field"] = (focused.objectName(), focused.text(),
                               focused.cursorPosition(), focused.selectionStart(),
                               len(focused.selectedText()))
+        elif focused is not None and pane.isAncestorOf(focused) \
+                and focused.property(KEEP):
+            held[u"control"] = focused.property(KEEP)          # Z14-3 (`kept`)
         area = getattr(self, u"_bl_area", None)
         if area is not None:
             try:
@@ -3526,6 +3581,15 @@ class HatoWindow(Styled):
                 else:
                     new.setCursorPosition(cursor)
                 break
+        name = held.get(u"control")
+        if name:
+            # ⭐ Z14-3 -- the control rebuilt under the same name takes the keyboard
+            # back. ⛔ One that is gone gets nothing: the keyboard stays where
+            # `clear()` parked it, never on a neighbour (the next folder's ✕)
+            for new in self.panes[TAB_SET].widget().findChildren(QWidget):
+                if new.property(KEEP) == name:
+                    new.setFocus(Qt.FocusReason.OtherFocusReason)
+                    break
         area = getattr(self, u"_bl_area", None)
         if held.get(u"listing") and area is not None:
             area.verticalScrollBar().setValue(held[u"listing"])
@@ -3573,6 +3637,7 @@ class HatoWindow(Styled):
             switch = Switch(top)
             switch.setChecked(state.auto)
             switch.clicked.connect(self._toggle_auto)
+            kept(switch, u"when.daily")
             line.addWidget(switch)
             line.addWidget(label(u"every day at", None, top))
             self.time_field = QLineEdit(state.schedule, top)
@@ -3642,6 +3707,7 @@ class HatoWindow(Styled):
         box = Check(watch)
         box.setChecked(self.state.watch)
         box.clicked.connect(self._toggle_watch)
+        kept(box, u"when.watch")
         line.addWidget(box, 0, Qt.AlignmentFlag.AlignTop)
         text = QWidget(watch)
         column = QVBoxLayout(text)
@@ -3692,6 +3758,7 @@ class HatoWindow(Styled):
             pair.addWidget(old, 1)
             restart = button(u"Restart the tray", third)
             restart.clicked.connect(self.restart_watcher)
+            kept(restart, u"when.restart_tray")
             pair.addWidget(restart)
             column.addWidget(third)
         line.addWidget(text, 1)
@@ -3738,6 +3805,7 @@ class HatoWindow(Styled):
         box = Check(row)
         box.setChecked(on)
         box.clicked.connect(self._toggle_startup)
+        kept(box, u"when.startup")
         line.addWidget(box, 0, Qt.AlignmentFlag.AlignTop)
 
         text = QWidget(row)
@@ -3798,7 +3866,8 @@ class HatoWindow(Styled):
         card, body = self._card(u"Folders", parent)
         for folder in self.state.folders:
             body.addWidget(self._path_line(card, folder, dot=True,
-                                           on_remove=self._remove_folder))
+                                           on_remove=self._remove_folder,
+                                           keep=u"folders"))
         if not self.state.folders:
             body.addWidget(paragraph(
                 u"None yet — hato has nothing to look at until one is "
@@ -3809,10 +3878,12 @@ class HatoWindow(Styled):
         line.setSpacing(8)
         add = button(u"Add a folder…", tail)
         add.clicked.connect(self.choose_folder)
+        kept(add, u"folders.add")
         line.addWidget(add)
         switch = Switch(tail)
         switch.setChecked(self.state.recurse)
         switch.clicked.connect(self._toggle_recurse)
+        kept(switch, u"folders.recurse")
         line.addWidget(switch)
         line.addWidget(label(u"look inside subfolders", u"hint", tail))
         line.addStretch(1)
@@ -3838,6 +3909,7 @@ class HatoWindow(Styled):
             radio = Radio(top)
             radio.setChecked(state.prefer_format == fmt)
             radio.clicked.connect(lambda _c=False, f=fmt: self._set_prefer(f))
+            kept(radio, u"format.prefer:%s" % fmt)
             line.addSpacing(6)
             line.addWidget(radio)
             line.addWidget(label(u".%s" % fmt, None, top))
@@ -3852,6 +3924,7 @@ class HatoWindow(Styled):
         box = Check(row)
         box.setChecked(state.format_fallback)
         box.clicked.connect(self._toggle_fallback)
+        kept(box, u"format.fallback")
         line.addWidget(box, 0, Qt.AlignmentFlag.AlignTop)
         pair = QWidget(row)
         words = QHBoxLayout(pair)
@@ -3882,6 +3955,9 @@ class HatoWindow(Styled):
             # `old_tray` -- and whenever the KEYS are in the file, whatever their
             # values: a hand-written default is refused as surely (ADVERSARY
             # 2026-09-23 #1).
+            # ⚠ DIRECTLY UNDER THE TWO ROWS IT SPEAKS FOR (the Layer 14 pass, Z14-2).
+            # Below the choice 14a added, *"cannot read this setting"* read as a note
+            # about THAT -- a setting every hato since 1.0.0 reads.
             old = QWidget(card)
             pair = QHBoxLayout(old)
             pair.setContentsMargins(0, 2, 0, 0)
@@ -3893,8 +3969,44 @@ class HatoWindow(Styled):
             pair.addWidget(said, 1)
             restart = button(u"Restart the tray", old)
             restart.clicked.connect(self.restart_watcher)
+            kept(restart, u"format.restart_tray")
             pair.addWidget(restart)
             body.addWidget(old)
+        # ⭐ RUNBOOK 14a -- a video whose own file already holds a Japanese text track:
+        # leave it (the ruled default, 2026-09-17: already in sync, for free), or
+        # download from jimaku anyway -- for surasura, which only ever receives a
+        # subtitle hato writes. The engine has read `skip_embedded` since 1.0.0; the
+        # window never offered it. ⚠ The card's own shape: `Prefer ○ .ass ○ .srt`
+        head = QWidget(card)
+        line = QHBoxLayout(head)
+        line.setContentsMargins(0, 4, 0, 0)
+        line.setSpacing(5)
+        line.addWidget(label(u"When the video already has Japanese subtitles inside it",
+                             None, head))
+        line.addWidget(info_dot(EMBEDDED_TIP, head))
+        line.addStretch(1)
+        body.addWidget(head)
+        # 🚨 ONE GROUP (the Layer 14 pass, Z14-1). Each radio sits alone in its row's
+        # widget, and a radio alone under its parent is NO group to Qt: a click on the
+        # chosen one UNCHECKED it -- neither choice shown, the setting unchanged. The
+        # rows keep their widgets; the group makes the two one choice, and gives the
+        # arrow keys a way between them.
+        group = QButtonGroup(card)
+        for skip, text, hint in EMBEDDED_CHOICES:
+            choice = QWidget(card)
+            line = QHBoxLayout(choice)
+            line.setContentsMargins(14, 0, 0, 0)
+            line.setSpacing(8)
+            radio = Radio(choice)
+            group.addButton(radio)
+            radio.setChecked(state.skip_embedded == skip)
+            radio.clicked.connect(lambda _c=False, s=skip: self._set_embedded(s))
+            kept(radio, u"format.embedded:%s" % (u"leave" if skip else u"fetch"))
+            line.addWidget(radio)
+            line.addWidget(label(text, None, choice))
+            line.addWidget(label(hint, u"hint", choice))
+            line.addStretch(1)
+            body.addWidget(choice)
         return card
 
     def _card_key(self, parent):
@@ -3916,6 +4028,7 @@ class HatoWindow(Styled):
         key_button = button(u"Swap for a different key" if self.state.key_hint
                             else u"Add a key", line)
         key_button.clicked.connect(self.choose_key)
+        kept(key_button, u"key.choose")
         box.addWidget(key_button)
         body.addWidget(line)
         # ⭐ WHAT JIMAKU ACTUALLY SAID, and only after a key was entered. A key
@@ -3941,13 +4054,15 @@ class HatoWindow(Styled):
         card, body = self._card(u"Skip these folders", parent)
         for folder in self.state.skip_folders:
             body.addWidget(self._path_line(card, folder, dot=False,
-                                           on_remove=self._remove_skip))
+                                           on_remove=self._remove_skip,
+                                           keep=u"skips"))
         tail = QWidget(card)
         line = QHBoxLayout(tail)
         line.setContentsMargins(0, 2, 0, 0)
         line.setSpacing(8)
         skip = button(u"Add a folder to skip…", tail)
         skip.clicked.connect(self.choose_skip)
+        kept(skip, u"skips.add")
         line.addWidget(skip)
         line.addStretch(1)
         body.addWidget(tail)
@@ -3957,7 +4072,7 @@ class HatoWindow(Styled):
             u"directory in it.", card))
         return card
 
-    def _path_line(self, parent, path, dot, on_remove):
+    def _path_line(self, parent, path, dot, on_remove, keep):
         line = QWidget(parent)
         box = QHBoxLayout(line)
         box.setContentsMargins(0, 0, 0, 0)
@@ -3971,6 +4086,7 @@ class HatoWindow(Styled):
         remove.setFixedWidth(22)
         remove.setToolTip(wrap(u"Stop looking at %s." % path))
         remove.clicked.connect(lambda _c=False, p=path: on_remove(p))
+        kept(remove, u"%s.remove:%s" % (keep, path))
         box.addWidget(remove)
         return line
 
@@ -3991,6 +4107,7 @@ class HatoWindow(Styled):
                             None if counted else u"hint", line), 1)
         forget = button(u"Clear hato's memory…", line)
         forget.clicked.connect(self.choose_clear)
+        kept(forget, u"memory.clear")
         box.addWidget(forget)
         body.addWidget(line)
         if self.state.memory_said:
@@ -4054,7 +4171,8 @@ class HatoWindow(Styled):
             body.addWidget(self._path_line(
                 card, os.path.join(self.state.surasura_dir,
                                    u"Hato"),
-                dot=True, on_remove=lambda _p: self.clear_surasura()))
+                dot=True, on_remove=lambda _p: self.clear_surasura(),
+                keep=u"surasura"))
         else:
             body.addWidget(label(u"Off — no folder chosen.", u"hint", card))
 
@@ -4065,6 +4183,7 @@ class HatoWindow(Styled):
         pick = button(u"Change folder…" if self.state.surasura_dir
                       else u"Choose a folder…", tail)
         pick.clicked.connect(self.choose_surasura)
+        kept(pick, u"surasura.choose")
         row.addWidget(pick)
         row.addStretch(1)
         body.addWidget(tail)
@@ -4138,6 +4257,7 @@ class HatoWindow(Styled):
             line.addWidget(text, 1)
             sweep = button(u"Remove it" if one else u"Remove those %d" % len(gone), notice)
             sweep.clicked.connect(self.remove_stale_blacklist)
+            kept(sweep, u"blacklist.sweep")
             line.addWidget(sweep)
             body.addWidget(notice)
             self._bl_stale = notice
@@ -4185,6 +4305,7 @@ class HatoWindow(Styled):
                 Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             area.setWidget(listing)
             area.setFixedHeight(186)
+            kept(area, u"blacklist.listing")
             body.addWidget(area)
             self._bl_area = area
             self._filter_blacklist(self.state.blacklist_filter)
@@ -4258,6 +4379,7 @@ class HatoWindow(Styled):
         remove.setCursor(Qt.CursorShape.PointingHandCursor)
         remove.setToolTip(wrap(u"Fetch for this video again."))
         remove.clicked.connect(lambda _c=False, e=entry: self.unblacklist(e))
+        kept(remove, u"blacklist.remove:%s" % self._blacklist_id(entry))
         if entry.get(u"removing"):
             # ⭐ A31 -- going, not gone, until hato's own list says so.
             remove.setEnabled(False)
@@ -4665,6 +4787,9 @@ class HatoWindow(Styled):
             text, action = said[u"button"]
             go = button(text, top, accent=action in (updating.RESTART, updating.INSTALL))
             go.clicked.connect(lambda _checked=False, a=action: self.update_action(a))
+            # ⚠ BY ITS ACTION, never its words: *Check now* answered by *Restart now* in
+            # the same place is another control, and a Space there would restart
+            kept(go, u"updates.%s" % action)
             # ⭐ 12c: while a check runs the button STAYS, disabled -- it used to
             # vanish, and the row's height jumped under the person's pointer
             go.setEnabled(not said[u"busy"])
@@ -4680,6 +4805,7 @@ class HatoWindow(Styled):
             text, action = said[u"copy"]
             copy = button(text, row)
             copy.clicked.connect(lambda _checked=False, a=action: self.update_action(a))
+            kept(copy, u"updates.%s" % action)
             line.addWidget(copy)
             body.addWidget(row)
         if said[u"auto"]:
@@ -4692,6 +4818,7 @@ class HatoWindow(Styled):
             switch.setChecked(self.state.updates.auto)
             switch.clicked.connect(lambda checked=False: self.set_auto_update(checked))
             self.update_switch = switch
+            kept(switch, u"updates.auto")
             line.addWidget(switch)
             line.addWidget(label(said[u"auto"][0], None, row))
             line.addWidget(plain(said[u"auto"][1], u"hint", row), 1)
@@ -4713,6 +4840,7 @@ class HatoWindow(Styled):
                 pair.addWidget(note, 1)
                 restart = button(u"Restart the tray", old)
                 restart.clicked.connect(self.restart_watcher)
+                kept(restart, u"updates.restart_tray")
                 pair.addWidget(restart)
                 body.addWidget(old)
         if said[u"kept"]:
@@ -4724,6 +4852,7 @@ class HatoWindow(Styled):
             text, action = said[u"kept"][1]
             back = button(text, row)
             back.clicked.connect(lambda _checked=False, a=action: self.update_action(a))
+            kept(back, u"updates.%s" % action)
             line.addWidget(back)
             body.addWidget(row)
         if said[u"said"]:
@@ -6295,6 +6424,18 @@ class HatoWindow(Styled):
         self.state.format_keys_in_file = False       # ⚠ as `_set_prefer`
         self.render()
 
+    def _set_embedded(self, skip):
+        u"""⭐ RUNBOOK 14a -- leave a video's own Japanese subtitles (`skip`), or
+        download from jimaku anyway. Written through `hato config`, as every
+        setting is; ⚠ takes effect at the next run. ⚠ Every hato since 1.0.0 reads
+        `skip_embedded`, so no tray has to be told anything."""
+        if skip == self.state.skip_embedded:
+            return
+        self.state.skip_embedded = skip
+        self.spawn(gui_run.argv_for_config(
+            u"--set", u"skip_embedded=%s" % (u"true" if skip else u"false")))
+        self.render()
+
     def take_other_format(self, rows):
         u"""⭐ 9a, from Needs you -- turn the fallback ON and look for these now.
 
@@ -6828,6 +6969,7 @@ def settings_from_disk(state=None):
         state.surasura_dir = cfg.surasura_dir
         state.prefer_format = cfg.prefer_format
         state.format_fallback = cfg.format_fallback
+        state.skip_embedded = cfg.skip_embedded          # ⭐ RUNBOOK 14a
         state.updates.auto = cfg.auto_update          # ⭐ LAYER 11
         state.update_key_in_file = cfg.origin(u"auto_update") == u"config.toml"
         # ⭐ 9a -- whether the FILE carries either key, which is what an older

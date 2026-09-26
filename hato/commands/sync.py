@@ -25,6 +25,12 @@ child -- painted it *"paired"* in green. Measured 2026-09-22.
               an ERROR). Every candidate the window offers was already refused by
               this same deterministic check, so without it a pick cannot succeed.
               Exit 0 when the file was written, and the answer says it was FORCED.
+
+⭐ AND A FILE THAT LANDS IS COPIED TO surasura, as a run's is (the Layer 14 pass,
+Z14-5). The surasura card says *"Every subtitle hato aligns is also copied"* -- and a
+pick never was: the next run then skipped the video as present, so surasura never
+had it. It is the path a person takes when a download is refused, which is exactly
+when *"Download from jimaku anyway"* -- chosen FOR surasura -- needs it.
 """
 from __future__ import print_function
 
@@ -141,6 +147,19 @@ def configured_out(video):
     return None
 
 
+def configured_surasura():
+    u"""The folder surasura reads from, when config names one. -> path or ""
+
+    ⚠ `configured_out`'s rule: a config that will not load copies nothing -- a
+    run there would not start either, and the pick itself still stands.
+    """
+    from hato import config
+    try:
+        return config.load().surasura_dir or u""
+    except Exception:                                 # noqa: BLE001 -- as above
+        return u""
+
+
 def run(args):
     video = os.path.abspath(args.video)
     subtitle = os.path.abspath(args.subtitle)
@@ -158,6 +177,19 @@ def run(args):
         return _refuse(args, u"%s: %s" % (type(exc).__name__, exc), EXIT_NOT_CONFIDENT)
 
     said = answer(result, video, subtitle, args.force, args.dry_run)
+    said[u"surasura"] = None
+    if said[u"written"]:
+        # ⭐ Z14-5 -- `keep.surasura_copy`, the run's own copier. ⛔ A copy that fails
+        # is NOT a failed pick: the subtitle beside the video is written and correct
+        # (the run's rule, `pipeline.py` -- a note, never an error)
+        from hato import keep
+        try:
+            said[u"surasura"] = keep.surasura_copy(said[u"output_path"],
+                                                   configured_surasura())
+        except OSError as exc:
+            said[u"surasura_error"] = u"the surasura copy could not be written: %s" % exc
+        if said[u"surasura"] is not None:
+            said[u"surasura"] = str(said[u"surasura"])
     if args.json:
         print(json.dumps(said, ensure_ascii=False, sort_keys=True))
         if said[u"written"]:
@@ -182,6 +214,10 @@ def run(args):
         print(u"written      %s%s" % (result.output_path,
                                      u"  (by --force: the timing did not hold)"
                                      if said[u"forced"] else u""))
+        if said[u"surasura"]:
+            print(u"surasura     %s" % said[u"surasura"])
+        elif said.get(u"surasura_error"):
+            print(u"surasura     %s" % said[u"surasura_error"])
         return EXIT_OK
     # ⚠ Two shapes, never one sentence: a dry run nobody asked bytes of, and a write
     # that did not land. `03-permissions.md` §the read rule records the difference.

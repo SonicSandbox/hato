@@ -34,6 +34,9 @@ only while ALL of these still hold, each asked of the filesystem:
     SAME video                         row's. A different rip at the same path
                                        is a different video: the next run
                                        decides it, not this view
+    not left to its own Japanese       while `skip_embedded` is on, a video
+    track                              carrying one is what the next run
+                                       SKIPS -- it needs nobody (Z14-4)
 
 ⚠ ADVISORY IN ONE DIRECTION ONLY. The DB may say *problem* while the disk says
 *resolved*; the disk wins and the row is simply not listed.
@@ -46,7 +49,9 @@ No DB row -- not even the backfill a run makes when it finds a subtitle -- no
 file, no cache entry, no request (`LEDGER-HOT.md`: the state DB may only ever
 PREVENT work). What is read: the state DB, one directory listing per folder,
 128 KiB of each video that survives it, a stat per remembered file, and
-tsubasa's `scan()` -- once per folder, and it opens nothing.
+tsubasa's `scan()` -- once per folder, and it opens nothing. ⭐ And while
+`skip_embedded` is on, the track list of each video still standing -- the
+container's header, the question a run asks of every video (Z14-4).
 
 ===========================================================================
 ⭐ THE SHAPE IS THE RUN'S, BY CONSTRUCTION
@@ -114,6 +119,8 @@ def open_problems(cfg, db, cache, now=None):
             continue                    # ⭐ resolved on disk -- and the DB is not told
         if not _same_video(video, problem.video_hash):
             continue                    # gone, unreadable, or a different rip
+        if cfg.skip_embedded and _left_inside(video, lang):
+            continue                    # ⭐ Z14-4 -- the next run leaves it alone
         kept.append(problem)
     parsed = _parsed(p.video_path for p in kept)
     rows = [_row(p, parsed.get(paths.normalised(p.video_path)), lang, cache)
@@ -168,6 +175,24 @@ def _same_video(video, video_hash):
         return _cache.video_hash(video) == video_hash
     except OSError:
         return False                    # gone, or unreadable
+
+
+def _left_inside(video, lang):
+    u"""Does `video` carry its own `lang` text track? -> bool
+
+    🚨 THE LAYER 14 PASS (Z14-4) -- DATA-F16 (ADVERSARY 2026-09-22), one click away
+    since 14a. A download refused under *"Download from jimaku anyway"* kept
+    asking for a pick after the person chose *"Leave them there"* again -- for
+    ever: every run skips such a video BEFORE anything is recorded, so nothing
+    ever settled its row. ⭐ The run's own question (`present.read_tracks`): what
+    the next run would do decides what still needs the person.
+
+    ⚠ A video that cannot be read IS listed -- the next run says what is wrong.
+    """
+    try:
+        return present.read_tracks(video, lang).kind == present.EMBEDDED
+    except Exception:                   # noqa: BLE001 -- unreadable stays listed
+        return False
 
 
 def _parsed(videos):

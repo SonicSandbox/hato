@@ -733,6 +733,41 @@ def test_a_forced_pick_writes_the_file_and_says_whose_decision_it_was(tmp_path, 
     assert Path(forced[u"output_path"]).is_file()
 
 
+def test_a_pick_that_lands_is_copied_to_surasura_as_a_runs_is(tmp_path, capsys,
+                                                             monkeypatch):
+    u"""🚨 The Layer 14 pass, Z14-5. The surasura card says *"Every subtitle hato aligns
+    is also copied"* -- and a pick never was; the next run skipped the video as
+    present, so surasura never had it. A pick is the path a person takes when a
+    download is refused: exactly when *"Download from jimaku anyway"*, chosen FOR
+    surasura, needs it. Arms: refused without force -- nothing; forced -- copied,
+    byte for byte; surasura off -- nothing."""
+    import json
+    from hato import keep
+    media = _media.build(tmp_path)
+    wrong = _scattered(media)
+    surasura = tmp_path / u"surasura"
+    config_file = tmp_path / u"config.toml"
+    config_file.write_text(u"surasura_dir = %s\n" % json.dumps(str(surasura)),
+                           encoding="utf-8")
+    monkeypatch.setenv("HATO_CONFIG", str(config_file))
+
+    code, (refused,) = _pick(capsys, media.video, wrong, force=False)
+    assert refused[u"written"] is False and not surasura.exists(), (
+        u"a pick that wrote nothing was copied: %s" % refused)
+    code, (forced,) = _pick(capsys, media.video, wrong, force=True)
+    assert code == 0 and forced[u"written"] is True, forced
+    copied = surasura / keep.SURASURA_FOLDER / Path(forced[u"output_path"]).name
+    assert copied.is_file(), u"the pick never reached surasura: %s" % forced
+    assert copied.read_bytes() == Path(forced[u"output_path"]).read_bytes()
+    assert forced[u"surasura"] == str(copied), forced
+
+    config_file.write_text(u"", encoding="utf-8")        # the control: surasura off
+    other = _media.build(tmp_path / u"second")
+    code, (plain,) = _pick(capsys, other.video, other.subtitle)
+    assert plain[u"written"] is True and plain[u"surasura"] is None, plain
+    assert [p for p in surasura.rglob(u"*") if p.is_file()] == [copied]
+
+
 def test_the_stubs_forced_write_is_the_shape_the_engine_returns(tmp_path):
     u"""⭐ Pinned against the measurement above: file landed, outcome REFUSED,
     reason opening "WRITTEN UNDER --force". ⛔ And an occupied destination is

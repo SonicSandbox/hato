@@ -256,6 +256,9 @@ class Config(object):
             "subs_dir": self.subs_dir, "subs_dir_resolved": str(self.subs_dir_resolved),
             "candidates": self.candidates, "archives": self.archives,
             "allow_ai": self.allow_ai, "recurse": self.recurse,
+            # ⚠ Z14-6 (the Layer 14 pass): never here -- and 14a made it a choice in
+            # the window. A check derives every key from SCHEMA now
+            "skip_embedded": self.skip_embedded,
             "watch": self.watch, "schedule": self.schedule,
             "surasura_dir": self.surasura_dir,
             "prefer_format": self.prefer_format,

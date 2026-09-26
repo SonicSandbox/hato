@@ -433,6 +433,27 @@ def test_a_different_video_at_the_same_path_is_not_listed(lab):
         "would pair a subtitle timed against another rip. The next run decides it")
 
 
+def test_a_video_the_setting_leaves_to_its_own_japanese_track_is_not_listed(lab):
+    """🚨 The Layer 14 pass, Z14-4 -- DATA-F16 (ADVERSARY 2026-09-22), one click away
+    since 14a. Refused under *"Download from jimaku anyway"*, the video kept asking
+    for a pick after the person chose *"Leave them there"* again -- for ever: every
+    run skips such a video BEFORE anything is recorded, so nothing settled its row.
+    ⭐ What the next run would do decides what still needs the person. A REAL video
+    carrying a Japanese text track, both settings; and a stub nothing can read,
+    listed either way -- the next run says what is wrong with it."""
+    import _media
+    real = _media.build(lab.root)                 # lab.root/media: the configured folder
+    refuse(lab, real.video, "[G] Sample Show - 01 [JPN].ass", 0.2)
+    gave_up(lab, real.video, 1)
+    stub = a_problem(lab, "Show - 11.mkv")
+    fetching = config.parse(lab.config_text() + "skip_embedded = false\n")
+    assert names(lab.rows(fetching)) == {real.video.name, stub.name}, (
+        "the control: downloading anyway, the refused video IS a pick")
+    assert names(lab.rows()) == {stub.name}, (
+        "left to its own Japanese track, the video still asks for a pick -- and no run "
+        "will ever download for it again")
+
+
 def test_a_row_with_no_recorded_path_is_passed_over_not_a_crash(lab):
     control = a_problem(lab, "Show - 10.mkv")
     lab.db.record_not_found(video_hash="v1-" + "e" * 64, video_path=None, lang="ja",

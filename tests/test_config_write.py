@@ -362,6 +362,29 @@ def test_set_changes_a_value_and_show_reads_it_back(monkeypatch, tmp_path, capsy
     assert "config.toml" in out
 
 
+def test_both_readouts_show_every_setting_the_file_can_hold(monkeypatch, tmp_path, capsys):
+    u"""🚨 The Layer 14 pass, Z14-6: the two readouts a person checks what is in force
+    with each lost a DIFFERENT setting -- `--show --json` never carried
+    `skip_embedded` (14a made it a choice in the window), and the plain one never
+    showed `prefer_format`, `format_fallback` or `auto_update`. ⭐ Every key from
+    SCHEMA, so the next one cannot be forgotten by either -- and the plain columns
+    line up (a longer key pushed them once, and only LOOKING caught it)."""
+    import json
+    cfg_env(monkeypatch, tmp_path)
+    assert cli.main(["config", "--show", "--json"]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    missing = [name for name in config.SCHEMA if name not in shown]
+    assert not missing, u"`hato config --show --json` leaves out %s" % missing
+    assert cli.main(["config", "--show"]) == 0
+    rows = [line for line in capsys.readouterr().out.splitlines()
+            if line.startswith(u"  ") and u" = " in line]
+    named = set(line.split(u" = ")[0].strip() for line in rows)
+    missing = [name for name in config.SCHEMA if name not in named]
+    assert not missing, u"`hato config --show` leaves out %s" % missing
+    columns = sorted(set(line.index(u" = ") for line in rows))
+    assert len(columns) == 1, u"the values do not line up: at %s" % columns
+
+
 def test_add_folder_round_trips_and_removing_one_that_is_absent_is_refused(
         monkeypatch, tmp_path, capsys):
     cfg_env(monkeypatch, tmp_path)

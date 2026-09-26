@@ -17,7 +17,7 @@ would turn one builder's deliberate mutant into every other builder's red suite.
 
 #: The single source of truth for the version. ⚠ Never hand-bumped at release:
 #: spec/RUNBOOK.md step 6 stamps it from a content hash.
-__version__ = "1.0.6"
+__version__ = "1.0.7"
 
 #: ⭐ The published library API (spec/05-interface.md §The library API), wired
 #: LAZILY via PEP 562. `from hato import scan` works; plain `import hato` still

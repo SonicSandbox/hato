@@ -5144,6 +5144,14 @@ def _flat(pane):
     return u" ".join(u" ".join(gui_app.texts(pane)).split())
 
 
+def _prefer_radios(pane):
+    u"""The Prefer row's two radios, in order. ⚠ BY THEIR ROW, never *"every radio in
+    Settings"*: 14a put two more on the page and the count stopped naming this row --
+    red since 14a, and only the 14a adversary's baseline run saw it (Z14-7)."""
+    return [r for r in pane.findChildren(gui_app.Radio)
+            if u"Prefer" in [w.text() for w in r.parentWidget().findChildren(QLabel)]]
+
+
 def test_the_format_card_shows_the_preference_and_the_fallback_OFF(qapp):
     u"""The defaults, ruled: `.ass`, and the other kind never."""
     window = make()
@@ -5152,7 +5160,7 @@ def test_the_format_card_shows_the_preference_and_the_fallback_OFF(qapp):
     said = _flat(pane)
     assert u"SUBTITLE FORMAT" in said
     assert u"If there is no .ass, download .srt" in said and u"off: waits for .ass" in said
-    radios = pane.findChildren(gui_app.Radio)
+    radios = _prefer_radios(pane)
     assert [r.isChecked() for r in radios] == [True, False], u"the .ass radio is not the chosen one"
     box = _box_beside(pane, u"If there is no .ass")
     assert box is not None and not box.isChecked()
@@ -5930,7 +5938,13 @@ def test_the_keyboard_never_lands_on_the_daily_switch_at_start_or_after_a_rebuil
     bar's daily-run switch -- a Space straight after opening turned the daily run off
     (measured, both platforms). Z13-1: a rebuild hiding a focused BUTTON handed the
     keyboard down the chain to that same switch -- and a rebuild while the window sat
-    in the background did it the moment the window came back."""
+    in the background did it the moment the window came back.
+
+    ⚠ THE STIMULUS IS A CONTROL THE REBUILD REMOVES (the Layer 14 pass, Z14-11). Z14-3
+    hands the keyboard back to a control rebuilt under its name, which rescued the button
+    this check pressed -- and M13-28/29 (no parking at all) SURVIVED the sweep. A
+    folder's ✕, pressed, takes its own row away: then only `clear()`'s parking keeps
+    the keyboard off the switch."""
     called = _pressed(monkeypatch)
     window = make(running=False, auto=True)
     other = QWidget()
@@ -5938,30 +5952,43 @@ def test_the_keyboard_never_lands_on_the_daily_switch_at_start_or_after_a_rebuil
     window.activateWindow()
     qapp.processEvents()
 
-    def a_button():
-        pane = window.panes[gui_app.TAB_SET]
-        return [b for b in pane.findChildren(QPushButton) if b.isVisibleTo(window)][0]
+    def a_folders_x():
+        u"""-> (a folder's ✕, its kept name, the folder)"""
+        for b in window.panes[gui_app.TAB_SET].findChildren(QPushButton):
+            name = b.property(gui_app.KEEP) or u""
+            if name.startswith(u"folders.remove:") and b.isVisibleTo(window):
+                return b, name, name[len(u"folders.remove:"):]
+        raise AssertionError(u"Settings shows no folder's ✕")
+
+    def gone(name):
+        return not any(w.property(gui_app.KEEP) == name for w in
+                       window.panes[gui_app.TAB_SET].findChildren(QWidget))
     try:
         assert QApplication.focusWidget() is not window.auto_switch, u"it OPENED on the switch"
         _type(qapp, window, u" ")
         assert called == [], u"a Space at the start pressed %s" % called
         window.show_tab(gui_app.TAB_SET)
         qapp.processEvents()
-        button = a_button()
+        button, name, folder = a_folders_x()
         button.setFocus(Qt.FocusReason.TabFocusReason)   # a person tabbed to it
         assert QApplication.focusWidget() is button, u"the control: a button holds the keys"
-        window.render()                                  # an action's rebuild
+        _type(qapp, window, u" ")                        # ... and pressed it: its row goes
         qapp.processEvents()
+        assert folder not in window.state.folders and gone(name), (
+            u"the control: the ✕ removed its folder and is gone after the rebuild")
         assert QApplication.focusWidget() is not window.auto_switch, (
             u"a rebuild handed the keyboard to the switch")
         _type(qapp, window, u" ")
         assert called == [], u"a Space after a rebuild pressed %s" % called
-        a_button().setFocus(Qt.FocusReason.TabFocusReason)
+        button, name, folder = a_folders_x()
+        button.setFocus(Qt.FocusReason.TabFocusReason)
         other.show()
         other.activateWindow()
         qapp.processEvents()
         assert QApplication.activeWindow() is other, u"the control: hato is in the background"
+        window.state.folders = [f for f in window.state.folders if f != folder]
         window.render()                                  # rebuilt while in the background
+        assert gone(name), u"the control: that ✕ is gone after the rebuild"
         window.activateWindow()
         qapp.processEvents()
         assert QApplication.activeWindow() is window, u"the control: hato is back"
@@ -6157,3 +6184,241 @@ def test_a_chevron_never_fades_on_a_row_nobody_can_see():
                                                    child.returncode & 0xFFFFFFFF)
         if child.returncode not in (0, 1) else u"a fade ran where nobody could see it"
     ) + u" -- %s" % said[-400:]
+
+
+# ===========================================================================
+# ⭐ LAYER 14 -- subtitles already inside the video (RUNBOOK 14a)
+# ===========================================================================
+
+def _embedded_choice(window, words):
+    u"""The radio of the Settings choice whose words are `words`."""
+    for radio in window.panes[gui_app.TAB_SET].findChildren(gui_app.Radio):
+        row = radio.parentWidget()
+        if any(w.text() == words for w in row.findChildren(QLabel)):
+            return radio
+    raise AssertionError(u"no choice in Settings reads %r" % words)
+
+
+def test_the_embedded_choice_reads_the_setting_and_writes_it_through_hato_config(qapp):
+    u"""⭐ RUNBOOK 14a (ruled 2026-09-25): *"a tick box option under subtitle format
+    setting that if subs are already embedded (which currently it skips), it would get
+    the subtitles anyway"* -- for surasura, which only receives a subtitle hato WRITES.
+    The engine has read `skip_embedded` since 1.0.0 and the window never offered it.
+    One choice (Sonic picked picture B), written through `hato config` as every
+    setting is."""
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    leave = _embedded_choice(window, u"Leave them there")
+    fetch = _embedded_choice(window, u"Download from jimaku anyway")
+    assert leave.isChecked() and not fetch.isChecked(), u"the default is not 'leave them'"
+    fetch.click()
+    assert window.state.skip_embedded is False, u"the choice never reached the window"
+    said = [u" ".join(argv) for argv in window.spawned]
+    assert said and u"config --set skip_embedded=false" in said[-1], said[-1:]
+    assert _embedded_choice(window, u"Download from jimaku anyway").isChecked(), (
+        u"rebuilt, the card showed the old choice")
+    assert not _embedded_choice(window, u"Leave them there").isChecked()
+    _embedded_choice(window, u"Leave them there").click()
+    said = [u" ".join(argv) for argv in window.spawned]
+    assert u"config --set skip_embedded=true" in said[-1], said[-1]
+    assert window.state.skip_embedded is True
+    # ⭐ Sonic's own understanding, said where the choice is (2026-09-25): a
+    # downloaded subtitle is jimaku's own, and its lines need not match the ones inside
+    tips = u" ".join(u" ".join(w.toolTip().split()) for w in
+                     window.panes[gui_app.TAB_SET].findChildren(QLabel) if w.toolTip())
+    assert u"line for line" in tips and u"surasura" in tips, u"the choice's ⓘ lost its substance"
+
+
+def test_the_embedded_choice_is_read_back_when_the_window_opens(qapp, tmp_path, monkeypatch):
+    u"""⛔ A setting the window writes and never reads back looks unsaved (Sonic,
+    2026-09-18: *"i don't think my settings are being saved"*). 14a's round trip, from
+    a real file."""
+    config = tmp_path / u"config.toml"
+    config.write_text(u"skip_embedded = false\n", encoding="utf-8")
+    monkeypatch.setenv(u"HATO_CONFIG", str(config))
+    assert gui_app.settings_from_disk().skip_embedded is False, u"the file was not read"
+    config.write_text(u"skip_embedded = true\n", encoding="utf-8")
+    assert gui_app.settings_from_disk().skip_embedded is True
+
+
+def test_the_inside_the_video_tip_names_settings_not_the_file():
+    u"""RUNBOOK 14a: the tip on a video whose subtitles are inside it told people to edit
+    `config.toml` -- the only door there was. The door is in Settings now."""
+    tip = u" ".join(gui_app.QUIET_TIPS[gui_run.INSIDE_VIDEO].split())
+    assert u"Settings → Subtitle format" in tip, tip
+    assert u"config.toml" not in tip, tip
+
+
+# ===========================================================================
+# ⭐ LAYER 14's ADVERSARIAL PASS -- ADVERSARY-2026-09-25.md, section Z14
+# ===========================================================================
+
+def _kept(window, name):
+    u"""The Settings control the keyboard knows as `name` (`gui_app.kept`)."""
+    for widget in window.panes[gui_app.TAB_SET].findChildren(QWidget):
+        if widget.property(gui_app.KEEP) == name:
+            return widget
+    raise AssertionError(u"no control in Settings is kept as %r" % name)
+
+
+def _format_body(window):
+    u"""The Subtitle format card's own column -- its LAYOUT, in the order it shows."""
+    for lab in window.panes[gui_app.TAB_SET].findChildren(QLabel):
+        if lab.text() == u"SUBTITLE FORMAT":
+            card = lab
+            while card is not None and card.objectName() != u"card":
+                card = card.parentWidget()
+            return card.findChild(QWidget, u"cardin").layout()
+    raise AssertionError(u"Settings has no Subtitle format card")
+
+
+def _row_of(body, words):
+    u"""Where in `body` the row saying `words` sits. -> its position"""
+    for at in range(body.count()):
+        widget = body.itemAt(at).widget()
+        if widget is not None and any(words in t for t in gui_app.texts(widget)):
+            return at
+    raise AssertionError(u"no row of the card says %r" % words)
+
+
+def test_clicking_the_chosen_embedded_option_keeps_it_chosen(qapp):
+    u"""🚨 The Layer 14 pass, Z14-1 -- REAL, and LOOKED (the adversary's p5b). Each radio
+    sat alone in its row's widget, which Qt treats as NO group: a click on the option
+    already chosen UNCHECKED it -- neither shown, the setting unchanged, and nothing
+    rebuilt the card to put it back. ⭐ One group: exactly one of the two is chosen,
+    whatever is clicked, and it is the one in force."""
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    words = (u"Leave them there", u"Download from jimaku anyway")
+    for clicked in (words[0], words[1], words[1], words[0], words[0]):
+        _embedded_choice(window, clicked).click()
+        shown = [_embedded_choice(window, w).isChecked() for w in words]
+        assert shown.count(True) == 1, u"clicking %r left the card showing %s" % (clicked, shown)
+        assert shown[0] is window.state.skip_embedded, (clicked, shown)
+    leave, fetch = (_embedded_choice(window, w) for w in words)
+    assert leave.group() is not None and leave.group() is fetch.group(), (
+        u"the two radios are not one choice")
+
+
+def test_the_older_trays_note_sits_under_the_format_rows_it_speaks_for(qapp):
+    u"""🚨 The Layer 14 pass, Z14-2 -- LOOKED (the adversary's d-older-tray). The note
+    that an older tray *"cannot read this setting"* is about the format pair above it;
+    below the choice 14a added, it read as a note about THAT -- a setting every hato
+    since 1.0.0 reads. ⚠ By the card's LAYOUT, never the order things were built in."""
+    window = make(running=False, old_tray=True, prefer_format=u"srt")
+    window.show_tab(gui_app.TAB_SET)
+    qapp.processEvents()
+    body = _format_body(window)
+    fallback = _row_of(body, u"If there is no .srt")
+    note = _row_of(body, u"cannot read this setting")
+    choice = _row_of(body, u"When the video already has Japanese subtitles inside it")
+    assert fallback < note < choice, (
+        u"the older tray's note is row %d of the card: the format rows end at %d and the "
+        u"choice starts at %d" % (note, fallback, choice))
+
+
+def test_a_space_on_a_settings_control_keeps_the_keyboard_there_and_tab_moves_on(
+        qapp, monkeypatch):
+    u"""🚨 The Layer 14 pass, Z14-3 -- REAL, measured on the real platform, 3 of 3 (it
+    predates Layer 14; 14a added two more doors). A Space on a Settings radio or box
+    rebuilds the page, and the rebuild parked the keyboard at its TOP -- so ONE Tab
+    reached the daily-run switch, which shows no focus, and a Space there turned the
+    daily run OFF. ⭐ The keyboard stays on the control rebuilt under the same name
+    (`kept`), and the next Tab goes where it went before the rebuild."""
+    from PyQt6.QtTest import QTest
+    called = []
+    for name in (u"_toggle_auto", u"_toggle_watch", u"_toggle_startup",
+                 u"set_auto_update", u"start_run"):
+        monkeypatch.setattr(gui_app.HatoWindow, name,
+                            lambda self, *a, _n=name, **k: called.append(_n))
+    for name in (u"format.embedded:fetch", u"format.prefer:srt", u"format.fallback",
+                 u"folders.recurse"):
+        window = make(running=False, auto=True)
+        window.show()
+        window.activateWindow()
+        window.show_tab(gui_app.TAB_SET)
+        qapp.processEvents()
+        try:
+            _kept(window, name).setFocus(Qt.FocusReason.TabFocusReason)
+            QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Tab)
+            then = QApplication.focusWidget().property(gui_app.KEEP)   # the control
+            _kept(window, name).setFocus(Qt.FocusReason.BacktabFocusReason)
+            card = window._ucard
+            QTest.keyClick(QApplication.focusWidget(), Qt.Key.Key_Space)
+            qapp.processEvents()
+            assert window._ucard is not card, u"the control: the Space rebuilt Settings"
+            held = QApplication.focusWidget()
+            assert held is not None and held.property(gui_app.KEEP) == name, (
+                u"after the rebuild the keyboard is on %r, not on %r" % (
+                    held.property(gui_app.KEEP) if held else None, name))
+            QTest.keyClick(held, Qt.Key.Key_Tab)
+            went = QApplication.focusWidget().property(gui_app.KEEP)
+            assert went == then, (u"a Tab from %s went to %r; before the rebuild it went "
+                                  u"to %r" % (name, went, then))
+            assert called == [], u"%s: the keys PRESSED %s" % (name, called)
+        finally:
+            window.hide()
+
+
+def _update_shapes():
+    u"""The Updates card in the shapes that add a control. -> [(what, fields)]"""
+    ready = {u"type": u"update", u"kind": u"ready", u"version": u"1.0.5",
+             u"reason": None, u"notes": [], u"critical": False, u"page": u"",
+             u"zip_url": u"u", u"size": 1}
+    return [(u"from a checkout", dict(frozen=False, folder=u"C:\\hato",
+                                      decision=dict(ready, kind=u"tell", reason=u"source"))),
+            (u"installed, a version kept", dict(frozen=True, kept=u"1.0.3", decision=ready))]
+
+
+def test_every_settings_control_the_keyboard_reaches_keeps_a_name_of_its_own(qapp):
+    u"""Z14-3's class, as a walk: every control Settings builds that the keyboard can
+    reach carries a `kept` name -- a text field, its object name, as Z13 keeps it --
+    and no two share one. ⛔ A control without one is a door back to the parked
+    keyboard, one Tab from the daily-run switch. ⚠ Built in the shapes that add
+    controls -- both older-tray notes, surasura on, the Updates card from a checkout
+    and with a version kept -- and it names what it reached, so a shape that stops
+    building its controls is seen too."""
+    from hato.gui import updating
+    reached = set()
+    for what, fields in [(u"both notes, surasura on", None)] + _update_shapes():
+        window = make(running=False, old_tray=True, prefer_format=u"srt",
+                      surasura_dir=u"D:\\surasura", tray_reads_updates=False,
+                      update_key_in_file=True)
+        if fields is not None:
+            shape = updating.Updates(current=u"1.0.4", frozen=fields.pop(u"frozen"))
+            shape.now = 1000000.0
+            for name, value in fields.items():
+                setattr(shape, name, value)
+            window.state.updates = shape
+        window.show_tab(gui_app.TAB_SET)
+        names, nameless = [], []
+        for widget in window.panes[gui_app.TAB_SET].findChildren(QWidget):
+            if not widget.focusPolicy() & Qt.FocusPolicy.TabFocus \
+                    or not widget.isVisibleTo(window):
+                continue
+            name = widget.property(gui_app.KEEP) or (
+                widget.objectName() if isinstance(widget, QLineEdit) else None)
+            if name:
+                names.append(name)
+            else:
+                nameless.append(u"%s(%s)" % (type(widget).__name__, u" ".join(
+                    gui_app.texts(widget))[:40] or getattr(widget, u"text", lambda: u"")()))
+        assert not nameless, (u"%s: the keyboard reaches these and a rebuild forgets "
+                              u"them: %s" % (what, nameless))
+        twice = sorted(set(n for n in names if names.count(n) > 1))
+        assert not twice, u"%s: two controls share a name: %s" % (what, twice)
+        reached.update(names)
+    wanted = {u"when.daily", u"when.restart_tray", u"format.restart_tray",
+              u"format.embedded:leave", u"format.embedded:fetch", u"surasura.choose",
+              u"updates.auto", u"updates.restart_tray", u"blacklist.sweep"}
+    assert wanted <= reached, u"the shapes never built %s" % sorted(wanted - reached)
+
+
+def test_the_choices_tip_says_the_download_is_timed_against_the_subtitles_inside():
+    u"""The Layer 14 pass, Z14-8 -- the engine's choice DROPPED as by design, its words
+    fixed. tsubasa times a download against the video's track with the MOST cues,
+    whatever its language (`reference_for`): every track in one file is timed to that
+    file. The ⓘ said *"the one inside"* -- the Japanese one."""
+    tip = u" ".join(gui_app.EMBEDDED_TIP.split())
+    assert u"timed against the subtitles inside it" in tip, tip
+    assert u"the one inside" not in tip, tip

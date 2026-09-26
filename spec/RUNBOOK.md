@@ -195,7 +195,15 @@ LAYER 13 — NOTHING FLASHES, NOTHING GLITCHES, WHAT IS SLOW IS MEASURED. Asked 
   │         off, a page thrown to its top by every rebuild of Settings, a strip in the
   │         wrong font, a crash on a hidden row -- and the checks that missed them
   ├── 13k ✅ the update pill's dot pulses ten seconds, then holds still (Sonic, 2026-09-25)
-  └── 1.0.6 ⏳ AUTHORIZED by Sonic, 2026-09-25 (*"go ahead"*) -- releasing
+  └── 1.0.6 ✅ RELEASED 2026-09-25 -- tag 927a28f; a published 1.0.5 took it by itself
+
+LAYER 14 — SUBTITLES ALREADY INSIDE THE VIDEO. Ruled 2026-09-25 (*"I take all your leans. Go"*)
+  ├── 14a ⏳ Settings: leave them there, or download from jimaku anyway (skip_embedded, at last)
+  ├── 1.0.7 ⏳ released with 14a -- it serves surasura now
+  ├── 14b ⏳ tsubasa takes a text track out of an MKV, in its own format (tsubasa's release first)
+  ├── 14c ⏳ the third choice: save them beside the video, as a file -- "taken from the video"
+  ├── 14z ⏳ the adversarial pass
+  └── 1.0.8 ⏳ released with 14c
 
 LAYER 6 — release
 ```
@@ -1958,11 +1966,66 @@ it was ruled on: D12's own crash with a prototype net — the window stays up an
 | **13j** | `ui` | **The blacklist's filter filters** — built and connected to nothing since the card was made (found by the scope); the wiring walk now requires every text field to be connected too | typing filters, a rebuild keeps the words, clearing shows all · the walk finds a dead field |
 | **13z** | `ui` · `harness` | ✅ **The adversarial pass over Layer 13 → register Z (`ADVERSARY-2026-09-25.md`).** 9 findings, and 2 more of the same class found measuring them. 🚨 **Typing a space in Settings could turn the daily run OFF** — a rebuild hid the field and Qt handed the keyboard to the title bar's daily-run switch (Z13-1); the window even OPENED with the keyboard there (Z13-11). `clear()` parks the keyboard; a rebuild of Settings keeps the words, cursor and place and does not finish the person's edit; the window holds the keyboard at start. 🚨 **Every rebuild of Settings threw the page to its top** (Z13-10: the rebuilt page was laid out empty before its queued show) — shown at once now. **The minute repaints Settings in place** (P-F for Settings); **a look mid-run rebuilds no Settings** (Z13-3); **the strip is polished before it is measured** (Z13-2); **no fade on a row nobody can see** (Z13-9, a crash that predates Layer 13); **the filter says what it leaves** (Z13-4). And four checks that could not see what they named, made to (Z13-5…8) | 55 mutants over Layer 13, 55 killed · the checks named in the register's Z rows |
 | **13k** | `ui` | ⭐ **The update pill's dot pulses TEN SECONDS, then holds still** — ruled by Sonic, 2026-09-25: *"do the ten seconds"*. It pulsed for as long as an update waited: ~60 repaints a second (8 ms of CPU every second) to say what the pill's words already said. Ten seconds from each NEW thing the pill says; a render that says nothing new starts nothing; hidden, it forgets. ⚠ Touches `UpdatePill` only; ⛔ not the footer's dot, which reports a run — and a run ends | the dot pulses, stops at ten seconds at rest, stays still through a render, pulses again for new words and for the pill offered again · M13-56…59 |
-| **1.0.6** | `delivery` | ⏳ **AUTHORIZED** — Sonic, 2026-09-25: *"yea, and do the ten seconds. go ahead"*. Step 6's sequence, the stamp rehearsal first | Step 6 |
+| **1.0.6** | `delivery` | ✅ **RELEASED 2026-09-25** — authorized by Sonic: *"yea, and do the ten seconds. go ahead"*. Step 6's sequence, the stamp rehearsal first | Step 6 — tag `927a28f`, every gate green |
+
+## ⭐ LAYER 14 — SUBTITLES ALREADY INSIDE THE VIDEO. Asked and ruled 2026-09-25
+
+> **Sonic:** *"What would it take to also provide a tick box option under subtitle format setting
+> that if subs are already embedded (which currently it skips), it would get the subtitles
+> anyway? Reasoning for this is that if I want surasura subs, I want it to still pull the
+> subtitles for that reason. And what would it take to have a different option (that maybe
+> they can only pick one), that would extract the subtitles (in our case the japanese) for that
+> episode from the video? And save it there, as if it was discovered? And the message would be
+> that it was extracted out?"* Scoped with two pictures (`%TEMP%\hato-13\embedded-mock\shots\`:
+> A, two tick boxes that untick each other; B, one choice of three) and four leans; ruled: *"I
+> take all your leans. Go"* — **B, one choice of three** · **"Download anyway" first, as 1.0.7**;
+> the third choice appears only once it works, never greyed out · **a video hato cannot take
+> subtitles out of (not MKV) is downloaded for instead, and its row says why** · **its row says
+> "taken from the video"** where the jimaku file's name goes, no match %, the track on hover.
+>
+> ⭐ **AND ONE UNDERSTANDING, IN HIS WORDS:** *"because the encoding may be different for the
+> subtitle, for example an .ass sub you download may not be the same exact line breaks etc as
+> the srt from the video. Just note that."* So: a DOWNLOADED subtitle is jimaku's own file, in
+> its own format and line breaks; one TAKEN FROM THE VIDEO is the video's own track, in ITS
+> own (an .srt track stays .srt — never converted, `LEDGER-HOT.md`). The two need not match
+> line for line, and the timing check matches on timing, not on lines. Said to the person in
+> the choice's ⓘ.
+>
+> ⭐ **MEASURED BEFORE SCOPING:** the engine half of "download anyway" has existed since 1.0.0 —
+> `skip_embedded` in `config.toml`, ruled 2026-09-17, checked by `test_pipeline`'s
+> `test_the_toggle_fetches_even_for_a_video_that_already_has_a_japanese_track` — and was never
+> a control in the window: the row's tooltip told people to edit the file. surasura receives
+> only a subtitle hato WRITES (`pipeline.py`: `result.wrote and not result.skip`), which is why
+> the default skip sends it nothing. tsubasa reads an embedded track's TIMING only (its Cues),
+> never its text — taking one out is new, and tsubasa's. The Windows build ships no ffmpeg
+> (`ffmpeg.exe` + `ffprobe.exe` are 157 MB — about twice the whole download).
+
+| Step | surfaces | What | Its proof |
+| --- | --- | --- | --- |
+| **14a** | `ui` | **Settings → Subtitle format: *"When the video already has Japanese subtitles inside it"* — ○ Leave them there · ○ Download from jimaku anyway.** The ruled `skip_embedded`, in the window at last; the row's tooltip points at it instead of at `config.toml`. ⚠ Every hato since 1.0.0 reads the key, so no older-tray note. ⛔ Touches the card, the window's state and the tooltip; not the engine | the choice reads the setting and writes it through `hato config`; the file round-trips into the window; the tooltip names Settings · the card LOOKED · ⭐ **its adversarial pass** (`ADVERSARY-2026-09-25.md` §*Layer 14*, register Z14 — ⚠ PARTIAL: an interrupt stopped the adversary, its probes were triaged and every lead reproduced): the two radios one group — clicking the chosen one emptied both circles (Z14-1) · the older tray's note back under the rows it speaks for (Z14-2) · 🚨 **every Settings control keeps the keyboard across a rebuild — Space, Tab, Space had turned the daily run OFF** (Z14-3) · a video switched back to *Leave them there* stops asking for a pick (Z14-4, DATA-F16) · a pick is copied to surasura (Z14-5) · both config readouts show every setting (Z14-6) · M14-09…21, 21 of 21 caught |
+| **1.0.7** | `delivery` | ⏳ Released with 14a — authorized with the leans | Step 6 |
+| **14b** | `data` (tsubasa) | ⏳ **tsubasa takes a text track out of an MKV, in its own format** — `.ass`/`.ssa` with their header and styles, `.srt`; the track's compression undone; ⛔ never converted; ⛔ a WebVTT track REFUSED, by name (its cue settings live in BlockAdditions — tsubasa's 3h). Checked against ffmpeg's own `-c:s copy` of the same real files. tsubasa's runbook, and its release FIRST (hato's floor rises) | tsubasa's |
+| **14c** | `data` · `ui` | ⏳ **The third choice: *"Save them beside the video, as a file"*** — the track taken out and written as `<video>.ja.<ext>` beside the video (temp-plus-rename; never over a subtitle already there), copied to surasura, the row *"taken from the video"* (no %, the track on hover); a video hato cannot take them out of is downloaded for, and says why | ⏳ |
+| **14z** | — | ⏳ the adversarial pass over Layer 14 → a register | the register |
+| **1.0.8** | `delivery` | ⏳ Released with 14c | Step 6 |
 
 ---
 
-## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.5`, 2026-09-24 (`v1.0.4` the same day, `v1.0.3` and `v1.0.2` 2026-09-23, `v1.0.1` 2026-09-19). ⛔ NO PyPI, RULED
+## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.6`, 2026-09-25 (`v1.0.5` and `v1.0.4` 2026-09-24, `v1.0.3` and `v1.0.2` 2026-09-23, `v1.0.1` 2026-09-19). ⛔ NO PyPI, RULED
+
+> ⭐ **`v1.0.6` IS LIVE — LAYER 13 and its adversarial pass, and the pill's dot (13k).** The
+> sequence unchanged, the stamp rehearsal first: stamp `1.0.6` (`sha256:f2dad263…`, 83 files — the
+> rehearsal's own hash; the version-touching suites and the window's over the stamped copy,
+> 1,017 passed) → the full runner **33 suites / 2,499 checks** over the stamped tree → freeze
+> (61 warnings, as 1.0.5's) → smoke **45/45** (the REHEARSAL: the released 1.0.5 updated by the new
+> swapper both ways, *Updated to 1.0.6*, 1.0.5 kept, one tray) → `update-manifest` (signed; read
+> back 3/3) → sync → `927a28f` → `tests` **12/12 jobs on the FIRST push** → `--go`: tag `v1.0.6`,
+> THREE assets → `verify-release` **10 held · 0 failed · 0 skipped** (`an_install_takes_it`: a copy
+> at 1.0.4 heard *ready 1.0.6*) → `release` **2/2** on the tag → ⭐ **the published 1.0.5 took the
+> published 1.0.6 end to end** (`e2e_update.py 1.0.5 1.0.6`, **9/9**: *ready 1.0.6* from GitHub,
+> downloaded and proved in 16 s, 1.0.6's own swapper, *Updated to 1.0.6* in its window, 1.0.5 kept).
+> Before it: every window layer's mutants, **795 caught** — two re-run after the machine SLEPT
+> through them (LEDGER §harness).
 
 > ⭐ **`v1.0.5` IS LIVE — THE FIRST RELEASE AN INSTALL TOOK BY ITSELF** — LAYER 12 and its
 > adversarial pass. ⭐ **One step went IN FRONT of the sequence: the STAMP REHEARSAL** — the

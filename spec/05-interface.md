@@ -275,6 +275,9 @@ archives   = false         # ⭐ OFF by default, ruled 2026-09-17 — unpacking 
                            #   author. Turn it on here, or per-run with --archives
 allow_ai   = false
 recurse    = true
+skip_embedded   = true    # ⭐ RULED 2026-09-17; a Settings choice since 14a (Subtitle format):
+                          #   true leaves a video's own Japanese text track in place;
+                          #   false downloads from jimaku anyway -- for surasura
 prefer_format   = "ass"    # ⭐ RUNBOOK 9a, RULED 2026-09-23 -- "ass" or "srt": tried first,
                            #   and with the fallback off the ONLY kind downloaded
 format_fallback = false    # ⭐ OFF by default, ruled: an episode jimaku has only in the
