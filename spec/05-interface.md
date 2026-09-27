@@ -289,6 +289,10 @@ prefer_format   = "ass"    # ⭐ RUNBOOK 9a, RULED 2026-09-23 -- "ass" or "srt":
                            #   and with the fallback off the ONLY kind downloaded
 format_fallback = false    # ⭐ OFF by default, ruled: an episode jimaku has only in the
                            #   other kind waits, says so, and is looked for again a day later
+untimed = "off"            # ⭐ LAYER 15, RULED 2026-09-26 -- a video with NO subtitle track:
+                           #   "off" skips it (today) · "same_provider" · "any_provider" places
+                           #   one chosen by its NAME, NOT TIMED, as <video>.jpn.<ext>.
+                           #   Written only once not "off" (NEWER_THAN_1_0_8)
 
 [log]
 path = ""                  # empty = %LOCALAPPDATA%\hato\hato.log
@@ -328,6 +332,46 @@ window says the tray must be restarted.
 > - `--even-if-embedded` downloads, whatever the file says.
 > - An older tray is told under the choice (its pid file lacks `extract`).
 > - The window: *"taken from the video"*, no %, the track on hover.
+
+> ⭐ **LAYER 15, RULED AND SIGNED OFF 2026-09-26, BUILT THE SAME DAY — subtitles nothing could
+> time (`untimed`).** The design and every ruling: `spec/RUNBOOK.md` §*LAYER 15*. What a person
+> meets:
+> - **Settings → Subtitle format:** *When the video has no subtitles inside it* — one choice of
+>   three, *Skip it* first and the default: *Skip it* · *Download one from the same provider* ·
+>   *Download one that fits the episode number*. Under either download choice, a mild red ⚠
+>   (`theme.REFUSED_INK`) and its one reason, SHOWN (fork 12). ⛔ No *(recommended)*, and nothing
+>   anywhere else points at it (fork 14). An older tray is told under the choice (its pid file
+>   lacks `untimed`). *Skip it* is written by taking the key away.
+> - **Mode A:** `✓ 01  ↓ 85 KB  ≈ not timed · same provider  → ….jpn.ass`; another provider's
+>   `≈ not timed · another provider, may be off`; the summary *"N fetched, not timed"*; a wait
+>   *"… (the first stops 2026-10-03)"*, then *"N stopped looking"* — ⛔ never *"dry run"*; the
+>   plan *"N to fetch, not timed"*. `--untimed off|same_provider|any_provider` for ONE run.
+> - **`--json`, NDJSON, `api.Result`:** `untimed` = `{tier, provider, video_provider}` on a
+>   placed row; `untimed_wait` = `{choice, since, stops, waits_for}` on a wait — null on every
+>   other row, added and never renamed. `api.scan(untimed=…)`.
+> - **`hato problems`:** this road's waits only while the choice is on, under their own heading
+>   (*"no subtitle track — waiting for a subtitle to place by its name"* — ⭐ 15z C12: never *"not
+>   on jimaku yet"*), each with its END — *"looks again in 14h · once a day until 3 Oct, then
+>   stops"*, then *"stopped looking"*; *"looks again on the next run"* once the choice changed
+>   (C4). A wait whose fix is a RENAME (no episode number in the name; a subtitle name hato could
+>   not find again) is under *"had a problem"*, its reason said (C9).
+> - **The window:** the row's amber edge AND ≈ where the % goes (coral while open — the shipped
+>   idiom), *"· another provider — may be off"* right after a third-tier name, the hover's *Not
+>   timed.* and how it was chosen, the opened panel (*timing* · *chosen by* · *written — .jpn
+>   marks it not timed* · *original kept*), the show's *"· not timed"*, the footer's *"N added
+>   (M not timed)"* — ⚠ in brackets, INSIDE the added count: the footer's numbers add up to the
+>   rows. **Needs you:** *"N episodes waiting for a file by its name — … · looks once a day until
+>   3 Oct, then stops"* and *"stopped looking for N episodes"*, each with *Look again now* (ONE
+>   look). ⛔ No file offered from another provider (fork 9); a stopped wait is never *"waiting
+>   to retry"*.
+> - ⭐ **15z, the words a wait says, by what keeps it** (the 8h rule — a schedule only while
+>   something keeps it): the tray or the daily run on → *"looks once a day until 3 Oct, then
+>   stops"*; neither → *"looks again when hato next runs, until 3 Oct"*, its ⓘ saying who asks;
+>   the choice changed since → *"looks again on the next run"*; *Skip it* now → *"no longer
+>   looked for"*. Waits stopping on different days → *"each looks for a week — the first stops
+>   3 Oct"*. A placed file the next run finds PRESENT → *"— already had one · not timed"* (D1).
+>   Go back to a hato before the road → the card says the road's waits are no longer waited for
+>   (C7), before the press.
 
 ⚠ **The API key is NOT in this file.** It is read at runtime from
 `InfiniteVoid/keystore/hato-jimaku.txt`, or `$HATO_JIMAKU_KEY`. See `08-research.md`

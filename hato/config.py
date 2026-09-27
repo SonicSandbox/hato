@@ -115,6 +115,13 @@ SCHEMA = {
     # restarts under a person, and the tray or the daily run installs it while
     # nothing of hato is open. Off: hato only SAYS a release is out.
     "auto_update": (bool, True),
+    # ⭐ RUNBOOK LAYER 15, SIGNED OFF BY SONIC 2026-09-26 -- a video with NO subtitle
+    # track: `off` (the default -- skipped, as ever: nothing to time a download
+    # against), `same_provider` (a file its own provider made for the episode) or
+    # `any_provider` (the best one for the episode). ⚠ NOT TIMED: placed untouched as
+    # `<video>.jpn.<ext>` by tsubasa, and said everywhere. 🚨 His three constraints:
+    # NOT a default, NOT recommended, NOT looking for ever (`formats.UNTIMED_*`).
+    "untimed": (str, u"off"),
 }
 
 #: 🚨 KEYS AN OLDER hato HAS NEVER HEARD OF -- written only once set away from
@@ -133,13 +140,15 @@ NEWER_THAN_1_0_3 = ("auto_update",)
 #: The same rule for 1.0.8's own key (RUNBOOK 14c) -- its own tuple for the same
 #: reason: the window says a tray must be restarted under the choice it speaks for.
 NEWER_THAN_1_0_7 = ("extract_embedded",)
+#: ⭐ And 1.0.9's (RUNBOOK LAYER 15) -- its own tuple, for the same reason.
+NEWER_THAN_1_0_8 = ("untimed",)
 #: Every key written only once set away from its default.
-NEWER_KEYS = NEWER_THAN_1_0_2 + NEWER_THAN_1_0_3 + NEWER_THAN_1_0_7
+NEWER_KEYS = NEWER_THAN_1_0_2 + NEWER_THAN_1_0_3 + NEWER_THAN_1_0_7 + NEWER_THAN_1_0_8
 #: ⭐ 14z (ADVERSARY 2026-09-25, C-1/C-2) -- which hato first refuses which keys,
 #: oldest first: `NEWER_THAN_x_y_z` names the keys a hato AT OR BELOW x.y.z has never
 #: heard of. ⛔ A key added here is a key *Go back* must be able to take away.
 NEWER_THAN = (((1, 0, 2), NEWER_THAN_1_0_2), ((1, 0, 3), NEWER_THAN_1_0_3),
-              ((1, 0, 7), NEWER_THAN_1_0_7))
+              ((1, 0, 7), NEWER_THAN_1_0_7), ((1, 0, 8), NEWER_THAN_1_0_8))
 
 #: ⚠ `schedule` is HH:MM, 24-hour. A free string here would be written happily
 #: and refused later by whatever registers the task -- somewhere the person is
@@ -249,7 +258,7 @@ class Config(object):
                  "candidates", "archives", "allow_ai", "recurse", "skip_embedded",
                  "extract_embedded",
                  "watch", "schedule", "surasura_dir", "prefer_format",
-                 "format_fallback", "auto_update", "log_path", "log_keep",
+                 "format_fallback", "auto_update", "untimed", "log_path", "log_keep",
                  "path", "path_source", "file_exists", "_set")
 
     def origin(self, name):
@@ -283,6 +292,7 @@ class Config(object):
             "prefer_format": self.prefer_format,
             "format_fallback": self.format_fallback,
             "auto_update": self.auto_update,
+            "untimed": self.untimed,
             "log": {"path": self.log_path, "path_resolved": str(self.log_path_resolved),
                     "keep": self.log_keep},
             "data_root": str(paths.data_root()),
@@ -403,6 +413,13 @@ def parse(text, path=None):
     cfg.prefer_format = prefer
     cfg.format_fallback = values["format_fallback"]
     cfg.auto_update = values["auto_update"]
+    untimed = values["untimed"]
+    if untimed not in formats.UNTIMED_CHOICES:
+        raise ConfigError(
+            "%s: untimed = %r must be one of %s -- what hato does for a video with no "
+            "subtitle track inside it (spec/RUNBOOK.md LAYER 15)."
+            % (where, untimed, " or ".join("'%s'" % c for c in formats.UNTIMED_CHOICES)))
+    cfg.untimed = untimed
     cfg.log_path = _absolute(log_values["path"], "log.path")
     cfg.log_keep = log_values["keep"]
     cfg._set = frozenset(set_names)
@@ -554,6 +571,7 @@ def _writable(cfg):
         "prefer_format": cfg.prefer_format,
         "format_fallback": cfg.format_fallback,
         "auto_update": cfg.auto_update,
+        "untimed": cfg.untimed,
     }
 
 
@@ -713,6 +731,11 @@ _GOING_BACK = {
     "extract_embedded": ({"skip_embedded": True},
                          u"“Save them beside the video, as a file” becomes “Leave them "
                          u"there” — %s cannot take subtitles out of a video"),
+    # ⭐ RUNBOOK LAYER 15 -- the key dropped (`off`, the only choice an older hato has),
+    # and the files already placed STAY: they are files beside the videos, which any
+    # hato counts as present (`.jpn.` reads as Japanese to tsubasa 0.1.9 too).
+    "untimed": ({}, u"“%s” becomes “Skip it” — %%s cannot download a subtitle it "
+                    u"cannot time. The ones already downloaded stay."),
 }
 
 
@@ -738,6 +761,9 @@ def readable_by(cfg, version):
         if getattr(cfg, name) != SCHEMA[name][1]:
             also, said = _GOING_BACK.get(name, ({}, u"%s goes back to its default — %%s "
                                                     u"has no such setting" % name))
+            if name == "untimed":
+                # ⭐ LAYER 15 -- the choice made, in the words Settings shows it in.
+                said = said % formats.untimed_words(getattr(cfg, name))
             changes.update(also)
             words.append(said % version)
         changes[name] = SCHEMA[name][1]

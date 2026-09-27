@@ -1067,28 +1067,66 @@ def go_back_pending(install_dir, current, root=None):
     return path
 
 
-def settings_for_going_back(version, path=None):
+def settings_for_going_back(version, path=None, db_path=None):
     u"""⭐ 14z (ADVERSARY 2026-09-25, C-1/C-2) -- config.toml made readable by the kept
     `version` before it runs (`config.make_readable_by`). -> [what changed, in words].
     ⛔ Called once the hand-off has STARTED -- a failed one changes nothing -- and before
     this process exits: the swapper waits for it, so the kept tray reads the new file.
     ⛔ Never raises: a file that cannot be read or written is left as it is, and the
-    swapper's own proof still puts this version back if the kept one cannot start."""
+    swapper's own proof still puts this version back if the kept one cannot start.
+    ⭐ 15z (C7) -- and hato's memory, for a version before the untimed road
+    (`_road_waits_for_going_back`)."""
     from hato import config
     try:
-        return config.make_readable_by(version, path)
+        words = config.make_readable_by(version, path)
     except (config.ConfigError, OSError):
-        return []
+        words = []
+    return words + _road_waits_for_going_back(version, db_path, dry_run=False)
 
 
-def going_back_words(version, path=None):
+def going_back_words(version, path=None, db_path=None):
     u"""⭐ 14z -- what `settings_for_going_back` would change, in words, for the Go back
     card BEFORE the press. -> [words]. Nothing written; never raises."""
     from hato import config
     try:
-        return config.readable_by(config.load(path), version)[1]
+        words = config.readable_by(config.load(path), version)[1]
     except (config.ConfigError, OSError):
+        words = []
+    return words + _road_waits_for_going_back(version, db_path, dry_run=True)
+
+
+#: ⭐ LAYER 15 -- the first hato with the untimed road.
+UNTIMED_SINCE = (1, 0, 9)
+
+
+def _road_waits_for_going_back(version, db_path=None, dry_run=True):
+    u"""⭐ 15z (C7, D7, B12) -- the untimed road's waits, for a kept `version` before the
+    road: counted (`dry_run`, the card's words), or taken out. -> [words]
+
+    🚨 Measured with the PUBLISHED 1.0.8: its gate skips a video with no subtitle track
+    before recording anything, so a wait of the road's is never settled -- its `hato
+    problems` listed every one for ever, and its tray woke for a stopped wait's date.
+    ⛔ Never raises, and never creates a state DB that is not there."""
+    parsed = parse_version(version)
+    if parsed is None or parsed >= UNTIMED_SINCE:
         return []
+    import os
+    from hato import paths, state
+    try:
+        where = db_path or paths.state_db_path()
+        if not os.path.exists(str(where)):
+            return []
+        with state.StateDB(where, repair=False) as db:
+            if not db.persistent:
+                return []
+            count = db.untimed_waits(dry_run=dry_run)
+    except Exception:                        # noqa: BLE001 -- the memory is advisory
+        return []
+    if not count:
+        return []
+    return [u"%d episode%s waiting for a subtitle by its name %s no longer waited for — "
+            u"%s cannot look for one" % (count, u"" if count == 1 else u"s",
+                                         u"is" if count == 1 else u"are", version)]
 
 
 def skip(version, path=None):

@@ -76,11 +76,13 @@ DB costs a skipped fetch, never an overwrite.
 import os
 import time
 from collections import OrderedDict
+from datetime import timedelta
 
 import tsubasa
 
 from hato import archives, cache as _cache, client as _client, episodes, formats, \
     keep, paths, port, present, rank, tokens
+from hato import untimed as _untimed
 from hato.cache import Cache
 from hato.resolution import Resolved, cache_key, identify
 
@@ -156,7 +158,7 @@ class Settings(object):
                  "candidates", "archives",
                  "allow_ai", "recurse", "force", "dry_run", "skip_embedded",
                  "surasura_dir", "retry_now", "only", "prefer_format",
-                 "format_fallback", "extract_embedded")
+                 "format_fallback", "extract_embedded", "untimed")
 
     def __init__(self, folders, lang=u"ja", out=None, subs_dir=None, candidates=3,
                  # ⚠ `archives=False`, matching `config.py`'s schema. It was True
@@ -176,7 +178,9 @@ class Settings(object):
                  # ⭐ 9a -- `config.py`'s defaults, as the guard above requires.
                  prefer_format=formats.DEFAULT_PREFERENCE, format_fallback=False,
                  # ⭐ 14c -- and its default too.
-                 extract_embedded=False):
+                 extract_embedded=False,
+                 # ⭐ LAYER 15 -- and its default: OFF (his first constraint).
+                 untimed=formats.UNTIMED_OFF):
         self.folders = tuple(os.path.abspath(os.fspath(f)) for f in folders)
         # ⭐ RUNBOOK 7e. Subtrees carved OUT of `folders` -- Sonic: *"someone
         # might say 'desktop' and then not want a certain folder checked on
@@ -225,6 +229,12 @@ class Settings(object):
         # OUT and saved beside it, as a file. ⚠ It wins over `skip_embedded`
         # (`formats.embedded_choice`).
         self.extract_embedded = bool(extract_embedded)
+        # ⭐ LAYER 15 (signed off 2026-09-26) -- a video with NO subtitle track: skipped
+        # (`off`, the default), or a subtitle picked by its NAME placed NOT TIMED.
+        if untimed not in formats.UNTIMED_CHOICES:
+            raise ValueError(u"untimed must be one of %s, got %r"
+                             % (u", ".join(formats.UNTIMED_CHOICES), untimed))
+        self.untimed = untimed
 
     @classmethod
     def from_config(cls, cfg, **given):
@@ -260,7 +270,8 @@ class Settings(object):
                    only=given.get("only") or (),
                    prefer_format=pick("prefer_format", cfg.prefer_format),
                    format_fallback=pick("format_fallback", cfg.format_fallback),
-                   extract_embedded=pick("extract_embedded", cfg.extract_embedded))
+                   extract_embedded=pick("extract_embedded", cfg.extract_embedded),
+                   untimed=pick("untimed", cfg.untimed))
 
     def __repr__(self):
         return "<Settings %d folder(s), lang=%s%s%s>" % (
@@ -341,7 +352,7 @@ class VideoResult(object):
                  "reason", "jimaku_entry", "jimaku_filename", "attempts",
                  "candidates_offered", "tsubasa", "output_path", "kept_path",
                  "api_calls", "bytes_downloaded", "retry_after", "tried_before",
-                 "newest_offered", "taken_from", "not_taken")
+                 "newest_offered", "taken_from", "not_taken", "untimed", "untimed_wait")
 
     def __init__(self, video, outcome, reason=u"", **fields):
         self.video = str(getattr(video, "path", video))
@@ -374,6 +385,12 @@ class VideoResult(object):
         #: ⭐ 14c -- why the Japanese subtitles inside could not be taken out,
         #: when the setting asked and the video was downloaded for instead.
         self.not_taken = None
+        #: ⭐ LAYER 15 -- a subtitle placed NOT TIMED: `{tier, provider, video_provider}`
+        #: (`untimed.as_field`). None on every timed row. ⛔ Added, never renamed.
+        self.untimed = None
+        #: ⭐ LAYER 15 -- a wait on that road: `{choice, since, stops, waits_for}`, the
+        #: dates absolute (ISO), so a view taken any day reads it alike (fork 13).
+        self.untimed_wait = None
         for key, value in fields.items():
             setattr(self, key, value)
         if outcome != CONFIDENT and not (self.reason or u"").strip():
@@ -466,7 +483,7 @@ class RunReport(object):
 
 def run(settings, *, client, db, resolutions, kitsu=None, cache=None,
         downloader=None, engine=None, reader=None, clock=None, on_progress=None,
-        extractor=None):
+        extractor=None, placer=None):
     u"""Walk the folders and do the read rule for every video. -> `RunReport`
 
     `client` · `db` · `resolutions`
@@ -485,6 +502,10 @@ def run(settings, *, client, db, resolutions, kitsu=None, cache=None,
     `extractor`
         ⭐ RUNBOOK 14c -- `tsubasa.extract_subtitle` by default: the same kind of
         seam, so a suite can say what a track comes out as without a container.
+    `placer`
+        ⭐ LAYER 15 -- `tsubasa.place_subtitle` by default: the same kind of seam.
+        ⚠ None on a tsubasa before 0.1.10, and then the road says so and places
+        nothing -- a floor is only what pip was told.
     `on_progress`
         ⭐ RUNBOOK 7b. `(dict) -> None`, called AS THE WORK HAPPENS. ⛔ `None` by
         default, and then no branch below it runs at all.
@@ -501,14 +522,14 @@ def run(settings, *, client, db, resolutions, kitsu=None, cache=None,
         every call is wrapped.
     """
     return _Run(settings, client, db, resolutions, kitsu, cache, downloader,
-                engine, reader, clock, on_progress, extractor).go()
+                engine, reader, clock, on_progress, extractor, placer).go()
 
 
 class _Run(object):
 
     def __init__(self, settings, client, db, resolutions, kitsu, cache,
                  downloader, engine, reader, clock, on_progress=None,
-                 extractor=None):
+                 extractor=None, placer=None):
         self._progress = on_progress
         self._done = 0
         self.s = settings
@@ -524,6 +545,10 @@ class _Run(object):
         #: a tsubasa from before 0.1.9: the choice then downloads, and says why.
         self.extractor = (extractor if extractor is not None
                           else getattr(tsubasa, u"extract_subtitle", None))
+        #: ⭐ LAYER 15 -- `tsubasa.place_subtitle`, or a suite's own. ⚠ None on a tsubasa
+        #: from before 0.1.10: the road then places nothing, and says why.
+        self.placer = (placer if placer is not None
+                       else getattr(tsubasa, u"place_subtitle", None))
         self.clock = clock if clock is not None else time.time
         self.report = RunReport(settings)
         try:
@@ -548,6 +573,13 @@ class _Run(object):
         self._not_taken = {}
         #: ⭐ 14z (A-1) -- folder key -> why it cannot take a file, or None: asked once
         self._unwritable = {}
+        #: ⭐ LAYER 15 -- video key -> True: a video with no subtitle track, on the
+        #: untimed road (the setting is on). Set by `_gate`; read by `_candidates`.
+        self._road = {}
+        #: ⭐ LAYER 15 -- `db.untimed_placed()`, asked ONCE a run and only when a `.jpn.`
+        #: file is found; and the kept originals by size, walked only after a clear.
+        self._placed = None
+        self._kept_by_size = None
 
     # -- the whole run ------------------------------------------------------
 
@@ -1004,8 +1036,11 @@ class _Run(object):
             said = (u"subtitle already present (%s -- its name gives no language; "
                     u"its text is Japanese)" % found.name if found.by_text
                     else u"subtitle already present (%s)" % found.name)
+            # ⭐ LAYER 15 -- and whether it is one hato placed NOT TIMED (fork 5): its
+            # name says `.jpn.` AND its bytes are one of hato's kept originals.
             return VideoResult(video, SKIPPED, said, skip=PRESENT,
-                               output_path=str(found.path))
+                               output_path=str(found.path),
+                               untimed=self._mark(video, found))
 
         try:
             video_hash = self._hash(path)
@@ -1094,7 +1129,30 @@ class _Run(object):
             # ⛔ NEVER A REFUSAL. A refusal row is keyed on a candidate and would
             # blacklist a good subtitle for ever -- including after tsubasa can
             # sync from audio. Nothing is recorded at all.
-            return VideoResult(video, SKIPPED, tracks.reason, skip=NO_TRACK)
+            # ⭐ LAYER 15 -- unless the person turned the untimed road on: then it
+            # goes on down, to be placed by its NAME, NOT TIMED.
+            skipped = self._road_or_skip(video, path, tracks)
+            if skipped is not None:
+                return skipped
+
+        # ⭐ LAYER 15 (fork 13) -- a wait on the untimed road looks once a day for a
+        # WEEK, then STOPS: nothing looks again on its own. ⛔ Only *Look again now*
+        # (`retry_now`, one look), `--force`, or a CHANGE of the choice looks again --
+        # and the choice changing starts a new week (`_road_wait`).
+        road = _key(path) in self._road
+        wait = self.db.untimed_wait(video_hash, self.lang) if road else None
+        fresh = wait is not None and self._starts_over(wait)
+        # 🚨 15z (C2) -- STOPPED IS ALSO A NEXT LOOK THAT FALLS PAST THE STOP: the week's
+        # last look said *"stopped looking"*, and until the stop itself came this skip
+        # carried its date as a retry -- *"1 waiting"*, and a tray wake for nobody.
+        # `formats.untimed_stopped`, the one rule the CLI and the window read too.
+        if (wait is not None and not fresh and not (self.s.force or self.s.retry_now)
+                and formats.untimed_stopped(wait.stops, wait.retry_after, self.db.now())):
+            base = _untimed.base_of(wait.reason)
+            return VideoResult(video, SKIPPED, _untimed.stopped_reason(base), skip=NEGATIVE,
+                               retry_after=None, candidates_offered=None,
+                               untimed_wait=_untimed.wait_field(wait.choice, wait.since,
+                                                                base))
 
         # ⚠ HARD *OR* SOFT, unexpired. Checking only the hard one re-lists the
         # entry's files every run for an episode jimaku does not have yet -- the
@@ -1107,8 +1165,9 @@ class _Run(object):
         # 🚨 The window's "Try 3 more candidates" ran without either, so for the 24
         # hours after a refusal -- the only time anybody presses it -- the gate
         # answered "waiting to retry" and it tried nothing at all.
-        skip = self.db.skip_reason(video_hash, self.lang,
-                                   force=self.s.force or self.s.retry_now)
+        # ⭐ LAYER 15 -- a wait under ANOTHER choice is no wait for this one: it looks now.
+        skip = None if fresh else self.db.skip_reason(
+            video_hash, self.lang, force=self.s.force or self.s.retry_now)
         if skip is not None and skip.kind == "negative":
             # ⭐ 9a -- A WAIT FOR ONE KIND ENDS WHEN THE PERSON TAKES THE OTHER.
             # It was recorded because every file was the other format; turning
@@ -1136,6 +1195,16 @@ class _Run(object):
             # *Look again* claimed every file had been tried (ADVERSARY 2026-09-22
             # A5). The newest episode on offer is the negative's own; how many the
             # entry holds is UNKNOWN -- this run never listed it.
+            if road:
+                # ⭐ LAYER 15 -- the road's wait says it waits, until when, and when it
+                # STOPS (fork 13) -- ⛔ and offers no file to pick (fork 9): a pick would
+                # TIME a subtitle this video has nothing to time against.
+                return VideoResult(video, SKIPPED, skip.reason, skip=NEGATIVE,
+                                   retry_after=skip.retry_after, candidates_offered=None,
+                                   newest_offered=skip.newest_offered,
+                                   untimed_wait=_untimed.wait_field(
+                                       wait.choice, wait.since, _untimed.base_of(wait.reason))
+                                   if wait is not None else None)
             return VideoResult(video, SKIPPED, skip.reason, skip=NEGATIVE,
                                retry_after=skip.retry_after,
                                tried_before=self._remembered(video_hash),
@@ -1168,8 +1237,44 @@ class _Run(object):
             # through to an ordinary fetch; the kept original stays kept.
             kept_as = tokens.subtitle_format(os.path.basename(synced.kept_path))
             if formats.accepts(kept_as, self.s.prefer_format, self.s.format_fallback):
-                return self._resync(video, root, video_hash, synced)
+                if not synced.untimed:
+                    return self._resync(video, root, video_hash, synced)
+                if road and synced.untimed in _untimed.allowed(self.s.untimed):
+                    # ⭐ LAYER 15 (edge 10) -- a file placed NOT TIMED is gone and its
+                    # original is kept: placed AGAIN, zero network -- as a timed one
+                    # is re-synced. ⚠ A deliberate delete comes back; the ⓘ says how
+                    # to stop it (Skip it, or the skip list). 🚨 15z (B3): only a tier
+                    # the choice NOW takes -- another provider's file, placed under
+                    # `any_provider` and deleted, came back under `same_provider`.
+                    return self._replace(video, folder, video_hash, synced)
         return None
+
+    def _road_or_skip(self, video, path, tracks):
+        u"""⭐ LAYER 15 -- a video with no subtitle track, or none tsubasa can use.
+        -> the SKIP it has always been, or None: it is on the untimed road.
+
+        ⛔ OFF BY DEFAULT (his first constraint): `off` is today's skip, word for word --
+        the *can't sync yet* row and its tip stay exactly as they were (fork 14).
+        ⚠ A tsubasa before 0.1.10 cannot place a file: the skip then says so, and
+        nothing is fetched for a file it could not place."""
+        if self.s.untimed == formats.UNTIMED_OFF:
+            return VideoResult(video, SKIPPED, tracks.reason, skip=NO_TRACK)
+        if self.placer is None:
+            return VideoResult(video, SKIPPED,
+                               u"%s -- and this tsubasa (%s) cannot place a subtitle it "
+                               u"cannot time; 0.1.10 can"
+                               % (tracks.reason, getattr(tsubasa, u"__version__", u"?")),
+                               skip=NO_TRACK)
+        self._road[_key(path)] = True
+        return None
+
+    def _starts_over(self, wait):
+        u"""⭐ LAYER 15 -- does this wait begin again? -> bool. The CHOICE changed (fork
+        13: *"changing the choice starts a new week"*), or it waits for a FORMAT the
+        person's settings now take (9a's rule: that wait ends when they take it)."""
+        return formats.untimed_starts_over(wait.choice, _untimed.base_of(wait.reason),
+                                           self.s.untimed, self.s.prefer_format,
+                                           self.s.format_fallback)
 
     def _cannot_write(self, folder):
         u"""⭐ 14z (A-1) -- `paths.cannot_write`, asked once per folder in a run."""
@@ -1310,6 +1415,361 @@ class _Run(object):
         return VideoResult(video, outcome, reason, tsubasa=result, attempts=(attempt,),
                            jimaku_entry=row.jimaku_entry,
                            jimaku_filename=row.jimaku_filename)
+
+    # -- ⭐ LAYER 15: a video with no subtitle track, a subtitle placed NOT TIMED -------
+
+    def _untimed_candidates(self, show, alignment, video, root):
+        u"""The untimed road's half of `_candidates`. -> VideoResult
+
+        ⭐ CHOOSING (fork 7, and the 15z pass): only numbers PROVEN across a release
+        (`untimed.FITS`) or a file named exactly as the video (`_named_exactly`) -- ⛔
+        never the alignment's guesses, and nothing at all for a likely-only entry; then
+        only the tiers the choice takes (`same_provider` `exact` and `same`,
+        `any_provider` everything), THEN rank's filters unchanged -- AI, tagged
+        non-Japanese, duplicates, the format preference -- and the TIER ahead of rank's
+        key (`untimed.choose`). ⛔ NO TIMING LOOP: nothing can referee it. The top one is downloaded
+        and must READ AS JAPANESE (`present.reads_as_japanese`, 9b's measured rule) --
+        the one check this road has; if not, the next, up to the cap. ⛔ A file failing
+        the read is NOT recorded as refused: no permanent verdict from a heuristic, and
+        it must stay available to the audio road. Every wait here is bounded to a WEEK
+        (`_road_wait`, fork 13), and ⛔ none of them offers a file to pick (fork 9).
+        """
+        path = str(video.path)
+        entry = show.resolved.entry_id
+        video_hash = self._hash(path)
+        newest = episodes.newest_offered(alignment, video)
+        if path in alignment.refused:
+            # ⚠ The video's own name holds no episode number: the timed road's REFUSED,
+            # bounded to the week like every wait on this one. ⭐ 15z (C9): REFUSED only
+            # when a RENAME is the fix (`untimed.is_refusal`) -- a special jimaku has no
+            # file for is a wait, as `hato problems` and the window file it.
+            why = alignment.refused[path]
+            return self._road_wait(video, why, entry,
+                                   outcome=REFUSED if _untimed.is_refusal(why) else NOT_FOUND)
+        if path in alignment.not_found:
+            return self._road_wait(video, alignment.not_found[path], entry,
+                                   newest_offered=newest)
+        if show.resolved.low_confidence:
+            # 🚨 15z (C1) -- A LIKELY ENTRY IS NOT A SURE ONE. The timed road checks its guess
+            # by timing and tries the next entry; this road cannot, and the S2 entry's episode
+            # 01 was placed beside an S1 episode 01 as *"same provider"*. It waits, bounded.
+            return self._road_wait(video, _untimed.UNSURE_SHOW, entry, newest_offered=newest)
+        # 🚨 15z's BLOCKER (B1, C1) -- ONLY PROVEN FITS (`untimed.FITS`): the alignment's
+        # guesses exist for TIMING to refuse. ⭐ And (B4, C5) THE TIER BEFORE THE FORMAT, so
+        # a wait's words are true of the files the choice takes: another provider's `.srt`
+        # made a false 9a wait, and the provider's own `.srt` read *"nothing from"* it.
+        takes = _untimed.allowed(self.s.untimed)
+        fits = [c for c in alignment.per_video.get(path) or () if c.quality in _untimed.FITS]
+        fits.extend(self._named_exactly(video, alignment, fits))
+        mine = [c for c in fits if _untimed.tier(video.name, c.file["name"]) in takes]
+        if not mine:
+            return self._road_wait(video, self._nothing_to_place(video), entry,
+                                   newest_offered=newest)
+        ranking = rank.rank(mine, allow_ai=self.s.allow_ai, seen_groups=frozenset(),
+                            prefer=self.s.prefer_format, fallback=self.s.format_fallback)
+        ranked = [r.candidate for r in ranking.ordered]
+        if not ranked:
+            # ⭐ 9a on this road: the files the choice takes are there, in a format the
+            # settings do not -- a wait the fallback ends (`_starts_over`)
+            return self._road_wait(video, _unranked_reason(ranking, entry, self.s.prefer_format),
+                                   entry, newest_offered=newest)
+        fresh = [c for c in ranked
+                 if self.s.force or not self.db.refused(
+                     video_hash, self.lang, entry, c.file.get("name"),
+                     c.file.get("size"), c.file.get("last_modified"))]
+        tiered = _untimed.choose(fresh, video.name, self.s.untimed)
+        if not tiered:
+            return self._road_wait(video, self._nothing_to_place(video), entry,
+                                   newest_offered=newest)
+        cap = self.s.candidates
+        folder = keep.target_dir(path, root, self.s.out)
+        if self.s.dry_run:
+            tier_, top = tiered[0]
+            return VideoResult(
+                video, PLANNED, u"would download %s -- not timed (%s)"
+                % (top.file["name"], _untimed.tier_words(tier_)),
+                jimaku_entry=entry, jimaku_filename=top.file["name"],
+                candidates_offered=len(ranked),
+                untimed=_untimed.as_field(tier_, video.name, top.file["name"]))
+        tried, downloaded, unread, uncounted = [], 0, 0, []
+        for tier_, cand in tiered[:cap]:
+            name = cand.file["name"]
+            try:
+                data = self._download(entry, cand)
+            except _STOPPERS as exc:
+                raise _Stop(str(exc))
+            except _SHOW_FAILURES as exc:
+                tried.append(u"%s could not be downloaded: %s" % (name, exc))
+                continue
+            downloaded += len(data)
+            try:
+                # 🚨 `<jimaku stem>.ja.<ext>` -- tsubasa reads the language off the NAME,
+                # and an untagged one it refuses to place (never `<video>.ass`).
+                blob = self.cache.store(data, keep.download_name(name, self.lang))
+            except (keep.UntaggedOriginal, OSError) as exc:
+                tried.append(u"%s could not be kept in the cache: %s" % (name, exc))
+                continue
+            # ⭐ 15z (B6) -- the ROAD's floor (`untimed.MIN_LINES`), not 9b's: a short's
+            # whole script is under 9b's 100 lines, and it could never be placed
+            if not present.reads_as_japanese(str(blob), min_lines=_untimed.MIN_LINES):
+                unread += 1
+                continue
+            why = self._uncountable(video, folder, blob)
+            if why:
+                uncounted.append(why)
+                continue
+            return self._place(video, folder, video_hash, blob, tier_, name,
+                               entry=entry, size=cand.file.get("size"),
+                               last_modified=cand.file.get("last_modified"),
+                               subtitle_hash=_cache.content_hash(data), show=show,
+                               cand=cand, offered=len(ranked), downloaded=downloaded)
+        if uncounted:
+            # 🚨 15z (B5, C6) -- a name hato could not find again is placed NEVER: the
+            # next run would call the video bare and fetch for it again, every day,
+            # beside a stray file. ⭐ The fix is the person's -- a rename -- so it is a
+            # REFUSED, bounded to the week like every wait here (no permanent verdict).
+            return self._road_wait(video, uncounted[0], entry, outcome=REFUSED,
+                                   newest_offered=newest, offered=len(ranked),
+                                   downloaded=downloaded)
+        if tried and not unread:
+            # ⭐ An error is not a verdict (`_all_refused`'s ruling): no wait, the next
+            # run simply tries again.
+            return VideoResult(video, ERROR,
+                               u"%d file%s could not be downloaded, so none was placed: %s"
+                               % (len(tried), u"" if len(tried) == 1 else u"s",
+                                  _sentence(tried[0])),
+                               jimaku_entry=entry, candidates_offered=len(ranked),
+                               bytes_downloaded=downloaded)
+        return self._road_wait(video, _untimed.none_reads(unread), entry,
+                               newest_offered=newest, offered=len(ranked),
+                               downloaded=downloaded)
+
+    @staticmethod
+    def _named_exactly(video, alignment, have):
+        u"""⭐ 15z (B1) -- a file named EXACTLY as the video, wherever the alignment put it.
+        -> [Candidate]
+
+        The provider's own name, letter for letter, is the one proof no numbering needs.
+        Measured: with the provider's episode 01 missing, the alignment shifted its whole
+        release by a GUESS -- episode 02's own file was offered to 01 alone -- and with
+        guesses refused, 02 and 03 waited beside their own files. ⚠ Only `exact` (a video
+        whose name says its provider, B2): a same-provider name alone proves nothing."""
+        taken = set(c.file[u"name"] for c in have)
+        out = []
+        for offered in alignment.per_video.values():
+            for c in offered:
+                name = c.file[u"name"]
+                if name in taken or _untimed.tier(video.name, name) != formats.TIER_EXACT:
+                    continue
+                taken.add(name)
+                out.append(episodes.Candidate(c.file, c.info, c.group, 0, u"literal", 1.0,
+                                              u"%s is named exactly as the video" % name))
+        return out
+
+    def _uncountable(self, video, folder, source):
+        u"""🚨 15z (B5, C6) -- would the file placed from `source` be one hato cannot FIND
+        again? -> why, in words, or None.
+
+        tsubasa makes the name (`place_subtitle(write=False)`: every check, nothing
+        written) and the present-check's own rule judges it (`Presence.would_find`). A
+        video name near the limit has its stem TRIMMED to fit -- the file was placed, the
+        next run called the video bare, and it was fetched for again every day, a stray
+        `.jpn.` left beside it. ⚠ A placer that makes no name yet says nothing here:
+        `_place` then says why, as it always has."""
+        path = str(video.path)
+        ahead = self.placer(path, str(source), write=False, out_dir=str(folder),
+                            lang_tag=formats.UNTIMED_CODE)
+        target = getattr(ahead, u"target", None)
+        if not ahead.ok or not target:
+            return None
+        name = os.path.basename(target)
+        if self.look.would_find(path, name, folder=str(folder)):
+            return None
+        stem = os.path.splitext(os.path.basename(path))[0]
+        return _untimed.uncountable(
+            name, u"; ".join(getattr(ahead, u"notes", None) or ()),
+            renamed=(os.path.normcase(tsubasa.parse_subtitle_name(name).stem)
+                     != os.path.normcase(stem)))
+
+    def _nothing_to_place(self, video):
+        u"""Why the choice found nothing for this episode. -> text. ⛔ Neither sentence says
+        what else exists or what setting would take it (fork 14: nothing recommends the
+        road)."""
+        if self.s.untimed != formats.UNTIMED_SAME:
+            return _untimed.NO_FIT
+        return (_untimed.nothing_from(video.name) if _untimed.provider(video.name)
+                else _untimed.NO_PROVIDER)
+
+    def _place(self, video, folder, video_hash, source, tier_, name, *, entry, size,
+               last_modified, subtitle_hash, show=None, cand=None, kept=None,
+               offered=None, downloaded=0):
+        u"""tsubasa places `source` beside the video as `<video>.jpn.<ext>`. -> VideoResult
+
+        ⛔ tsubasa WRITES it (`place_subtitle(write=True)`): hato's only write in a media
+        folder is tsubasa's (Whitelist 1) -- untouched, never over a file that is there,
+        in the folder the present-check asks (`keep.target_dir`, so `--out` holds).
+        ⭐ `lang_tag="jpn"` IS THE MARK (fork 5). Placed first, kept second, as timed.
+        🚨 A write that fails is an ERROR and records NO wait (`LEDGER-HOT.md`); and a
+        placed file the present-check cannot count is an ERROR too (14z, A-5): the next
+        run would call it absent and place it again, for ever.
+        """
+        path = str(video.path)
+        field = _untimed.as_field(tier_, video.name, name)
+        got = self.placer(path, str(source), write=True, out_dir=str(folder),
+                          lang_tag=formats.UNTIMED_CODE)
+        # ⚠ 15z (C11) -- `untimed` on the PLACED row only (the contract: null on every
+        # other): an ERROR carrying it read as a file placed
+        common = dict(jimaku_entry=entry, jimaku_filename=name,
+                      candidates_offered=offered, bytes_downloaded=downloaded)
+        if not got.ok:
+            return VideoResult(video, ERROR, u"%s could not be placed beside the video: %s"
+                               % (name, got.reason or u"tsubasa gave no reason"), **common)
+        if got.write_failed or not got.output_path:
+            return VideoResult(video, ERROR, u"%s was not placed: %s"
+                               % (name, got.reason or u"tsubasa wrote nothing and said "
+                                                      u"nothing"), **common)
+        self.look.forget(folder)
+        if self.look.find(path, folder) is None:
+            return VideoResult(video, ERROR, u"%s was placed as %s, but players will not load "
+                                             u"it with the video%s"
+                               % (name, os.path.basename(got.output_path),
+                                  u": %s" % u"; ".join(got.notes) if got.notes else u""),
+                               **common)
+        if kept is None and show is not None and cand is not None:
+            kept, note = self._keep(show, source, cand)
+            if note:
+                show.notes.append(note)
+        try:
+            landed = os.stat(got.output_path)
+            written = (landed.st_size, landed.st_mtime_ns)
+        except OSError:
+            written = (None, None)
+        self._record(video, video_hash, entry, name, size, last_modified, CONFIDENT, u"",
+                     output_path=got.output_path, kept_path=str(kept) if kept else None,
+                     subtitle_hash=subtitle_hash, untimed=tier_,
+                     written_size=written[0], written_mtime_ns=written[1])
+        return VideoResult(video, CONFIDENT, u"", output_path=got.output_path,
+                           kept_path=str(kept) if kept else None, untimed=field, **common)
+
+    def _replace(self, video, folder, video_hash, row):
+        u"""⭐ LAYER 15 (edge 10) -- a placed file is gone, its original kept: placed AGAIN,
+        zero network. ⚠ The tier is the record's: nothing re-judges the name."""
+        name = row.jimaku_filename or os.path.basename(row.kept_path)
+        why = self._uncountable(video, folder, row.kept_path)
+        if why:
+            # ⚠ 15z (B5) -- the video renamed longer since: the same refusal, zero network
+            return self._road_wait(video, why, row.jimaku_entry, outcome=REFUSED)
+        if self.s.dry_run:
+            return VideoResult(video, PLANNED,
+                               u"would place again: the subtitle placed for it is gone and its "
+                               u"original is still kept (%s) -- not timed, and no request"
+                               % os.path.basename(row.kept_path),
+                               jimaku_entry=row.jimaku_entry, jimaku_filename=name,
+                               untimed=_untimed.as_field(row.untimed, video.name, name))
+        return self._place(video, folder, video_hash, row.kept_path, row.untimed, name,
+                           entry=row.jimaku_entry, size=row.jimaku_size,
+                           last_modified=row.jimaku_last_modified,
+                           subtitle_hash=row.subtitle_hash, kept=row.kept_path)
+
+    def _road_wait(self, video, base, entry, hard=False, outcome=NOT_FOUND,
+                   newest_offered=None, offered=None, downloaded=0):
+        u"""⭐ LAYER 15 -- a wait on the untimed road. -> VideoResult (NOT_FOUND, or the
+        REFUSED of a name with no episode number)
+
+        🚨 FORK 13, his third constraint: *"it should NOT run over and over and over again
+        forever if there will be no file."* A wait looks once a day for a WEEK from its
+        FIRST miss -- each new wait copies the start forward (`untimed_since`) -- and
+        then STOPS. ⭐ A change of the choice starts a new week (`_starts_over`).
+        ⛔ No file offered to pick (fork 9), and no word naming the setting (fork 14).
+        """
+        path = str(video.path)
+        common = dict(jimaku_entry=None if hard else entry, candidates_offered=offered,
+                      bytes_downloaded=downloaded,
+                      newest_offered=None if hard else newest_offered)
+        video_hash = self._hash(path)
+        wait = self.db.untimed_wait(video_hash, self.lang)
+        now = self.db.now()
+        begun = wait.since if (wait is not None and not self._starts_over(wait)) else now
+        if self.s.dry_run:
+            # ⚠ 15z -- still the ROAD's wait (`untimed_wait`), so no surface reads it as
+            # the timed road's; ⛔ and no schedule in its words: a plan starts no wait
+            return VideoResult(video, outcome, base,
+                               untimed_wait=_untimed.wait_field(self.s.untimed, begun, base),
+                               **common)
+        stops = begun + timedelta(days=formats.UNTIMED_WAIT_DAYS)
+        # 🚨 15z (B7, D6) -- ONCE A DAY, whatever the miss: a show jimaku has no entry for
+        # took the hard 30 days, past its week -- one look, then *"stopped"* (and
+        # `record_not_found` dates it the same way, so the two can never disagree)
+        next_look = now + timedelta(days=self.db.retry_days[u"soft"])
+        looking = next_look < stops
+        said = (_untimed.waiting_reason(base, stops) if looking
+                else _untimed.stopped_reason(base))
+        retry = self.db.record_not_found(
+            video_hash=video_hash, video_path=path, lang=self.lang,
+            kind=u"hard" if hard else u"soft", jimaku_entry=None if hard else entry,
+            reason=said, newest_offered=None if hard else newest_offered,
+            untimed=self.s.untimed, untimed_since=begun)
+        return VideoResult(video, outcome, said, retry_after=retry if looking else None,
+                           untimed_wait=_untimed.wait_field(self.s.untimed, begun, base),
+                           **common)
+
+    def _mark(self, video, found):
+        u"""⭐ LAYER 15 -- is the subtitle beside `video` one hato placed NOT TIMED?
+        -> the `untimed` field, or None.
+
+        ⭐ CANONICITY, ONE LINE: *the disk decides -- a subtitle beside the video is not
+        timed when its name says `.jpn.` AND its bytes are one of hato's kept originals;
+        hato's record only makes that quick and says which tier.* The record: ONE query a
+        run and one `stat` (size and mtime as it landed). No record -- a cleared memory --
+        a kept original of the same SIZE is looked for and hashed only then. A person's own
+        `.jpn.` file matches neither, and is a plain present row, never touched.
+        """
+        if not formats.is_untimed_mark(found.tag):
+            return None
+        try:
+            now = os.stat(found.path)
+        except OSError:
+            return None
+        if self._placed is None:
+            self._placed = self.db.untimed_placed(self.lang)
+        placed = self._placed.get(os.path.normcase(os.path.abspath(str(found.path))))
+        if (placed is not None and placed.size == now.st_size
+                and placed.mtime_ns == now.st_mtime_ns):
+            name = placed.jimaku_filename or os.path.basename(placed.kept_path or u"")
+            return _untimed.as_field(placed.tier, video.name, name)
+        kept = self._kept_original_of(str(found.path), now.st_size)
+        if kept is None:
+            return None
+        name = os.path.basename(kept)
+        return _untimed.as_field(_untimed.tier(video.name, name), video.name, name)
+
+    def _kept_original_of(self, path, size):
+        u"""⭐ LAYER 15 -- the kept original byte-for-byte equal to `path`, or None. ⚠ Only
+        files of the same SIZE are hashed, and `subs_dir` is walked once a run, only when a
+        `.jpn.` file has no record (a cleared memory)."""
+        if self._kept_by_size is None:
+            self._kept_by_size = {}
+            for folder, _dirs, names in os.walk(str(self.s.subs_dir)):
+                for name in names:
+                    full = os.path.join(folder, name)
+                    try:
+                        self._kept_by_size.setdefault(os.path.getsize(full), []).append(full)
+                    except OSError:
+                        continue
+        same = self._kept_by_size.get(size) or ()
+        if not same:
+            return None
+        try:
+            mine = _cache.file_hash(path)
+        except OSError:
+            return None
+        for kept in same:
+            try:
+                if _cache.file_hash(kept) == mine:
+                    return kept
+            except OSError:
+                continue
+        return None
 
     # -- identification and the file list -----------------------------------
 
@@ -1646,6 +2106,9 @@ class _Run(object):
 
     def _candidates(self, show, alignment, video, root, seen_groups):
         path = str(video.path)
+        if _key(path) in self._road:
+            # ⭐ LAYER 15 -- a video with no subtitle track, on the untimed road.
+            return self._untimed_candidates(show, alignment, video, root)
         entry = show.resolved.entry_id
         video_hash = self._hash(path)
         # ⭐ RUNBOOK 8d. Read BEFORE this run records anything, so it is exactly the
@@ -1699,27 +2162,9 @@ class _Run(object):
                             fallback=self.s.format_fallback)
         ranked = [r.candidate for r in ranking.ordered]
         if not ranked:
-            # ⭐ 9a -- IT IS ON JIMAKU, in the other kind, and the person asked for
-            # theirs only. ⛔ Never *"not on jimaku yet"*, which is false. A wait all
-            # the same -- their kind may yet be uploaded -- and `formats.only_as()`
-            # reads this reason back: the gate looks past the wait once the settings
-            # would take ANY of these kinds. ⚠ Every kind, not the commonest: *"only
-            # as .vtt"* over two `.srt` and three `.vtt` was false, and choosing `.srt`
-            # never ended it (ADVERSARY 2026-09-23 #4).
-            kinds = sorted(set(kind for kind in (tokens.subtitle_format(c.file["name"])
-                                                 for c in ranking.other_format) if kind))
-            if kinds:
-                reason = formats.waiting_reason(kinds, self.s.prefer_format,
-                                                len(ranking.other_format))
-            elif ranking.excluded:
-                reason = (u"every one of the %d file(s) the entry offers for this episode "
-                          u"was filtered out: %s"
-                          % (len(ranking.excluded),
-                             u"; ".join(sorted(set(why.rstrip(u".").split(u" -- ")[0]
-                                                   for _c, why in ranking.excluded)))))
-            else:
-                reason = u"jimaku entry %d has no file for this episode" % entry
-            return self._not_found(video, reason, entry=entry, hard=False,
+            return self._not_found(video, _unranked_reason(ranking, entry,
+                                                           self.s.prefer_format),
+                                   entry=entry, hard=False,
                                    tried_before=earlier, newest_offered=newest)
 
         # ⛔ NEVER RE-DOWNLOAD A REFUSAL. The identity is (entry, filename, size,
@@ -1950,6 +2395,10 @@ class _Run(object):
         soft one (the entry exists, no file for this episode, 1 day) must --
         `hato/state.py` refuses the two swapped, so they can never be confused.
         """
+        if _key(str(video.path)) in self._road:
+            # ⭐ LAYER 15 -- a wait on the untimed road, bounded to the week (fork 13).
+            return self._road_wait(video, reason, entry, hard=hard,
+                                   newest_offered=newest_offered)
         retry = None
         if not self.s.dry_run:
             retry = self.db.record_not_found(
@@ -1999,17 +2448,20 @@ class _Run(object):
 
     def _record(self, video, video_hash, entry, filename, size, last_modified,
                 outcome, reason, output_path=None, kept_path=None,
-                subtitle_hash=None, match_rate=None):
+                subtitle_hash=None, match_rate=None, untimed=None, written_size=None,
+                written_mtime_ns=None):
         # ⭐ `subtitle_hash` and `match_rate` (RUNBOOK 8b). The hash was specified in
         # 02-data-model.md and passed as None here since 1b, so a refusal could be
         # REMEMBERED but never OFFERED again: nothing said which downloaded file it
         # was, or how close it came.
+        # ⭐ LAYER 15 -- `untimed` (the tier) and the placed file as it landed.
         self.db.record_attempt(
             video_hash=video_hash, video_path=str(video.path), lang=self.lang,
             jimaku_entry=entry, jimaku_filename=filename, jimaku_size=size,
             jimaku_last_modified=last_modified, subtitle_hash=subtitle_hash,
             outcome=outcome, reason=reason, output_path=output_path,
-            kept_path=kept_path, match_rate=match_rate)
+            kept_path=kept_path, match_rate=match_rate, untimed=untimed,
+            written_size=written_size, written_mtime_ns=written_mtime_ns)
 
 
 def _key(path):
@@ -2043,6 +2495,30 @@ def _sentence(text):
     if not text or text[-1] in u".!?:":
         return text
     return text + u"."
+
+
+def _unranked_reason(ranking, entry, prefer):
+    u"""Why the ranking left no file for the episode -- one copy, for the timed road and
+    LAYER 15's untimed one alike: a wait's words in two copies drift. -> text
+
+    ⭐ 9a -- IT IS ON JIMAKU, in the other kind, and the person asked for theirs only.
+    ⛔ Never *"not on jimaku yet"*, which is false. A wait all the same -- their kind
+    may yet be uploaded -- and `formats.only_as()` reads this reason back: the gate
+    looks past the wait once the settings would take ANY of these kinds. ⚠ Every kind,
+    not the commonest: *"only as .vtt"* over two `.srt` and three `.vtt` was false, and
+    choosing `.srt` never ended it (ADVERSARY 2026-09-23 #4).
+    """
+    kinds = sorted(set(kind for kind in (tokens.subtitle_format(c.file["name"])
+                                         for c in ranking.other_format) if kind))
+    if kinds:
+        return formats.waiting_reason(kinds, prefer, len(ranking.other_format))
+    if ranking.excluded:
+        return (u"every one of the %d file(s) the entry offers for this episode "
+                u"was filtered out: %s"
+                % (len(ranking.excluded),
+                   u"; ".join(sorted(set(why.rstrip(u".").split(u" -- ")[0]
+                                         for _c, why in ranking.excluded)))))
+    return u"jimaku entry %d has no file for this episode" % entry
 
 
 def _takeable(tracks, lang, prefer):

@@ -73,6 +73,7 @@ import os
 import re
 import unicodedata
 from collections import OrderedDict
+from datetime import datetime, timezone
 
 from hato import formats, pipeline, port
 
@@ -117,6 +118,16 @@ FORMAT_WAIT = u"format"
 TAKEN = u"taken"
 #: Its mark -- the *inside the video* skip's, because that is where it came from.
 INSIDE = u"⊡"
+#: ⭐ LAYER 15 -- a subtitle placed NOT TIMED, written or planned: a report kind like
+#: TAKEN (the engine calls it CONFIDENT or PLANNED, and carries `untimed`).
+UNTIMED = u"untimed"
+#: ⭐ Fork 3's mark: `≈` stands where the timing percentage stands -- *not measured*.
+APPROX = u"≈"
+#: ⭐ LAYER 15 -- a wait on that road, and one whose week ran out (fork 13): report kinds
+#: sorted out of NEGATIVE, because *"asked for recently and not there yet -- `--force`
+#: asks again now"* describes neither.
+UNTIMED_WAITING = u"untimed-waiting"
+UNTIMED_STOPPED = u"untimed-stopped"
 
 #: skip kind -> (marker, the sentence). ⚠ The sentence is per KIND, not per
 #: video: the rows are collapsed onto one line and a per-video reason could not
@@ -137,6 +148,11 @@ SKIPS = (
     # 2026-09-23 #7). Not an engine kind -- `_kind` sorts it out of NEGATIVE.
     (FORMAT_WAIT, u"⊖", u"on jimaku, but only in a format your settings do not take "
      + DASH + u" `hato config --set format_fallback=true` takes it"),
+    # ⭐ LAYER 15 (fork 13) -- ⛔ neither names the setting or another provider (fork 14).
+    (UNTIMED_WAITING, u"⊖", u"no subtitle track, and nothing to place by its name yet "
+     + DASH + u" looks once a day for a week, then stops"),
+    (UNTIMED_STOPPED, u"⊘", u"no subtitle track, and a week of looking found nothing to "
+     u"place by its name " + DASH + u" stopped; `--retry-now` looks once more"),
 )
 SKIP_MARK = dict((kind, mark) for kind, mark, _s in SKIPS)
 SKIP_SENTENCE = dict((kind, sentence) for kind, _m, sentence in SKIPS)
@@ -167,7 +183,36 @@ def _kind(result):
     if getattr(result, "taken_from", None) and result.outcome in (pipeline.CONFIDENT,
                                                                    pipeline.PLANNED):
         return TAKEN
+    if getattr(result, "untimed", None) and result.outcome in (pipeline.CONFIDENT,
+                                                                pipeline.PLANNED):
+        return UNTIMED                                          # ⭐ LAYER 15
+    if getattr(result, "untimed_wait", None) and (
+            result.outcome == pipeline.NOT_FOUND
+            or (result.outcome == pipeline.SKIPPED and result.skip == pipeline.NEGATIVE)):
+        # ⭐ 15z (C2, C12) -- a wait on the untimed road, whichever run made it, by the
+        # ONE stop rule: never *"not on jimaku"*, and never *"waiting"* once nothing
+        # looks again (a next look past the stop read *"1 waiting"*)
+        return UNTIMED_STOPPED if road_stopped(result) else UNTIMED_WAITING
     return result.skip if result.outcome == pipeline.SKIPPED else result.outcome
+
+
+def _moment(text):
+    u"""An ISO stamp from a row -> an aware datetime, or None."""
+    if not text:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(text))
+    except (TypeError, ValueError):
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+def road_stopped(result, now=None):
+    u"""⭐ LAYER 15 -- has this wait on the untimed road STOPPED looking? -> bool
+    (`formats.untimed_row_stopped`, the rule every surface reads)."""
+    wait = getattr(result, "untimed_wait", None) or {}
+    return formats.untimed_row_stopped(result.reason, _moment(wait.get(u"stops")),
+                                       result.retry_after, now)
 
 
 def _counts(report):
@@ -192,6 +237,8 @@ SUMMARY = (
     (pipeline.CONFIDENT, u"fetched", u"fetched"),
     # ⭐ 14c -- never "fetched": nothing was
     (TAKEN, u"taken from the video", u"taken from the video"),
+    # ⭐ LAYER 15 -- fetched, and said NOT TIMED in the same breath
+    (UNTIMED, u"fetched, not timed", u"fetched, not timed"),
     (pipeline.PRESENT, u"skipped", u"skipped"),
     (pipeline.NO_TRACK, u"can't sync yet", u"can't sync yet"),
     (pipeline.NOT_FOUND, u"not found", u"not found"),
@@ -201,6 +248,8 @@ SUMMARY = (
     (pipeline.BLACKLISTED, u"blacklisted", u"blacklisted"),
     (pipeline.EMBEDDED, u"already embedded", u"already embedded"),
     (pipeline.NEGATIVE, u"waiting to retry", u"waiting to retry"),
+    (UNTIMED_WAITING, u"waiting for a file by its name", u"waiting for a file by its name"),
+    (UNTIMED_STOPPED, u"stopped looking", u"stopped looking"),
     (pipeline.PLANNED, u"to fetch", u"to fetch"),
 )
 
@@ -294,13 +343,18 @@ def wrap(text, width, first=u"", rest=u""):
     prefix, opened = first, False
     for word in (text or u"").split():
         candidate = (current + u" " + word) if opened else (current + word)
-        if opened and cells(candidate) > width:
+        # ⚠ 15z (C13) -- AND A WORD THAT DOES NOT FIT AFTER THE HEAD, but fits on a line of
+        # its own, starts one: it ran the FIRST line over by up to the head's width
+        if cells(candidate) > width and (opened or (
+                current.strip() and cells(rest + word) <= width)):
             lines.append(current.rstrip())
             current, prefix, opened = rest, rest, False
             candidate = rest + word
         while cells(candidate) > width and cells(word) > width - cells(rest):
             room = width - cells(current if not opened else current + u" ")
-            head = clip(word, room + 1) if room > 1 else u""
+            # ⚠ 15z (C13) -- `room`, never `room + 1`: a word exactly one column wider
+            # than the room came back UNclipped, and the line ran one column over
+            head = clip(word, room) if room > 1 else u""
             head = head[:-1] if head.endswith(ELLIPSIS) else head
             if not head:
                 break
@@ -441,7 +495,13 @@ def retry_note(result):
     The pipeline appends one to its reason when it records a row. On a dry run
     it records nothing, so there is no date and the line says that instead of
     being silent about it.
+
+    ⭐ LAYER 15 -- a wait on the untimed road says its own schedule: *"looks once a day
+    until 3 Oct, then stops"*, or *"stopped looking"* -- and a stopped one has no retry
+    date, which is NOT a dry run.
     """
+    if getattr(result, "untimed_wait", None):
+        return u""
     if result.retry_after is not None:
         stamp = result.retry_after.strftime(u"%Y-%m-%d")
         if stamp in (result.reason or u""):
@@ -530,6 +590,21 @@ def _skip_rows(results, width, show_col):
                 if dates:
                     line = u"%s (the first is due %s)" % (line,
                                                           dates[0].strftime(u"%Y-%m-%d"))
+            if kind == UNTIMED_WAITING:
+                # ⭐ LAYER 15 (fork 13) -- when it STOPS, which is what a person needs.
+                # ⚠ 15z (C10): the DAY every surface says (`formats.untimed_day`, local) --
+                # the ISO's own date was UTC's, a day off the row's
+                stops = sorted(filter(None, (_moment((r.untimed_wait or {}).get(u"stops"))
+                                             for r in rows)))
+                if stops:
+                    line = u"%s (the first stops %s)" % (line, formats.untimed_day(stops[0]))
+            if kind == pipeline.PRESENT:
+                # ⭐ LAYER 15 -- EVERY surface says not timed: a present file hato placed
+                # untimed is named so on the present line too (fork 5's mark).
+                marked = [r for r in rows if getattr(r, "untimed", None)]
+                if marked:
+                    line = u"%s %s %s not timed" % (line, DOT, u" ".join(
+                        episode(r) for r in sorted(marked, key=_sort_key)))
             numbers = u" ".join(episode(r) for r in sorted(rows, key=_sort_key))
             head = u"  %s  %s" % (mark, label)
             block = pad(numbers, 16)
@@ -557,6 +632,9 @@ def _success_rows(results, width, show_col, verbose):
         taken = getattr(r, "taken_from", None)
         if taken:
             out.extend(_taken_row(r, taken, width, show_col))       # ⭐ 14c
+            continue
+        if getattr(r, "untimed", None):
+            out.extend(_untimed_row(r, width, show_col))           # ⭐ LAYER 15
             continue
         t = r.tsubasa
         mark = FLAGGED if flagged(t) else OK
@@ -604,6 +682,29 @@ def _taken_row(result, taken, width, show_col):
     left = u"  %s  %s%s   %s   " % (OK, show_col(result), pad(episode(result), 2),
                                     pad(u"%s video" % INSIDE, 7))
     head = left + pad(u"taken out %s track %s" % (DOT, taken.get(u"track")), 8 + 3 + 18)
+    tail = u"%s %s" % (ARROW, output_of(result))
+    if cells(head) + cells(tail) <= width:
+        return [(head + tail).rstrip()]
+    return [head.rstrip(), u" " * cells(left) + tail]
+
+
+def untimed_words(untimed):
+    u"""⭐ LAYER 15 -- `≈ not timed · same provider`, or `… · another provider, may be off`.
+    -> text. ⛔ Never a number (fork 4): a percentage there would read as a timing."""
+    other = (untimed or {}).get(u"tier") == formats.TIER_OTHER
+    return u"%s not timed %s %s" % (APPROX, DOT, u"another provider, may be off" if other
+                                    else u"same provider")
+
+
+def _untimed_row(result, width, show_col):
+    u"""⭐ LAYER 15 -- `✓  01   ↓ 85 KB   ≈ not timed · same provider   → ….jpn.ass`.
+    ⛔ No percentage and no verdict: nothing timed it. ⚠ The success row's columns, so the
+    arrows line up down the block; a long tier's words push the arrow to its own line."""
+    got = (u"%s %s" % (DOWN, size(result.bytes_downloaded)) if result.bytes_downloaded
+           else u"%s kept" % REUSED)
+    left = u"  %s  %s%s   %s   " % (OK, show_col(result), pad(episode(result), 2),
+                                    pad(got, 7))
+    head = left + pad(untimed_words(result.untimed), 8 + 3 + 18)
     tail = u"%s %s" % (ARROW, output_of(result))
     if cells(head) + cells(tail) <= width:
         return [(head + tail).rstrip()]
@@ -950,6 +1051,9 @@ def render_plan(report, width=DEFAULT_WIDTH, verbose=False):
     parts = []
     for key, word in ((pipeline.PLANNED, u"to fetch"),
                       (TAKEN, u"to take out of the video"),         # ⭐ 14c
+                      (UNTIMED, u"to fetch, not timed"),            # ⭐ LAYER 15
+                      (UNTIMED_WAITING, u"waiting for a file by its name"),
+                      (UNTIMED_STOPPED, u"stopped looking"),
                       (pipeline.PRESENT, u"already present"),
                       (pipeline.NO_TRACK, u"no subtitle track"),
                       (pipeline.NEGATIVE, u"waiting to retry"),
@@ -1091,6 +1195,11 @@ def as_dict(result):
         # why one the setting asked to take out was downloaded for instead.
         "taken_from": _plain(getattr(result, "taken_from", None)),
         "not_taken": getattr(result, "not_taken", None),
+        # ⭐ LAYER 15 -- a subtitle placed NOT TIMED: `{tier, provider, video_provider}`;
+        # and a wait on that road: `{choice, since, stops, waits_for}`. null otherwise.
+        # ⛔ Added, never renamed (`05-interface.md`).
+        "untimed": _plain(getattr(result, "untimed", None)),
+        "untimed_wait": _plain(getattr(result, "untimed_wait", None)),
     }
 
 

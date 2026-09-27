@@ -135,7 +135,7 @@ def collect(**kw):
 
 
 REQUIRED = ["key", "search", "rate limit", "files", "download", "tsubasa",
-            "self_check", "track reader", "extractor", "anitopy", "guessit", "unrar",
+            "self_check", "track reader", "extractor", "placer", "anitopy", "guessit", "unrar",
             "py7zr", "cache",
             "config", "api calls"]
 
@@ -263,6 +263,22 @@ def test_the_extractor_line_says_whether_saving_them_beside_the_video_can_work(
     line = next(l for l in collect(session=FakeSession()).lines if l.label == "extractor")
     assert line.state == doctor.MISSING, line.text
     assert "0.1.9" in line.text and "downloads instead" in line.text, line.text
+
+
+def test_the_placer_line_says_whether_a_file_can_be_placed_by_its_name(monkeypatch):
+    u"""⭐ LAYER 15 (15z, O2) -- the untimed road places through tsubasa's
+    `place_subtitle` (0.1.10). Exported -> OK, named; not -> MISSING, and what the road
+    does instead. ⭐ The frozen smoke reads this line: every other check imports hato
+    from SOURCE, and a bundle without the placer would pass them all."""
+    import tsubasa
+    monkeypatch.setattr(tsubasa, "__all__", list(tsubasa.__all__) + ["place_subtitle"])
+    line = next(l for l in collect(session=FakeSession()).lines if l.label == "placer")
+    assert line.state == doctor.OK and "tsubasa.place_subtitle" in line.text
+    monkeypatch.setattr(tsubasa, "__all__",
+                        [n for n in tsubasa.__all__ if n != "place_subtitle"])
+    line = next(l for l in collect(session=FakeSession()).lines if l.label == "placer")
+    assert line.state == doctor.MISSING, line.text
+    assert "0.1.10" in line.text and "skipped whatever the choice" in line.text, line.text
 
 
 def test_the_config_line_says_refused_when_every_run_would_stop(monkeypatch, tmp_path):

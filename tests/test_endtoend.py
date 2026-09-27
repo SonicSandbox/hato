@@ -2134,3 +2134,37 @@ def test_the_config_road_saves_them_beside_the_video_and_the_flag_downloads_inst
     assert code == 0, (code, err)
     assert lab.downloads, u"--even-if-embedded took the track out instead of downloading"
     assert lab.taken == [u"frieren S2 - 01.mkv"], u"the flag asked for another extraction"
+
+
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 15 -- subtitles nothing could time, through the real entry point
+# ---------------------------------------------------------------------------
+
+def test_15_the_untimed_flag_reaches_the_run_through_the_real_entry_point(
+        tmp_path, monkeypatch, capsys):
+    u"""⭐ LAYER 15 through `cli.main` -- the road the tray, the daily run and a terminal
+    take. config.toml silent (OFF): a video with no track is skipped as today and
+    nothing is asked for. `--untimed any_provider`, for ONE run: one is placed by its
+    name, NOT TIMED, as `<video>.jpn.<ext>` -- by the REAL tsubasa -- and the row says
+    so. ⚠ The flag's own wiring: a check that builds `Settings` directly stays green
+    with `commands/run.py` dropping it (`LEDGER-HOT.md`, the button's own path)."""
+    import _subtitles as subs
+    lab = Lab(tmp_path, names=[u"frieren S2 - 01.mkv"]).install(monkeypatch)
+    lab.no_track(1)
+    japanese = subs.lines(subs.JA, 150)
+    lab.bytes_for = lambda item: (subs.ass(japanese) if item[u"name"].lower().endswith(u".ass")
+                                  else subs.srt(japanese)).encode("utf-8")
+
+    code, out, err = lab.cli(capsys)
+    assert code == 0, (code, err)
+    assert lab.downloads == [], u"OFF asked jimaku for a video with no track"
+    assert not list(lab.media.glob(u"*.jpn.*")), sorted(p.name for p in lab.media.iterdir())
+
+    code, out, err = lab.cli(capsys, u"--untimed", u"any_provider")
+    assert code == 0, (code, err)
+    placed = sorted(p.name for p in lab.media.glob(u"*.jpn.*"))
+    assert len(placed) == 1 and placed[0].startswith(u"frieren S2 - 01.jpn."), (
+        sorted(p.name for p in lab.media.iterdir()))
+    shown = flat(out)
+    assert u"≈ not timed · another provider, may be off" in shown, shown
+    assert u"1 fetched, not timed" in shown, shown

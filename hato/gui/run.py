@@ -190,13 +190,164 @@ def not_taken_line(rows):
             u"asked instead" % who)
 
 
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 15 -- a subtitle chosen by its NAME, placed NOT TIMED (ruled 2026-09-26)
+# ---------------------------------------------------------------------------
+
+#: Where the % goes, on a row nobody timed: the ruled mark (fork 3 -- the amber edge AND
+#: this). ⛔ Never a number there: the % column IS the timing column (fork 4).
+UNTIMED_MARK = u"≈"
+
+#: ⭐ Fork 13 -- a wait on the untimed road whose WEEK is out. Still a skip on the wire
+#: (`skip: negative`) -- ⛔ but never *"waiting to retry"*: nothing looks again on its
+#: own, and a person told it is waiting would wait for ever.
+STOPPED_LOOKING = u"stopped looking"
+
+
+def untimed_of(row):
+    u"""⭐ LAYER 15 -- the `untimed` a placed row carries: `{"tier", "provider",
+    "video_provider"}`. -> dict, or None. ⚠ Only a dict with a tier: a row from
+    before 1.0.9 carries no such key."""
+    field = row.get(u"untimed")
+    return field if isinstance(field, dict) and field.get(u"tier") else None
+
+
+def _episode_words(row):
+    episode = row.get(u"episode")
+    if episode is None or isinstance(episode, bool):
+        return u""
+    if isinstance(episode, float) and not episode.is_integer():
+        return u"episode %g" % episode
+    try:
+        return u"episode %02d" % int(episode)
+    except (TypeError, ValueError):
+        return u""
+
+
+def untimed_chosen(row):
+    u"""*"same provider (NanakoRaws) · episode 01"* -- how a placed file was chosen,
+    for the opened row's *chosen by* (the mock's words). -> text, or u"" """
+    field = untimed_of(row)
+    if not field:
+        return u""
+    from hato import formats
+    who = formats.untimed_tier_words(field.get(u"tier"))     # u"" for a tier unknown here
+    if field.get(u"provider"):
+        who = u"%s (%s)" % (who, field[u"provider"]) if who else field[u"provider"]
+    return u" · ".join(part for part in (who, _episode_words(row)) if part)
+
+
+def untimed_tip(row):
+    u"""The row's hover (the mock's words, ruled 2026-09-26). -> text, or u"" """
+    field = untimed_of(row)
+    if not field:
+        return u""
+    from hato import formats
+    episode = _episode_words(row)
+    shown = u" ([%s])" % field[u"provider"] if field.get(u"provider") else u""
+    lead = (u"Not timed. This video has nothing inside it for hato to time a subtitle "
+            u"against, so this one was chosen by its name")
+    if field.get(u"tier") not in formats.TIERS:
+        # ⚠ 15z (D10) -- a tier this window does not know says nothing it cannot stand
+        # behind: it was *"same provider"* by default
+        return lead + u" — and nothing checked it."
+    lead += u": "
+    if field.get(u"tier") == formats.TIER_OTHER:
+        return lead + (u"made for %s by another provider%s. One from another provider is "
+                       u"often a second or more off — and nothing checked it."
+                       % (episode or u"this episode", shown))
+    return lead + (u"made for the same provider%s%s. A file like that usually lines up "
+                   u"with the video — but nothing checked it."
+                   % (shown, u" and %s" % episode if episode else u""))
+
+
+def untimed_wait_of(row):
+    u"""⭐ LAYER 15 -- the `untimed_wait` a wait on this road carries: `{"choice",
+    "since", "stops", "waits_for"}`. -> dict, or None. ⚠ 15z (D9): only one whose stop
+    can be READ -- one that could not raised in `road_words`, the pane half-built."""
+    field = row.get(u"untimed_wait")
+    if not isinstance(field, dict) or _aware(field.get(u"stops")) is None:
+        return None
+    return field
+
+
+def road_stopped(row, now=None):
+    u"""Has this road wait STOPPED looking? -> bool (False for any other row)
+
+    Fork 13: once a day for a week, then nothing looks again on its own -- by the ONE
+    rule every surface reads (`formats.untimed_row_stopped`): its words say it stopped,
+    its next look falls on or past the stop, or -- given the clock -- the stop passed."""
+    wait = untimed_wait_of(row)
+    if not wait:
+        return False
+    from hato import formats
+    return formats.untimed_row_stopped(row.get(u"reason"), _aware(wait.get(u"stops")),
+                                       retry_due(row), now)
+
+
+def road_stops(row):
+    u"""When this road wait STOPS. -> an aware datetime, or None for any other row."""
+    wait = untimed_wait_of(row)
+    return _aware(wait.get(u"stops")) if wait else None
+
+
+#: ⭐ 15z (D4) -- a wait on this road once the choice is *Skip it*: the next run skips the
+#: video before looking. ⛔ No word names the setting (fork 14).
+NO_LONGER_LOOKED_FOR = u"no longer looked for"
+
+
+def road_words(row, now, watching=True, daily=None, choice=None, prefer=None,
+               fallback=None):
+    u"""*"looks once a day until 3 Oct, then stops"* · *"stopped looking — nothing looks
+    again on its own"*. -> text, or u"" for any other row.
+
+    🚨 15z (D2) -- A SCHEDULE ONLY WHILE SOMETHING KEEPS IT (8h's rule, as `retry_text`
+    says it): with no tray (`watching`) and no daily run (`daily`), *"looks once a day"*
+    was a promise nothing kept -- it looks when hato next runs, until its stop.
+    ⭐ (D4, C4) `choice` -- the choice NOW, with `prefer` and `fallback`: changed since the
+    wait began, the next run looks (`formats.untimed_starts_over`, the run's own rule);
+    *Skip it*, nothing looks at all. None: said as the week alone (a check's)."""
+    wait = untimed_wait_of(row)
+    if not wait:
+        return u""
+    from hato import formats
+    if choice is not None:
+        if choice == formats.UNTIMED_OFF:
+            return NO_LONGER_LOOKED_FOR
+        if formats.untimed_starts_over(wait.get(u"choice"), wait.get(u"waits_for"), choice,
+                                       prefer, fallback):
+            return u"looks again on the next run"
+    if road_stopped(row, now):
+        return u"stopped looking — nothing looks again on its own"
+    day = formats.untimed_day(_aware(wait[u"stops"]))
+    if watching or daily:
+        return u"looks once a day until %s, then stops" % day
+    return u"looks again when hato next runs, until %s" % day
+
+
+def _aware(text):
+    if not text:
+        return None
+    try:
+        from datetime import datetime, timezone
+        moment = datetime.fromisoformat(str(text))
+    except (TypeError, ValueError):
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+def skip_words():
+    u"""Every word that means *nothing was requested*. -> set"""
+    return set(SKIP_WORDS.values()) | {STOPPED_LOOKING}
+
+
 def is_skipped(word):
     u"""Is this one of the words that means *nothing was requested*? -> bool
 
     ⭐ The grouping code asks this instead of `== SKIPPED`, so splitting the
     word into five did not silently drop four of them out of every tally.
     """
-    return word in set(SKIP_WORDS.values())
+    return word in skip_words()
 
 
 def interface_words():
@@ -207,7 +358,7 @@ def interface_words():
     is for the vocabulary to be enumerable rather than scattered through the
     painting code.
     """
-    return ({ADDED, NEEDS_YOU, NOT_YET, FAILED} | set(SKIP_WORDS.values())
+    return ({ADDED, NEEDS_YOU, NOT_YET, FAILED} | skip_words()
             | {PAIRED, FORCED, PICK_REFUSED, PICK_FAILED, TAKEN_WORDS})
 
 
@@ -567,8 +718,9 @@ def child_env(base=None):
 # reading the stream
 # ---------------------------------------------------------------------------
 
-def outcome_word(obj):
-    u"""One video object -> what the INTERFACE calls its state.
+def outcome_word(obj, now=None):
+    u"""One video object -> what the INTERFACE calls its state. `now`: the clock a road
+    wait's stop is read against (15z, D3) -- None, its dates alone.
 
     🚨 A CONFIDENT ROW IS NOT A WRITTEN FILE. A dry run, and a write that
     failed, both leave `outcome == CONFIDENT` with no `output_path` -- and the
@@ -580,6 +732,8 @@ def outcome_word(obj):
         # ⛔ NOT one word for all five. See SKIP_WORDS: *"already had one"* over
         # a video that downloaded three candidates and kept none is the report
         # that sent Sonic looking for a file that was never written.
+        if skip == u"negative" and road_stopped(obj, now):
+            return STOPPED_LOOKING                  # ⭐ LAYER 15, fork 13
         return SKIP_WORDS.get(skip, SKIPPED)
     outcome = obj.get("outcome")
     if outcome == CONFIDENT:
@@ -680,9 +834,13 @@ def _remembered_by_the_db(row):
     Anything the state DB holds a row for: a wait, a tried file, a retry date.
     ⛔ NOT a clash, a two-episode name or an unreadable container -- none of those
     records a row, so only the run's own snapshot can show them.
+    ⭐ 15z (D5) -- AND A WAIT ON THE UNTIMED ROAD, stopped ones too: a stop carries no
+    retry date on the wire, and one settled since (Skip it, the skip list, their own
+    subtitle) kept asking.
     """
     return bool(row.get(u"skip") == u"negative" or row.get(u"attempts")
-                or row.get(u"tried_before") or row.get(u"retry_after"))
+                or row.get(u"tried_before") or row.get(u"retry_after")
+                or untimed_wait_of(row))
 
 
 def needs_you(rows, remembered=None, live=(), rows_newer=False, in_scope=None,
@@ -749,7 +907,7 @@ def needs_you(rows, remembered=None, live=(), rows_newer=False, in_scope=None,
     return out
 
 
-def tally(rows, problems, done=()):
+def tally(rows, problems, done=(), now=None):
     u"""-> {interface word: n}: THE count behind the badge and the footer.
 
     🚨 IT PARTITIONS what the window shows -- the run's rows and the remembered
@@ -760,6 +918,8 @@ def tally(rows, problems, done=()):
     to be counted nowhere, and the footer's numbers summed to less than the
     rows on screen (ADVERSARY 2026-09-22 A15). Left out, and nothing else: a
     problem row the newer memory says was settled since.
+    ⭐ `now` -- the clock a road wait's stop is read against (15z, D3): stopped on the
+    clock, it was counted *waiting* while Needs you said stopped.
     """
     out = dict((word, 0) for word in interface_words())
     current = OrderedDict((problem_key(r), r) for r in problems)
@@ -772,11 +932,16 @@ def tally(rows, problems, done=()):
         counted.add(key)
         if key in current or key in done or problem_kind(row):
             continue                        # counted below, or settled since
-        out[outcome_word(row)] += 1
+        out[outcome_word(row, now)] += 1
     for key, row in current.items():
         if key in done:
             continue
         kind = problem_kind(row)
+        if kind == WAITING and road_stopped(row, now):
+            # ⭐ LAYER 15 (fork 13) -- listed, so *Look again now* is one click away,
+            # but NOT waiting: nothing looks again on its own.
+            out[STOPPED_LOOKING] += 1
+            continue
         out[NEEDS_YOU if kind == PICK else NOT_YET if kind == WAITING else FAILED] += 1
     out[ADDED] += len(done)
     return out
@@ -1270,4 +1435,7 @@ __all__ = ["ADDED", "NEEDS_YOU", "NOT_YET", "FAILED", "SKIPPED",
            "needs_you", "no_console_kwargs", "outcome_word", "parse_answer",
            "pick_verdict", "probably_not_out", "problem_key", "problem_kind",
            "retry_due", "retry_text",
-           "save_last_run", "tally"]
+           "save_last_run", "tally",
+           "UNTIMED_MARK", "STOPPED_LOOKING", "untimed_of", "untimed_chosen", "untimed_tip",
+           "untimed_wait_of", "road_stopped", "road_words", "skip_words",
+           "NO_LONGER_LOOKED_FOR", "road_stops"]

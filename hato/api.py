@@ -91,7 +91,7 @@ SPEC_FIELDS = (u"video", u"outcome", u"reason", u"jimaku_entry",
 #: `pipeline.Settings.from_config` applies to the CLI's flags, and the reason a
 #: library caller and `hato <folder>` cannot disagree about a default.
 _OVERRIDES = (u"lang", u"out", u"subs_dir", u"candidates", u"archives",
-              u"allow_ai", u"recurse", u"skip_embedded", u"extract_embedded")
+              u"allow_ai", u"recurse", u"skip_embedded", u"extract_embedded", u"untimed")
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ class Result(object):
                  u"candidates_tried", u"candidates_offered", u"attempts",
                  u"tsubasa", u"output_path", u"kept_path", u"api_calls",
                  u"bytes_downloaded", u"retry_after", u"wrote", u"taken_from",
-                 u"not_taken")
+                 u"not_taken", u"untimed", u"untimed_wait")
 
     def __init__(self, result):
         u"""`result` is a `pipeline.VideoResult`."""
@@ -205,6 +205,10 @@ class Result(object):
         # one the setting asked to take out was downloaded for: what every row says.
         self.taken_from = getattr(result, "taken_from", None)
         self.not_taken = getattr(result, "not_taken", None)
+        # ⭐ LAYER 15 -- a subtitle placed NOT TIMED (`{tier, provider, video_provider}`),
+        # and a wait on that road (`{choice, since, stops, waits_for}`). None otherwise.
+        self.untimed = getattr(result, "untimed", None)
+        self.untimed_wait = getattr(result, "untimed_wait", None)
         if self.outcome != CONFIDENT and not (self.reason or u"").strip():
             # ⛔ `05-interface.md`: *"`reason` is never empty on a non-confident
             # outcome."* A constructor invariant at the published boundary, not
@@ -407,9 +411,15 @@ def _settings(folders, given):
         # Measured: `scan(skip_embedded=True)` WROTE `.ja.srt` into the media folder
         # because config.toml said save. As `--even-if-embedded` does.
         overrides[u"extract_embedded"] = False
-    return _pipeline.Settings.from_config(
-        _config.load(), folders=folders, force=bool(given.get(u"force")),
-        dry_run=True, **overrides)
+    cfg = _config.load()
+    try:
+        return _pipeline.Settings.from_config(
+            cfg, folders=folders, force=bool(given.get(u"force")), dry_run=True,
+            **overrides)
+    except ValueError as exc:
+        # ⚠ 15z (C8) -- a value the settings refuse (`untimed="on"`) means the run cannot
+        # start: the ONE exception type `scan()` promises, never a bare ValueError
+        raise ConfigProblem(str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +428,7 @@ def _settings(folders, given):
 
 def scan(folders=None, *, lang=None, out=None, subs_dir=None, candidates=None,
          archives=None, allow_ai=None, recurse=None, skip_embedded=None,
-         extract_embedded=None, force=False, world=None, fixtures=None):
+         extract_embedded=None, untimed=None, force=False, world=None, fixtures=None):
     u"""Discover the videos under `folders`. -> `Plan`
 
     ⛔ FILESYSTEM AND CACHE ONLY. Zero network, no key read, nothing written.
@@ -431,9 +441,11 @@ def scan(folders=None, *, lang=None, out=None, subs_dir=None, candidates=None,
         are used -- and a run with neither is a `ConfigProblem`, never a silent
         scan of nothing.
     `lang` · `out` · `subs_dir` · `candidates` · `archives` · `allow_ai` ·
-    `recurse` · `skip_embedded` · `extract_embedded`
+    `recurse` · `skip_embedded` · `extract_embedded` · `untimed`
         `config.toml`'s settings, overridden for this plan. ⚠ `None` means *not
-        given*: the file's value, or the documented default, wins.
+        given*: the file's value, or the documented default, wins. ⭐ `untimed`
+        (LAYER 15): `off` · `same_provider` · `any_provider` -- a video with no
+        subtitle track skipped, or given a subtitle by its NAME, placed NOT TIMED.
     `world`
         a `commands.run.World` you own and will close. ⛔ `scan()` never touches
         it and never builds one -- see the module note.
@@ -447,7 +459,7 @@ def scan(folders=None, *, lang=None, out=None, subs_dir=None, candidates=None,
     given = dict(lang=lang, out=out, subs_dir=subs_dir, candidates=candidates,
                  archives=archives, allow_ai=allow_ai, recurse=recurse,
                  skip_embedded=skip_embedded, extract_embedded=extract_embedded,
-                 force=force)
+                 untimed=untimed, force=force)
     settings = _settings(_folders(folders), given)
     # ⛔ BOTH DOORS, BEFORE ANYTHING IS SCANNED, and these are `hato/keep.py`'s
     # own sentences -- ⛔ never re-typed here. A `subs_dir` inside a scanned

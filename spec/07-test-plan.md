@@ -79,6 +79,14 @@ tests/fixtures/api/
 > | `download__429.headers` | ⛔ **not captured** | A 429 exists only past 25 requests/60 s, which Whitelist 2 forbids. The client builds its 429 path from the real headers of the captures below and says so |
 > | `download__401.headers` | `search__401_bad_key.json` + meta | A download takes no key, so it cannot 401. The 401 comes from an API call with a deliberately invalid key |
 > | — | `search__live_action_anime_default.json` (`[]`) · `search__movie.json` · `entries_invalid_id_files.json` (a 404) · `download__sample.meta.json` · `download__invalid_id.meta.json` | Added: the other half of each trap. ⛔ Download fixtures are **metadata only** — a subtitle body is third-party content |
+> | — | ⭐ `entries_11407_files.json` + meta (**LAYER 15**, captured live 2026-09-26, sha256 `6e4c56e4…`) | Seihantai na Kimi to Boku: a raw provider's own files (NanakoRaws, named as its videos letter for letter) beside four other providers — the untimed road's tiers against the real list. ⭐ `hato doctor --capture` writes it (`doctor.UNTIMED_ENTRY`), so it can be refreshed like every other: `test_doctor` fails on a fixture no capture writes. Its bodies in the suite are SYNTHETIC (`tests/_subtitles.py`) — ⛔ never a jimaku body |
+>
+> ⭐ **LAYER 15's real-media acceptance (15f)** is a probe, not a suite, because it needs Sonic's
+> episodes, the live list and real downloads: `%TEMP%\hato-15\probes\p15f_real.py` — copies of
+> 01/04/05/07 with every subtitle track removed, `same_provider` placing the provider's own
+> files (each measured against the ORIGINAL video's captions with `tsubasa.sync_to_reference`),
+> a copy renamed `[Other] …` under `any_provider`, and every placed file loaded in mpv, both
+> arms. Its numbers are in `spec/RUNBOOK.md` §*LAYER 15*.
 
 ### 🚨 OPEN GAP, 2026-09-17 — two captures the code writes and the folder does not hold
 

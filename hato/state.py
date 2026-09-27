@@ -59,7 +59,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from hato import paths
+from hato import formats, paths
 
 CONFIDENT = "CONFIDENT"
 REFUSED = "REFUSED"
@@ -100,12 +100,34 @@ _NEXT_RETRIES_SHOWN = 10
 #:                   refusal remembered tomorrow still says how close it came
 #: `newest_offered`  RUNBOOK 8f: on a NOT_FOUND, the newest episode the entry
 #:                   offered, in the video's own numbering
-_ADDED_COLUMNS = (("match_rate", "REAL"), ("newest_offered", "INTEGER"))
+#: ⭐ LAYER 15 (signed off 2026-09-26) -- the road for a video with no subtitle track.
+#: ⛔ Added the same way, and for the same reason: a bump makes 1.0.8 refuse the DB.
+#: `untimed`         on a CONFIDENT row, the TIER a placed file was chosen at (`exact`
+#:                   · `same` · `other`); on a NOT_FOUND row of this road, the CHOICE it
+#:                   waited under (`same_provider` · `any_provider`) -- so a change of
+#:                   the choice starts its week over. NULL on every timed row
+#: `written_size`    the placed file's size and mtime, as it landed: a later run knows
+#: `written_mtime_ns` the file beside the video is still the one placed -- one `stat`
+#: `untimed_since`   on this road's NOT_FOUND rows, when its wait BEGAN -- each new one
+#:                   copies it forward, and fork 13's week is counted from it
+_ADDED_COLUMNS = (("match_rate", "REAL"), ("newest_offered", "INTEGER"),
+                  ("untimed", "TEXT"), ("written_size", "INTEGER"),
+                  ("written_mtime_ns", "INTEGER"), ("untimed_since", "TEXT"))
+
+#: ⭐ LAYER 15 -- the two vocabularies `untimed` holds, one per outcome.
+UNTIMED_TIERS = ("exact", "same", "other")
+UNTIMED_CHOICES = ("same_provider", "any_provider")
 
 Attempt = namedtuple("Attempt", (
     "id video_hash video_path lang jimaku_entry jimaku_filename jimaku_size "
     "jimaku_last_modified subtitle_hash outcome reason output_path kept_path "
-    "negative_kind retry_after attempted_at match_rate newest_offered"))
+    "negative_kind retry_after attempted_at match_rate newest_offered "
+    "untimed written_size written_mtime_ns untimed_since"))
+#: ⭐ LAYER 15 -- a file this road placed, as hato last wrote it (`untimed_placed`).
+Placed = namedtuple("Placed", "path tier size mtime_ns kept_path jimaku_filename")
+#: ⭐ LAYER 15 -- a wait on this road (`untimed_wait`): the choice it waits under, when it
+#: began, when it STOPS (a week on -- fork 13), the next look and the reason.
+Wait = namedtuple("Wait", "choice since stops retry_after reason")
 #: ⚠ `newest_offered` (RUNBOOK 8f) rides along: a run inside the retry window
 #: skips the video, and its row must still say *"probably not out yet"*.
 Negative = namedtuple("Negative", "kind retry_after reason newest_offered",
@@ -151,6 +173,10 @@ _SCHEMA = (
         attempted_at          TEXT    NOT NULL,
         match_rate            REAL,
         newest_offered        INTEGER,
+        untimed               TEXT,
+        written_size          INTEGER,
+        written_mtime_ns      INTEGER,
+        untimed_since         TEXT,
         CHECK (outcome <> 'REFUSED' OR (jimaku_entry IS NOT NULL
                AND jimaku_filename IS NOT NULL AND length(jimaku_filename) > 0)),
         CHECK ((outcome = 'NOT_FOUND') = (negative_kind IS NOT NULL AND retry_after IS NOT NULL))
@@ -299,6 +325,15 @@ def _newest(value):
     return value
 
 
+def _count(name, value):
+    """A size or an mtime in whole units, or None. ⚠ bool is an int."""
+    if value is None:
+        return None
+    if type(value) is not int or value < 0:
+        raise ValueError("%s must be a whole number, got %r" % (name, value))
+    return value
+
+
 def _blacklisted(row):
     values = list(row)
     values[_BLACKLIST_COLUMNS.index("added_at")] = _moment(row[_BLACKLIST_COLUMNS.index("added_at")])
@@ -307,8 +342,9 @@ def _blacklisted(row):
 
 def _attempt(row):
     values = list(row)
-    values[Attempt._fields.index("retry_after")] = _moment(row[Attempt._fields.index("retry_after")])
-    values[Attempt._fields.index("attempted_at")] = _moment(row[Attempt._fields.index("attempted_at")])
+    for field in ("retry_after", "attempted_at", "untimed_since"):
+        at = Attempt._fields.index(field)
+        values[at] = _moment(row[at])
     return Attempt(*values)
 
 
@@ -543,6 +579,12 @@ class StateDB(object):
             raise ValueError("now() must return a timezone-aware datetime, got %r" % (moment,))
         return moment.astimezone(timezone.utc)
 
+    def now(self):
+        """The store's clock -- what its retry dates are compared with. -> aware UTC
+        ⭐ LAYER 15: the week a wait may last is judged by the SAME clock as the day it
+        waits, so a suite's fake clock moves both, and they cannot disagree."""
+        return self._clock()
+
     # -- writes -------------------------------------------------------------------
 
     def _insert(self, row):
@@ -550,7 +592,8 @@ class StateDB(object):
 
     def record_attempt(self, *, video_hash, video_path, lang, jimaku_entry, jimaku_filename,
                        jimaku_size, jimaku_last_modified, subtitle_hash, outcome, reason="",
-                       output_path=None, kept_path=None, match_rate=None):
+                       output_path=None, kept_path=None, match_rate=None, untimed=None,
+                       written_size=None, written_mtime_ns=None):
         """Record one candidate tried against one video. -> the row id.
 
         Refused loudly, with ValueError: an unknown outcome · a NOT_FOUND (use
@@ -563,7 +606,23 @@ class StateDB(object):
         OFFERED again later: the hash finds the downloaded file in the working
         cache, the rate says how close it came. Both were missing -- the column
         02-data-model.md specifies had been recorded as None since 1b.
+
+        ⭐ LAYER 15 -- `untimed` (the tier) with `written_size` and `written_mtime_ns`:
+        a file placed NOT TIMED. ⛔ Only on a CONFIDENT row, and never with a match
+        rate: nothing timed it.
         """
+        if untimed is not None:
+            if untimed not in UNTIMED_TIERS:
+                raise ValueError("untimed on a placed row is its tier -- one of %s, got %r"
+                                 % (", ".join(UNTIMED_TIERS), untimed))
+            if outcome != CONFIDENT:
+                raise ValueError("only a CONFIDENT row is a placed file; a wait on the "
+                                 "untimed road is recorded with record_not_found()")
+            if match_rate is not None:
+                raise ValueError("a file placed untimed has no match rate -- nothing timed it")
+        elif written_size is not None or written_mtime_ns is not None:
+            raise ValueError("written_size and written_mtime_ns describe a file placed "
+                             "untimed -- give its tier too")
         if outcome not in OUTCOMES:
             raise ValueError("unknown outcome %r -- one of %s" % (outcome, ", ".join(OUTCOMES)))
         if outcome == NOT_FOUND:
@@ -599,10 +658,14 @@ class StateDB(object):
             "attempted_at": _stamp(self._clock()),
             "match_rate": _rate(match_rate),
             "newest_offered": None,
+            "untimed": untimed,
+            "written_size": _count("written_size", written_size),
+            "written_mtime_ns": _count("written_mtime_ns", written_mtime_ns),
+            "untimed_since": None,
         })
 
     def record_not_found(self, *, video_hash, video_path, lang, kind, reason, jimaku_entry=None,
-                         newest_offered=None):
+                         newest_offered=None, untimed=None, untimed_since=None):
         """Record that jimaku has nothing for this video. -> when to ask again.
 
         kind "soft": the entry exists, with no file for this episode -- 1 day, so
@@ -612,7 +675,18 @@ class StateDB(object):
 
         `newest_offered` (RUNBOOK 8f): the newest episode the entry offered, in the
         video's own numbering, or None when no release could be placed.
+
+        ⭐ LAYER 15 -- `untimed` (the CHOICE the wait is under) and `untimed_since` (when
+        its wait began, an aware datetime; now when None): a wait on the road for a
+        video with no subtitle track, which looks once a day for a WEEK and then stops
+        (fork 13, `untimed_wait`).
         """
+        if untimed is not None and untimed not in UNTIMED_CHOICES:
+            raise ValueError("untimed on a wait is the choice it waits under -- one of %s, "
+                             "got %r" % (", ".join(UNTIMED_CHOICES), untimed))
+        if untimed_since is not None and untimed is None:
+            raise ValueError("untimed_since belongs to a wait on the untimed road -- give "
+                             "the choice it waits under")
         if kind not in self.retry_days:
             raise ValueError("unknown negative kind %r -- 'soft' (the entry exists, no file for "
                              "this episode) or 'hard' (no entry matched)" % (kind,))
@@ -627,7 +701,17 @@ class StateDB(object):
             raise ValueError("a hard negative means NO entry matched, so it cannot name entry %r "
                              "-- that is a soft negative" % (jimaku_entry,))
         now = self._clock()
-        retry_after = now + timedelta(days=self.retry_days[kind])
+        # ⭐ LAYER 15 (15z, B7/D6) -- a wait on the untimed road looks ONCE A DAY for its
+        # week, whatever its kind: a show jimaku has NO ENTRY for -- a new raw's likeliest
+        # miss -- waited 30 days, past its week, and got one look before *stopped*.
+        days = self.retry_days[SOFT if untimed is not None else kind]
+        retry_after = now + timedelta(days=days)
+        since = None
+        if untimed is not None:
+            since = now if untimed_since is None else untimed_since
+            if not isinstance(since, datetime) or since.utcoffset() is None:
+                raise ValueError("untimed_since must be a timezone-aware datetime, got %r"
+                                 % (since,))
         self._insert({
             "video_hash": _required("video_hash", video_hash),
             "video_path": _optional(video_path),
@@ -646,6 +730,10 @@ class StateDB(object):
             "attempted_at": _stamp(now),
             "match_rate": None,
             "newest_offered": _newest(newest_offered),
+            "untimed": untimed,
+            "written_size": None,
+            "written_mtime_ns": None,
+            "untimed_since": _stamp(since) if since is not None else None,
         })
         return retry_after
 
@@ -813,6 +901,46 @@ class StateDB(object):
             return None
         return Negative(row.negative_kind, row.retry_after, row.reason, row.newest_offered)
 
+    def untimed_wait(self, video_hash, lang):
+        """⭐ LAYER 15 -- the wait on the untimed road this video is in. -> Wait or None
+
+        The latest row decides, as `negative()`'s does: a NOT_FOUND carrying the choice
+        it waits under. ⛔ Whether or not its retry date has come: past `stops` (its
+        start and a week -- fork 13) nothing looks again on its own, and the gate needs
+        to know that after the date, not only before it. Advisory, like every read here:
+        it only ever means DO LESS.
+        """
+        row = self._latest(video_hash, lang)
+        if row is None or row.outcome != NOT_FOUND or not row.untimed:
+            return None
+        since = row.untimed_since or row.attempted_at
+        return Wait(row.untimed, since, since + timedelta(days=formats.UNTIMED_WAIT_DAYS),
+                    row.retry_after, row.reason)
+
+    def untimed_placed(self, lang):
+        """⭐ LAYER 15 -- every file the untimed road placed, as hato last wrote it.
+        -> {normcased absolute output path: Placed}
+
+        ONE query a run: the present-check has already listed the folder, so a `.jpn.`
+        file costs nothing to see, and this says which of them are hato's -- then one
+        `stat` each. The latest CONFIDENT row per video decides: a video timed since
+        (fork 11, evolution) has no placed file any more. ⛔ The disk still decides
+        (`pipeline`): a row whose size or mtime no longer match is a person's own file.
+        """
+        cols = ", ".join("a." + f for f in Attempt._fields)
+        sql = ("SELECT %s FROM attempts AS a "
+               "JOIN (SELECT max(id) AS id FROM attempts WHERE lang = :lang "
+               "      AND outcome = 'CONFIDENT' GROUP BY video_hash) AS latest "
+               "  ON latest.id = a.id "
+               "WHERE a.untimed IS NOT NULL AND a.output_path IS NOT NULL" % cols)
+        rows = self._run(lambda conn: conn.execute(sql, {"lang": _lang(lang)}).fetchall())
+        out = {}
+        for row in (_attempt(r) for r in rows):
+            key = os.path.normcase(os.path.abspath(row.output_path))
+            out[key] = Placed(row.output_path, row.untimed, row.written_size,
+                              row.written_mtime_ns, row.kept_path, row.jimaku_filename)
+        return out
+
     def candidates(self, video_hash, lang):
         """-> [Attempt], every candidate tried for (video x language) since its
         last success, newest first, one row per candidate (its latest verdict).
@@ -891,14 +1019,47 @@ class StateDB(object):
         now = self._clock()
         key = {"lang": _lang(lang),
                "since": _stamp(now - timedelta(days=RETRY_OWED_DAYS))}
-        sql = ("SELECT DISTINCT a.retry_after FROM attempts AS a "
+        sql = ("SELECT DISTINCT a.retry_after, a.untimed_since FROM attempts AS a "
                "JOIN (SELECT max(id) AS id FROM attempts WHERE lang = :lang "
                "      GROUP BY video_hash) AS latest ON latest.id = a.id "
                "WHERE a.outcome = 'NOT_FOUND' AND a.retry_after > :since "
                "  AND a.video_hash NOT IN (SELECT video_hash FROM blacklist) "
                "ORDER BY a.retry_after")
         rows = self._run(lambda conn: conn.execute(sql, key).fetchall())
-        return [_moment(r[0]) for r in rows if r[0]]
+        # ⭐ LAYER 15 (fork 13) -- a wait on the untimed road whose next look falls past its
+        # week is NOT owed: nothing looks again on its own, so waking for it would be a
+        # run for nobody -- on every start of the tray, for ever.
+        week = timedelta(days=formats.UNTIMED_WAIT_DAYS)
+        out = []
+        for retry_text, since_text in rows:
+            if not retry_text:
+                continue
+            due = _moment(retry_text)
+            if since_text and due >= _moment(since_text) + week:
+                continue
+            if due not in out:
+                out.append(due)
+        return out
+
+    def untimed_waits(self, dry_run=True):
+        """⭐ 15z (C7, D7, B12) -- the untimed road's waits, counted; and with
+        `dry_run=False`, TAKEN OUT. -> how many.
+
+        For *Go back* to a hato before the road (1.0.8 and earlier): its gate skips a
+        video with no subtitle track BEFORE recording anything, so a wait of the road's
+        is never settled -- its `hato problems` listed it for ever, and its tray woke
+        for a stopped wait's date. ⛔ Only those rows (a NOT_FOUND with the week it
+        began): every other row stays, the placed files' records included. ⚠ Advisory
+        like every row here -- gone, the next look under the road starts a new week.
+        """
+        where = "outcome = 'NOT_FOUND' AND untimed_since IS NOT NULL"
+
+        def op(conn):
+            if dry_run:
+                return conn.execute("SELECT count(*) FROM attempts WHERE " + where).fetchone()[0]
+            return conn.execute("DELETE FROM attempts WHERE " + where).rowcount
+
+        return self._run(op)
 
     def clear(self, blacklist=False, dry_run=True):
         """Forget what hato remembers. -> {"tables": {name: rows}, "videos": n}

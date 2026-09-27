@@ -100,6 +100,8 @@ def _show(args):
     # 2026-09-17 and the readout is where a person checks what is in force.
     row("skip_embedded", "true" if cfg.skip_embedded else "false")
     row("extract_embedded", "true" if cfg.extract_embedded else "false")
+    # ⭐ LAYER 15 -- a video with no subtitle track: off (skipped), or placed NOT TIMED.
+    row("untimed", cfg.untimed)
     # 🚨 Z14-6 (the Layer 14 pass): these three were set in the window and never
     # shown here. A check derives every key from SCHEMA now.
     row("prefer_format", cfg.prefer_format)

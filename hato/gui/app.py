@@ -371,6 +371,9 @@ class State(object):
         #: ⭐ RUNBOOK 14c -- `extract_embedded`: take them OUT and save them beside
         #: the video. ⚠ It wins over `skip_embedded`: `embedded_choice()` reads both
         self.extract_embedded = False
+        #: ⭐ LAYER 15 -- `untimed`: a video with NO subtitles inside it is skipped (the
+        #: ruled default), or gets one picked by its NAME, placed NOT TIMED
+        self.untimed = formats.UNTIMED_OFF
         self.key_hint = None
         #: ⭐ What jimaku said the last time a key was entered, and whether it
         #: worked. ⛔ Set ONLY on key entry -- Sonic: *"just on the key entry,
@@ -427,6 +430,11 @@ class State(object):
         #: above -- and `extract_key_in_file` when config.toml carries the key.
         self.tray_reads_extract = True
         self.extract_key_in_file = False
+        #: ⭐ LAYER 15 -- False when a tray IS running whose runs cannot read `untimed`
+        #: (1.0.8 and before), read from its pid file like the three above; and whether
+        #: config.toml carries the key, which such a hato refuses whatever its value.
+        self.tray_reads_untimed = True
+        self.untimed_key_in_file = False
         #: the soft and hard retry windows in days, as `hato problems` reports them.
         self.retry_days = 1
         self.hard_days = 30
@@ -519,10 +527,18 @@ class State(object):
         return bool(video and self.folders and _paths.under_any(video, self.folders)
                     and not _paths.under_any(video, self.skip_folders))
 
-    @staticmethod
-    def word(row):
-        u"""-> the INTERFACE's word for this row. [X] Never the engine's."""
-        return gui_run.outcome_word(row)
+    def word(self, row):
+        u"""-> the INTERFACE's word for this row. [X] Never the engine's. ⭐ 15z (D3): on
+        the window's clock -- a road wait whose stop passed with no run since is
+        *stopped looking*, as Needs you says, never *waiting to retry*."""
+        return gui_run.outcome_word(row, self.clock())
+
+    def road_says(self):
+        u"""⭐ LAYER 15 (15z, D2 and D4) -- what a road wait's words depend on: whether
+        anything runs hato on its own, and the choice and formats in force NOW. -> the
+        keywords `run.road_words` takes."""
+        return dict(watching=self.watching, daily=self.daily(), choice=self.untimed,
+                    prefer=self.prefer_format, fallback=self.format_fallback)
 
     # -- partitions --------------------------------------------------------
 
@@ -569,7 +585,7 @@ class State(object):
         longer waiting on them even though its wire outcome has not moved.
         """
         done = [gui_run.problem_key({u"video": key}) for key in self.picked]
-        return gui_run.tally(self.rows, self.problems(), done=done)
+        return gui_run.tally(self.rows, self.problems(), done=done, now=self.clock())
 
     def need_count(self):
         u"""-> the number the badge shows and the footer says. One source."""
@@ -596,8 +612,12 @@ class State(object):
         out = []
         for ident in order:
             title, season = ident
+            # ⚠ 15z (D8) -- NOT a wait on the untimed road: it asked jimaku, so *"nothing
+            # was requested for them"* was false of it. It has its own line
+            # (`fully_skipped`), which says what it waits for and until when.
             skipped = len([row for row in self.rows
                            if gui_run.is_skipped(self.word(row))
+                           and not gui_run.untimed_wait_of(row)
                            and (row.get(u"title") or u"") == title])
             out.append((title, season, index[ident], skipped))
         return out
@@ -630,8 +650,8 @@ class State(object):
             if not gui_run.is_skipped(word):
                 continue
             title = row.get(u"title") or row.get(u"name") or u""
-            if title in added_titles:
-                continue
+            if title in added_titles and not gui_run.untimed_wait_of(row):
+                continue                    # ⚠ 15z (D8): a road wait keeps its own line
             ident = (title, word)
             if ident not in grouped:
                 grouped[ident] = []
@@ -709,6 +729,40 @@ EMBEDDED_TIP = (
     u"downloaded. A video they cannot be taken out of is downloaded for instead, and "
     u"its row says why.")
 
+#: ⭐ LAYER 15 (ruled 2026-09-26: *"for setting 1-one choice of three"*) -- what hato
+#: does with a video that has NO subtitles inside it: (the choice, its words, the hint,
+#: whether the hint is amber). ⛔ *Skip it* first, and the default; ⛔ no
+#: *(recommended)* anywhere (fork 14: *"it should NOT be recommended"*).
+UNTIMED_CHOICES = (
+    (formats.UNTIMED_OFF, formats.untimed_words(formats.UNTIMED_OFF),
+     u"· hato can't time a download yet", False),
+    (formats.UNTIMED_SAME, formats.untimed_words(formats.UNTIMED_SAME), u"· not timed", False),
+    (formats.UNTIMED_ANY, formats.untimed_words(formats.UNTIMED_ANY),
+     u"· not timed, may be off", True),
+)
+#: ⭐ Fork 12 (*"a mild red caution icon there if toggled on with a short reason for the
+#: warning"*) -- under the choice while it is not *Skip it*, the reason SHOWN. The mock's
+#: words. ⛔ No new colour: the ⚠ is `theme.REFUSED_INK`, 4.79 on the card.
+UNTIMED_CAUTION = {
+    formats.UNTIMED_SAME:
+        u"hato can't check these against the video, so they may be early or late, and "
+        u"may have errors.",
+    formats.UNTIMED_ANY:
+        u"hato can't check these against the video. One from another provider is often "
+        u"a second or more off, and may have errors.",
+}
+#: The choice's ⓘ (RUNBOOK §LAYER 15, *What a person sees*).
+UNTIMED_TIP = (
+    u"Only for a video with no subtitles inside it: there is nothing to time a download "
+    u"against, so by default hato skips it.\n\n"
+    u"Either download choice picks a subtitle by its name — one made for the same "
+    u"episode by the video's own provider, or the best one for the episode from any "
+    u"provider — and saves it beside the video as <video>.jpn.<ext>. It is never timed, "
+    u"so it may be early or late, and its row says not timed.\n\n"
+    u"When jimaku has nothing for it, hato looks once a day for a week, then stops. A "
+    u"file that goes missing is put back from hato's own copy — choose Skip it, or add "
+    u"the video to the skip list, to stop that.")
+
 
 #: 🚨 ONE TOOLTIP PER SKIP, AND EACH ONE HAS TO BE TRUE OF ITS OWN ROW.
 #: The single tooltip these replace said *"Every episode already carries a
@@ -761,12 +815,104 @@ RETRY_TIPS = {
         u"hato looks for this again on its own. Needs you says why it is waiting.",
 }
 
+#: ⭐ LAYER 15 (fork 13) -- this road's waits, said as what they are: bounded to a WEEK.
+#: ⛔ Neither names the setting, nor what else jimaku has (fork 14).
+ROAD_TIPS = {
+    u"looking":
+        u"This video has no subtitles inside it, so hato looks for a subtitle by its "
+        u"name, and has found nothing to place yet. It looks at most once a day, for a "
+        u"week from the first time it found nothing, then stops.",
+    u"stopped":
+        u"hato looked for a subtitle for this by its name for a week and found nothing "
+        u"to place, so it stopped: nothing asks again on its own.",
+    # ⭐ 15z (D4) -- the choice is *Skip it* now, or changed since the wait began
+    u"off":
+        u"This video has no subtitles inside it, and hato no longer looks for a subtitle "
+        u"for it by its name.",
+    u"again":
+        u"This video has no subtitles inside it, so hato looks for a subtitle by its "
+        u"name. It looks again on the next run.",
+}
+#: 🚨 15z (D2) -- ...and WHO asks, when the tray does not: a schedule is said only while
+#: something keeps it (8h's rule). ⚠ The daily run's time is filled in.
+ROAD_KEEPER = {
+    u"daily": u"\n\nhato is not in the tray, so the daily run at %s asks — until the week "
+              u"is out.",
+    u"none": u"\n\nhato is not in the tray, so nothing asks on its own — the next run "
+             u"does, until the week is out.",
+}
+#: ...and on the Subtitles tab, where the manual choice is: one click away, in Needs you.
+ROAD_ELSEWHERE = u" Needs you can look again now."
 
-def quiet_tip(word, rows):
+
+def road_line(rows, now, says=None):
+    u"""⭐ LAYER 15 -- the words of this road's waits: *"nothing from [shincaps] for this
+    episode on jimaku · looks once a day until 3 Oct, then stops"*. -> text, or u"" for
+    any other rows (the line keeps its word). `says`: `State.road_says()`.
+
+    ⚠ 15z (D8) -- weekly episodes stop on DIFFERENT days: *until when* was dropped for
+    all of them. What they share is said; then the soonest stop."""
+    if not rows or not all(gui_run.untimed_wait_of(row) for row in rows):
+        return u""
+    says = says or {}
+    bases = set(safe(gui_run.untimed_wait_of(row).get(u"waits_for")) for row in rows)
+    whens = set(gui_run.road_words(row, now, **says) for row in rows)
+    base = bases.pop() if len(bases) == 1 else u""
+    if len(whens) == 1:
+        when = whens.pop()
+    else:
+        looking = [row for row in rows if not gui_run.road_stopped(row, now)]
+        soonest = min((gui_run.road_stops(row) for row in looking), default=None)
+        if soonest is None:
+            return u""
+        when = u"each looks for a week — the first stops %s" % formats.untimed_day(soonest)
+    return u"%s · %s" % (base, when) if base else when
+
+
+def road_tip(rows, now, state=None):
+    u"""⭐ LAYER 15 -- the ⓘ of this road's waits, by what their words say. -> text"""
+    says = state.road_says() if state is not None else {}
+    whens = set(gui_run.road_words(row, now, **says) for row in rows)
+    if whens == {gui_run.NO_LONGER_LOOKED_FOR}:
+        return ROAD_TIPS[u"off"]
+    if whens == {u"looks again on the next run"}:
+        return ROAD_TIPS[u"again"]
+    if rows and all(gui_run.road_stopped(row, now) for row in rows):
+        return ROAD_TIPS[u"stopped"]
+    tip = ROAD_TIPS[u"looking"]
+    if state is None or state.watching:
+        return tip
+    if state.daily():
+        return tip + ROAD_KEEPER[u"daily"] % state.schedule
+    return tip + ROAD_KEEPER[u"none"]
+
+
+#: ⭐ 15z (D1) -- a present file hato placed NOT TIMED, said on the quiet line's hover.
+PLACED_TIP = (u" hato placed %s not timed: nothing inside the video could time it, so it "
+              u"was chosen by its name.")
+
+
+def not_timed_count(rows, key=None):
+    u"""⭐ LAYER 15 -- how many VIDEOS among `rows` carry a file placed not timed. -> int
+    ⚠ 15z (D10): per video (`key`, `State.key`) -- two spellings of one video were one
+    added and TWO not timed."""
+    key = key or gui_run.problem_key
+    return len(set(key(row) for row in rows if gui_run.untimed_of(row)))
+
+
+def quiet_tip(word, rows, now=None, state=None):
     u"""The tooltip under one quiet line, from what ITS rows say. -> text or None
 
-    ⚠ Only *waiting to retry* varies: every other quiet word is one fact.
+    ⚠ Only *waiting to retry* varies: every other quiet word is one fact -- and ⭐ 15z
+    (D1) *already had one*, whose file hato may have placed NOT TIMED.
     """
+    if rows and all(gui_run.untimed_wait_of(row) for row in rows):
+        return road_tip(rows, now, state) + ROAD_ELSEWHERE   # ⭐ LAYER 15 -- a week
+    if word == gui_run.SKIPPED and not_timed_count(rows):
+        marked = not_timed_count(rows)
+        return QUIET_TIPS[word] + PLACED_TIP % (
+            u"it" if len(rows) == 1 else u"all of them" if marked >= len(rows)
+            else u"%d of them" % marked)
     if word != gui_run.RETRYING:
         return QUIET_TIPS.get(word)
     kinds = set((u"format" if gui_run.is_format_wait(row)
@@ -1531,6 +1677,27 @@ def info_dot(tip, parent=None):
     return dot
 
 
+def untimed_caution(choice, parent=None):
+    u"""⭐ LAYER 15, fork 12 -- the caution under the choice while it is not *Skip it*:
+    a mild red ⚠ and ONE short reason, SHOWN (Sonic: *"it will show that warning in the
+    settings"*). -> QWidget. ⚠ The red is `theme.REFUSED_INK` -- no new colour -- and
+    the reason wraps: the any-provider one is two lines at the card's width."""
+    import html
+    strip = QWidget(parent)
+    strip.setObjectName(u"caution")
+    line = QHBoxLayout(strip)
+    line.setContentsMargins(14, 2, 0, 0)
+    line.setSpacing(6)
+    line.addWidget(label(u"⚠", u"cautionic", strip), 0, Qt.AlignmentFlag.AlignTop)
+    words = label(u"<b style=\"color:%s\">Not timed.</b> %s"
+                  % (theme.INK, html.escape(UNTIMED_CAUTION[choice], quote=False)),
+                  u"cautionwhy", strip)
+    words.setTextFormat(Qt.TextFormat.RichText)
+    words.setWordWrap(True)
+    line.addWidget(words, 1)
+    return strip
+
+
 def button(text, parent=None, accent=False):
     btn = QPushButton(text, parent)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1783,22 +1950,47 @@ class SubRow(Clickable):
         # ⭐ RUNBOOK 14c -- a subtitle TAKEN OUT of the video was never timed: NO
         # percentage (ruled) -- not even the dash a row never timed shows
         taken = gui_run.taken_from(row)
+        # ⭐ LAYER 15 (fork 3, ruled: *"Row mark amber A+B"*) -- a subtitle chosen by its
+        # NAME and placed NOT TIMED: the row's amber edge AND ≈ where the % goes. ⛔ No
+        # number there (fork 4): the % column is the timing column.
+        untimed = gui_run.untimed_of(row)
         percent = gui_run.match_percent(row)
-        self.pc = label(u"" if taken else u"—" if percent is None
-                        else u"%d%%" % percent, u"pc", self)
+        self.pc = label(u"" if taken else gui_run.UNTIMED_MARK if untimed
+                        else u"—" if percent is None else u"%d%%" % percent, u"pc", self)
         self.pc.setFixedWidth(COL_PC)
         self.pc.setAlignment(Qt.AlignmentFlag.AlignRight
                              | Qt.AlignmentFlag.AlignVCenter)
-        mark(self.pc, u"tier", tier(row))
+        mark(self.pc, u"tier", u"untimed" if untimed else tier(row))
+        mark(self, u"untimed", bool(untimed))
 
         # ⭐ 14c -- where the jimaku file's name goes: *taken from the video*, the
         # track on hover (ruled) -- and a download the choice did not want says why
         self.nm = Elide(gui_run.TAKEN_WORDS if taken else row.get(u"jimaku_filename")
                         or u"", self, u"nm")
-        self.nm.setFixedWidth(COL_NAME)
         tip = gui_run.taken_words(row) or gui_run.not_taken_words(row)
         if tip:
             self.nm.setToolTip(wrap(safe(tip)))
+        #: ⭐ LAYER 15 -- *"· another provider — may be off"* on the third tier, RIGHT
+        #: AFTER the name, in the name's own column: at the column's end it would stand
+        #: a whole column away from the file it speaks of. ⛔ Nothing on the first two.
+        self.far = None
+        cell = self.nm
+        if untimed and untimed.get(u"tier") == formats.TIER_OTHER:
+            cell = QWidget(self)
+            line = QHBoxLayout(cell)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(6)
+            line.addWidget(self.nm, 0)
+            self.far = label(u"· another provider — may be off", u"hint", cell)
+            mark(self.far, u"warn", True)
+            self.far.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+            line.addWidget(self.far)
+            line.addStretch(1)
+        cell.setFixedWidth(COL_NAME)
+        if untimed:
+            # ⭐ The hover, over the whole row (the mock's words): why it is not timed,
+            # and how it was chosen
+            self.setToolTip(wrap(gui_run.untimed_tip(row)))
 
         #: [!] ON HOVER ONLY -- eight static markers down a calm list is eight
         #: things to look at for no information. Qt has no transition, so the
@@ -1816,7 +2008,7 @@ class SubRow(Clickable):
             lambda value: self._chev_fade.setOpacity(float(value)))
         self._expanded = False
 
-        for widget in (self.ep, self.pc, self.nm, self.chev):
+        for widget in (self.ep, self.pc, cell, self.chev):
             box.addWidget(widget)
         box.addStretch(1)
 
@@ -1862,6 +2054,8 @@ class SubRow(Clickable):
 #: window's edge. LOOKED, 2026-09-25: tsubasa's reason names the video, a release
 #: name runs long, and the pane scrolled sideways with the sentence cut at the edge.
 WRAPS = object()
+#: ⭐ LAYER 15 -- a detail line whose value is the amber *not timed* (the mock's).
+UNTIMED_VALUE = object()
 
 
 def detail_panel(row, parent=None):
@@ -1909,10 +2103,19 @@ def detail_panel(row, parent=None):
                       u" · .%s, %s line%s" % (taken.get(u"format") or u"?", events,
                                               u"" if events == 1 else u"s")))
 
+    # ⭐ LAYER 15 -- placed by its NAME, NOT TIMED: the mock's four lines (ruled)
+    untimed = gui_run.untimed_of(row)
+    if untimed:
+        lines.append((u"timing", u"not timed", u" — nothing inside the video to time against",
+                      UNTIMED_VALUE))
+        chosen = gui_run.untimed_chosen(row)
+        lines.append((u"chosen by", u"its name — %s" % chosen if chosen else u"its name", None))
+
     written = row.get(u"output_path")
     if written:
         lines.append((u"written", os.path.basename(written),
-                      u", beside the video"))
+                      u", beside the video — .jpn marks it not timed" if untimed
+                      else u", beside the video"))
 
     # ⭐ 14c -- asked to take them out, and could not: said, in the row
     not_taken = gui_run.not_taken_words(row)
@@ -1933,7 +2136,8 @@ def detail_panel(row, parent=None):
         lines.append((u"note", safe(row.get(u"reason")) or u"nothing recorded",
                       None))
 
-    for index, (key, value, tail) in enumerate(lines):
+    for index, entry in enumerate(lines):
+        key, value, tail = entry[:3]
         grid.addWidget(label(key, u"detkey", panel), index, 0,
                        Qt.AlignmentFlag.AlignTop)
         strip = QWidget(panel)
@@ -1943,6 +2147,8 @@ def detail_panel(row, parent=None):
         lead = label(value, u"detval", strip)
         wraps, tail = tail is WRAPS, (None if tail is WRAPS else tail)
         mark(lead, u"lead", tail is not None)
+        if entry[3:] == (UNTIMED_VALUE,):
+            mark(lead, u"untimed", True)           # ⭐ LAYER 15 -- *not timed*, amber
         lead.setWordWrap(wraps)
         line.addWidget(lead, 1 if wraps else 0)
         if tail:
@@ -2831,7 +3037,14 @@ class HatoWindow(Styled):
             u"<a href=\"updates\" style=\"%s\">hato %s</a> │&nbsp;"
             % (theme.LINK_CSS, html.escape(current)) if current else u"")
         need = tallies[gui_run.NEEDS_YOU]
-        self.tally_labels[0].setText(u"%d added" % tallies[gui_run.ADDED])
+        # ⭐ LAYER 15 -- how many of the added were placed NOT TIMED. ⚠ INSIDE the added
+        # count, in brackets: *"8 added · 4 not timed"* reads as twelve, the subset shown
+        # as a sibling that once made eight files read as eleven (`run.py`, rule 1).
+        untimed = not_timed_count([row for row in state.rows
+                                   if state.word(row) == gui_run.ADDED], state.key)
+        self.tally_labels[0].setText(
+            u"%d added (%d not timed)" % (tallies[gui_run.ADDED], untimed) if untimed
+            else u"%d added" % tallies[gui_run.ADDED])
         self.tally_labels[1].setText(
             u"1 needs you" if need == 1 else u"%d need you" % need)
         # ⚠ EVERY skip word, not just `SKIPPED`. Splitting the one word into
@@ -2840,7 +3053,7 @@ class HatoWindow(Styled):
         # worse failure than a KeyError, and `counts()` pre-seeds every key so
         # there would never have been one.
         # ⛔ And it no longer says they "had them": a retrying row has nothing.
-        skipped = sum(tallies[word] for word in set(gui_run.SKIP_WORDS.values()))
+        skipped = sum(tallies[word] for word in gui_run.skip_words())
         self.tally_labels[2].setText(u"%d skipped" % skipped)
         for index, word, text in ((3, gui_run.NOT_YET, u"%d waiting"),
                                   (4, gui_run.FAILED, u"%d had a problem")):
@@ -2945,17 +3158,32 @@ class HatoWindow(Styled):
                 # ⚠ "already had subtitles" was true of only one of the five
                 # skips. This counts all of them, so it says the thing that IS
                 # true of all of them.
+                # ⭐ 15z (D1) -- and how many of their files hato placed NOT TIMED
+                marked = not_timed_count(
+                    [row for row in state.rows if (row.get(u"title") or u"") == title
+                     and gui_run.is_skipped(state.word(row))], state.key)
                 column.addWidget(self._quiet(
                     u"%d other episode%s skipped"
                     % (skipped, u"" if skipped == 1 else u"s"),
-                    u"— nothing was requested for them"))
+                    u"— nothing was requested for them%s"
+                    % (u" · %d not timed" % marked if marked else u"")))
 
+        now = state.clock()
         for title, word, episodes in state.fully_skipped():
             tail = episode_tail(episodes)
+            rows_ = state.skipped_rows(title, word)
+            said = road_line(rows_, now, state.road_says()) or word
+            marked = not_timed_count(rows_, state.key)
+            if marked and word == gui_run.SKIPPED:
+                # 🚨 15z (D1) -- FROM THE SECOND RUN ON, a placed file comes back PRESENT:
+                # *"already had one"* alone, and the window never said not timed again
+                said += (u" · not timed" if marked >= len(set(state.key(r) for r in rows_))
+                         else u" · %d not timed" % marked)
             column.addWidget(self._quiet(
                 title if not tail else u"%s · %s" % (title, tail),
-                u"— %s" % word,
-                tip=quiet_tip(word, state.skipped_rows(title, word))
+                # ⭐ LAYER 15 -- this road's waits say what they wait for and until when
+                u"— %s" % said,
+                tip=quiet_tip(word, rows_, now, state)
                 or u"Nothing was requested for %d video%s."
                 % (len(episodes), u"" if len(episodes) == 1 else u"s")))
 
@@ -2983,6 +3211,14 @@ class HatoWindow(Styled):
             meta.append(season_text(season))
         meta.append(u"%d added" % added)
         box.addWidget(label(u" · ".join(meta), u"showmeta", head))
+        # ⭐ LAYER 15 -- the show says it too (ruled: *"· 4 added · not timed"*): all of
+        # them, or how many. ⚠ A label of its own, so the amber is the words' alone.
+        untimed = len([row for row in rows if gui_run.untimed_of(row)])
+        if untimed:
+            note = label(u"· not timed" if untimed == len(rows)
+                         else u"· %d not timed" % untimed, u"showmeta", head)
+            mark(note, u"untimed", True)
+            box.addWidget(note)
         # ⭐ 14z (B-9) -- THE ENTRY OF A ROW THAT HAS ONE: a row taken out of the video
         # has none, so a show whose first row was taken said *"entry (none)"* over
         # episodes from 11446 -- and a show all taken out said it had been looked up.
@@ -3283,8 +3519,18 @@ class HatoWindow(Styled):
         # One line said the blocked sentence of both -- *"you prefer .srt"* over
         # an episode that IS `.srt` -- and offered to download the kind they had
         # just chosen (ADVERSARY 2026-09-23 #9).
-        other_format = [r for r in waiting if gui_run.is_format_wait(r)]
-        not_yet = [r for r in waiting if not gui_run.is_format_wait(r)]
+        # ⭐ LAYER 15 (15e) -- THIS ROAD'S WAITS, AS WAITS: what each waits for, until when
+        # -- then that it STOPPED -- with *Look again now*, one look. ⛔ Folded into *"not
+        # on jimaku yet"* they would read *"retrying in 14h"* for ever (fork 13), and ⛔ no
+        # other provider's file is offered (fork 9).
+        road = [r for r in waiting if gui_run.untimed_wait_of(r)]
+        rest = [r for r in waiting if not gui_run.untimed_wait_of(r)]
+        other_format = [r for r in rest if gui_run.is_format_wait(r)]
+        not_yet = [r for r in rest if not gui_run.is_format_wait(r)]
+        for stopped in (False, True):
+            mine = [r for r in road if gui_run.road_stopped(r, now) is stopped]
+            if mine:
+                column.addWidget(self._road_strip(mine, host, now, stopped))
         blocked = [r for r in other_format if not formats.accepts_any(
             formats.only_as(r.get(u"reason")), state.prefer_format, state.format_fallback)]
         taken = [r for r in other_format if formats.accepts_any(
@@ -3387,6 +3633,50 @@ class HatoWindow(Styled):
                 u"Nothing needs you.",
                 u"Episodes hato could not settle on its own land here."))
         column.addStretch(1)
+
+    def _road_strip(self, rows, host, now, stopped):
+        u"""⭐ LAYER 15 (15e, fork 13) -- this road's waits: what they wait for, until when
+        or that they STOPPED, and *Look again now* -- ONE look (`--retry-now`: the gate
+        looks past the stop once, and the next miss stops again). -> QWidget
+
+        ⛔ No file offered (fork 9: a button offering another provider's file IS a
+        recommendation of the riskier choice) and ⛔ no word naming a setting (fork 14)."""
+        strip = Styled(host, u"quiet")
+        box = QHBoxLayout(strip)
+        box.setContentsMargins(PAD, 14, PAD, 8)
+        box.setSpacing(8)
+        n = len(rows)
+        lead = label((u"stopped looking for %d episode%s" if stopped else
+                      u"%d episode%s waiting for a file by its name")
+                     % (n, u"" if n == 1 else u"s"), u"hadb", strip)
+        mark(lead, u"kind", u"notrack" if stopped else u"notfound")
+        names = u", ".join(episode_name(row) for row in rows[:4])
+        more = u" and %d more" % (n - 4) if n > 4 else u""
+        # ⭐ What they wait for and until when, when they share it -- else each one's own
+        # is a hover away on its Subtitles line, and this says the week's rule.
+        # ⚠ LOOKED: a stopped strip said *"stopped looking"* in its lead AND its line.
+        bases = set(safe(gui_run.untimed_wait_of(row).get(u"waits_for")) for row in rows)
+        if stopped:
+            said = u"%snothing looks again on its own" % (
+                u"%s · " % bases.pop() if len(bases) == 1 and u"" not in bases else u"")
+        else:
+            said = (road_line(rows, now, self.state.road_says())
+                    or u"each looks for a week, then stops")
+        detail = Flowing(u"— %s%s · %s" % (names, more, said), strip)
+        again = button(u"Look again now", strip)
+        # ⚠ 15z (D6) -- *"One request per show"* was false of a show jimaku has not been
+        # asked about yet: finding its entry is a request of its own
+        again.setToolTip(wrap(
+            u"Asks jimaku about %s once, now — a request or two per show, and nothing is "
+            u"downloaded unless a file for it is there. %s"
+            % (u"this episode" if n == 1 else u"these episodes",
+               u"It does not start looking every day again." if stopped else
+               u"The week it looks for is not made any longer.")))
+        again.clicked.connect(lambda _c=False, rs=list(rows): self.look_again(rs))
+        self._not_while_running(again)
+        dot = info_dot(road_tip(rows, now, self.state), strip)
+        _strip_row(box, lead, detail, again, dot)
+        return strip
 
     def _window_text(self, days=None):
         u"""A retry window, in words -- the soft one unless told. -> *"24 hours"* / *"3 days"*"""
@@ -4154,7 +4444,65 @@ class HatoWindow(Styled):
                  then=u"format.embedded:%s" % chosen)
             pair.addWidget(restart)
             body.addWidget(old)
+        self._untimed_rows(state, card, body)
         return card
+
+    def _untimed_rows(self, state, card, body):
+        u"""⭐ LAYER 15 (ruled 2026-09-26) -- a video with NO subtitles inside it: skip it
+        (the default -- today), or download one by its name, NOT TIMED. ONE choice of
+        three, the embedded choice's own shape. ⛔ Nothing else in the window points here
+        (fork 14): this choice is the only way in."""
+        head = QWidget(card)
+        line = QHBoxLayout(head)
+        line.setContentsMargins(0, 4, 0, 0)
+        line.setSpacing(5)
+        line.addWidget(label(u"When the video has no subtitles inside it", None, head))
+        line.addWidget(info_dot(UNTIMED_TIP, head))
+        line.addStretch(1)
+        body.addWidget(head)
+        # ⭐ ONE GROUP (Z14-1): a radio alone under its row's widget is no group to Qt,
+        # and a click on the chosen one unchecked it
+        group = QButtonGroup(card)
+        for which, text, hint, warn in UNTIMED_CHOICES:
+            choice = QWidget(card)
+            line = QHBoxLayout(choice)
+            line.setContentsMargins(14, 0, 0, 0)
+            line.setSpacing(8)
+            radio = Radio(choice)
+            group.addButton(radio)
+            radio.setChecked(state.untimed == which)
+            radio.clicked.connect(lambda _c=False, w=which: self._set_untimed(w))
+            kept(radio, u"format.untimed:%s" % which)
+            line.addWidget(radio)
+            line.addWidget(label(text, None, choice))
+            said = label(hint, u"hint", choice)
+            mark(said, u"warn", warn)
+            line.addWidget(said)
+            line.addStretch(1)
+            body.addWidget(choice)
+        if state.untimed in UNTIMED_CAUTION:
+            body.addWidget(untimed_caution(state.untimed, card))
+        if (state.old_tray or not state.tray_reads_untimed) and (
+                state.untimed != formats.UNTIMED_OFF or state.untimed_key_in_file):
+            # 🚨 AN OLDER hato CANNOT READ `untimed` -- it refuses a setting it has never
+            # heard of, so every run the old tray starts stops at the file
+            # (`config.NEWER_THAN_1_0_8`) -- and whenever the KEY is in the file, whatever
+            # its value. ⭐ Under the choice it speaks for (Z14-2).
+            old = QWidget(card)
+            pair = QHBoxLayout(old)
+            pair.setContentsMargins(14, 2, 0, 0)
+            pair.setSpacing(8)
+            said = label(u"The hato in your tray is an older version and cannot read "
+                         u"this setting — its runs stop until it is restarted.",
+                         u"hint", old)
+            said.setWordWrap(True)
+            pair.addWidget(said, 1)
+            restart = button(u"Restart the tray", old)
+            restart.clicked.connect(self.restart_watcher)
+            kept(restart, u"format.untimed.restart_tray",
+                 then=u"format.untimed:%s" % state.untimed)
+            pair.addWidget(restart)
+            body.addWidget(old)
 
     def _card_key(self, parent):
         card, body = self._card(u"jimaku key", parent)
@@ -4605,6 +4953,9 @@ class HatoWindow(Styled):
             extract = self.tray_reads_extract()                 # 14c
             changed = changed or extract != self.state.tray_reads_extract
             self.state.tray_reads_extract = extract
+            untimed = self.tray_reads_untimed()                 # LAYER 15
+            changed = changed or untimed != self.state.tray_reads_untimed
+            self.state.tray_reads_untimed = untimed
             # ⭐ A DATE PASSES WITH NOTHING ELSE CHANGING (ADVERSARY 2026-09-22
             # A16). An open window held a waited row hidden past its date, and
             # *"retrying in 30m"* read the same five hours later. Once a minute,
@@ -6256,6 +6607,7 @@ class HatoWindow(Styled):
         over a file that tray could read again."""
         self.state.format_keys_in_file = False     # the values decide (`_card_format`)
         self.state.extract_key_in_file = False     # the value decides (SAVE chosen)
+        self.state.untimed_key_in_file = False     # the value decides (not *Skip it*)
         self.state.update_key_in_file = not self.state.updates.auto
 
     def _read(self, argv, done, each=None):
@@ -6555,6 +6907,17 @@ class HatoWindow(Styled):
         except Exception:                     # noqa: BLE001 -- a guess must not crash
             return True
 
+    @staticmethod
+    def tray_reads_untimed():
+        u"""-> False when a tray IS running whose runs cannot read `untimed` (LAYER 15):
+        every hato before 1.0.9. No tray, or one saying `untimed`, -> True."""
+        try:
+            from hato import watch as _watch
+            caps = _watch.watching_capabilities()
+            return caps is None or u"untimed" in caps
+        except Exception:                     # noqa: BLE001 -- a guess must not crash
+            return True
+
     def restart_watcher(self):
         u"""⭐ V1 -- replace an older tray with this build's. -> the argv, or None."""
         self.stop_watcher()
@@ -6563,6 +6926,7 @@ class HatoWindow(Styled):
         self.state.tray_reads_formats = True
         self.state.tray_reads_updates = True          # LAYER 11
         self.state.tray_reads_extract = True          # 14c
+        self.state.tray_reads_untimed = True          # LAYER 15
         self.render()
         return argv
 
@@ -6656,6 +7020,22 @@ class HatoWindow(Styled):
             u"--set", u"skip_embedded=%s" % (u"true" if skip else u"false"),
             u"--set", u"extract_embedded=%s" % (u"true" if extract else u"false"),
             then=lambda _finished, _events: self.refresh_problems())
+        self.render()
+
+    def _set_untimed(self, choice):
+        u"""⭐ LAYER 15 -- the one choice for a video with no subtitles inside it: skip it,
+        or download one by its name, NOT TIMED. Written through `hato config`, as every
+        setting is; ⚠ takes effect at the next run. ⭐ *Skip it* is written by taking the
+        key away (`config.NEWER_KEYS`): an older hato refuses the key, and skipping is
+        what it does without one.
+        ⭐ Once it has landed, what needs the person is asked again: this road's waits
+        are listed only while it is on (`problems.py`) -- as 14z's B-8 found for the
+        embedded choice."""
+        if choice == self.state.untimed:
+            return
+        self.state.untimed = choice
+        self._write_setting(u"--set", u"untimed=%s" % choice,
+                            then=lambda _finished, _events: self.refresh_problems())
         self.render()
 
     def take_other_format(self, rows):
@@ -7196,6 +7576,8 @@ def settings_from_disk(state=None):
         state.extract_embedded = cfg.extract_embedded    # ⭐ RUNBOOK 14c
         # ⭐ 14c -- whether the FILE carries the key, which an older hato refuses
         state.extract_key_in_file = cfg.origin(u"extract_embedded") == u"config.toml"
+        state.untimed = cfg.untimed                      # ⭐ LAYER 15
+        state.untimed_key_in_file = cfg.origin(u"untimed") == u"config.toml"
         state.updates.auto = cfg.auto_update          # ⭐ LAYER 11
         state.update_key_in_file = cfg.origin(u"auto_update") == u"config.toml"
         # ⭐ 9a -- whether the FILE carries either key, which is what an older
@@ -7379,6 +7761,7 @@ def main(argv=None):
     window.state.tray_reads_formats = window.tray_reads_formats()   # 9a #1
     window.state.tray_reads_updates = window.tray_reads_updates()   # LAYER 11
     window.state.tray_reads_extract = window.tray_reads_extract()   # 14c
+    window.state.tray_reads_untimed = window.tray_reads_untimed()   # LAYER 15
     window.state.waits = gui_run.load_waits()          # 4c -- the waits chosen before
     window.refresh_problems()
     window.refresh_blacklist()

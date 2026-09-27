@@ -34,14 +34,14 @@ import re
 import sys
 from datetime import datetime, timezone
 
-from hato import config, formats, paths, present, problems, report, state
+from hato import config, formats, paths, present, problems, report, state, untimed
 from hato.cache import Cache
 
 EXIT_OK = 0
 EXIT_FAILED = 1
 
 #: The groups of the plain list, in the order a person acts on them.
-PICK, FORMAT, WAIT, TROUBLE = u"pick", u"format", u"wait", u"trouble"
+PICK, FORMAT, WAIT, ROAD, TROUBLE = u"pick", u"format", u"wait", u"road", u"trouble"
 HEADINGS = (
     (PICK, u"needs a pick %s the timing did not hold for any file hato tried" % report.DASH),
     # ⭐ 9a -- ON jimaku, in a format the settings do not take. ⛔ Never under
@@ -49,6 +49,10 @@ HEADINGS = (
     (FORMAT, u"on jimaku, but only in a format your settings do not take %s "
              u"`hato config --set format_fallback=true` takes it" % report.DASH),
     (WAIT, u"not on jimaku yet"),
+    # ⭐ LAYER 15 -- 15z (C12): a video with no subtitle track, waiting for a file to place
+    # by its NAME. *"not on jimaku yet"* was false for it -- jimaku may hold the episode,
+    # from another provider. ⛔ Nothing here names the setting (fork 14).
+    (ROAD, u"no subtitle track %s waiting for a subtitle to place by its name" % report.DASH),
     (TROUBLE, u"had a problem"),
 )
 
@@ -100,7 +104,7 @@ def run(args, now=None):
 
     for note in notes:
         print(u"note  %s" % note)
-    for line in plain(rows, now):
+    for line in plain(rows, now, cfg):
         print(line)
     return EXIT_OK
 
@@ -124,13 +128,24 @@ def _moment(text):
 
 
 def next_due(rows, now):
-    u"""The soonest `retry_after` still in the future, as the row carries it. -> text or None"""
+    u"""The soonest `retry_after` still in the future, as the row carries it. -> text or None
+
+    ⚠ 15z (C3) -- never a STOPPED wait's: its next look falls past its week, and nothing
+    keeps it (`formats.untimed_row_stopped`)."""
     ahead = []
     for row in rows:
         moment = _moment(row.get(u"retry_after"))
-        if moment is not None and moment > now:
+        if moment is not None and moment > now and not _road_stopped(row, now):
             ahead.append((moment, row[u"retry_after"]))
     return min(ahead)[1] if ahead else None
+
+
+def _road_stopped(row, now):
+    wait = row.get(u"untimed_wait")
+    if not isinstance(wait, dict):
+        return False
+    return formats.untimed_row_stopped(row.get(u"reason"), _moment(wait.get(u"stops")),
+                                       _moment(row.get(u"retry_after")), now)
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +166,8 @@ def _group(row):
     if outcome == state.REFUSED:
         return PICK if row.get(u"tried_before") else TROUBLE
     if outcome == state.NOT_FOUND:
+        if row.get(u"untimed_wait"):
+            return ROAD                                  # ⭐ 15z (C12)
         return FORMAT if formats.only_as(row.get(u"reason")) else WAIT
     return TROUBLE
 
@@ -205,8 +222,33 @@ def when(row, now):
     return _span((moment - now).total_seconds())
 
 
-def plain(rows, now):
-    u"""-> [line]. The groups, each line the episode, its file and when."""
+def road_looks(row, now, cfg=None):
+    u"""⭐ LAYER 15 (fork 13) -- a wait on the untimed road, said with its END. -> text or
+    None for any other row. *"looks again in 14h · once a day until 3 Oct, then stops"*,
+    or *"stopped looking"* once the week is out -- or its next look falls past it.
+
+    ⭐ 15z (C4) -- `cfg`: the choice CHANGED since the wait began (or it waits for a format
+    the settings now take), and the next run looks, whatever the week says -- so it says
+    that (`formats.untimed_starts_over`, the rule the run obeys)."""
+    wait = row.get(u"untimed_wait")
+    if not isinstance(wait, dict):
+        return None
+    if cfg is not None and formats.untimed_starts_over(
+            wait.get(u"choice"), wait.get(u"waits_for"), cfg.untimed, cfg.prefer_format,
+            cfg.format_fallback):
+        return u"looks again on the next run"
+    stops = _moment(wait.get(u"stops"))
+    if stops is None:
+        return None                     # ⚠ unreadable: the plain *"looks again"* words
+    if _road_stopped(row, now):
+        return u"stopped looking -- nothing looks again on its own"
+    return u"looks again %s %s once a day until %s, then stops" % (
+        when(row, now), report.DOT, untimed.day(stops))
+
+
+def plain(rows, now, cfg=None):
+    u"""-> [line]. The groups, each line the episode, its file and when. `cfg`: the
+    settings a road wait is read against (`road_looks`)."""
     if not rows:
         return [u"Nothing needs you."]
     n = len(rows)
@@ -228,10 +270,14 @@ def plain(rows, now):
                 # ⭐ WHICH format, or the line cannot be acted on.
                 tried = u"only as %s %s " % (formats.kinds_words(formats.only_as(row.get(u"reason"))),
                                              report.DOT)
-            line = u"  %s   %s   %slooks again %s" % (
-                report.pad(name, width), row.get(u"name") or u"", tried, when(row, now))
-            if group == TROUBLE and _said(row.get(u"reason")):
+            looks = road_looks(row, now, cfg) or u"looks again %s" % when(row, now)
+            line = u"  %s   %s   %s%s" % (
+                report.pad(name, width), row.get(u"name") or u"", tried, looks)
+            reason = row.get(u"reason")
+            if row.get(u"untimed_wait"):
+                reason = untimed.base_of(reason)    # ⚠ its schedule is said once, above
+            if group == TROUBLE and _said(reason):
                 # ⭐ "had a problem" alone tells a person nothing they can act on
-                line += u" %s %s" % (report.DOT, _said(row.get(u"reason")))
+                line += u" %s %s" % (report.DOT, _said(reason))
             out.append(line)
     return out

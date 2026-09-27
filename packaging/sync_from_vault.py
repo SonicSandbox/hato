@@ -126,6 +126,8 @@ NOT_PUBLISHED = {
                         "an internal review register, same class as the ledgers",
     "ADVERSARY-2026-09-25.md":
                         "an internal review register, same class as the ledgers",
+    "ADVERSARY-2026-09-26.md":
+                        "an internal review register, same class as the ledgers",
     "REPORT-DRAFT-2026-09-23.md":
                         "a session's working draft of its report to the owner; vault-only",
 }
@@ -150,6 +152,8 @@ NOT_PUBLISHED_DIRS = {
     ".pytest_cache": "test runner scratch",
     ".git":          "this clone has its own history, by design",
     "hato.egg-info": "build metadata",
+    "release-kit":   "the release's own rehearsal scripts (stamp_rehearsal, e2e_update): they "
+                     "drive the vault's paths and the PUBLISHED releases, never a clone",
 }
 
 #: ⛔ Never copied. Vault-only.

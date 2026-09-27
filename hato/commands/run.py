@@ -147,6 +147,14 @@ def register(parser):
                         help="fetch even for a video that already carries a Japanese "
                              "track -- even when config.toml says to save it beside the "
                              "video. Default: such videos are skipped for free")
+    # ⭐ LAYER 15 (signed off 2026-09-26) -- a video with NO subtitle track, for ONE run:
+    # skipped (`off`), or a subtitle picked by its NAME, placed NOT TIMED. As --archives,
+    # the file's setting stands unless this names another. ⛔ Never a default of its own.
+    parser.add_argument("--untimed", choices=("off", "same_provider", "any_provider"),
+                        help="a video with no subtitle track: off (skip it), same_provider "
+                             "or any_provider -- a subtitle picked by its name, placed NOT "
+                             "TIMED as <video>.jpn.<ext>. Default: config.toml's `untimed`, "
+                             "which is off")
     parser.add_argument("--allow-ai", action="store_true",
                         help="allow machine-generated subtitles as candidates")
     parser.add_argument("--no-color", action="store_true",
@@ -576,6 +584,7 @@ def run(args):
             extract_embedded=False if args.even_if_embedded else None,
             allow_ai=True if args.allow_ai else None,
             recurse=False if args.no_recurse else None,
+            untimed=args.untimed,
             force=args.force, dry_run=args.dry_run,
             retry_now=args.retry_now,
             only=[os.path.abspath(os.path.expanduser(v)) for v in (args.only or ())])

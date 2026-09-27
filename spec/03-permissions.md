@@ -33,6 +33,7 @@ hato itself writes **nothing** into a media folder.
 | The same under `--out <dir>`, mirroring the source tree — **hato computes each video's mirrored directory** and passes it as tsubasa's `out_dir` | 🚨 **Modify a subtitle hato did not create in this run** |
 | Keep every original a synced file was made from in `subs_dir` — temp-plus-rename, **never deleted** | ⛔ Delete anything. **Trash only, via tsubasa** |
 | ⭐ **14c:** have tsubasa take a video's own Japanese text track out and WRITE it — `extract_subtitle(video, track, write=True, out_dir=…)` writes `<video-basename>.<lang>.<ext>` under **tsubasa's** whitelist: atomically, the track's own format, never over a file that is there. ⛔ hato never writes those bytes itself | |
+| ⭐ **LAYER 15 (built 2026-09-26):** only while the person chose it (`untimed`, OFF by default), have tsubasa PLACE a jimaku file beside a video with NO subtitle track, untouched and **NOT TIMED** — `place_subtitle(video, original, write=True, out_dir=…, lang_tag="jpn")` writes `<video-basename>.jpn.<ext>` under **tsubasa's** whitelist: atomically, byte for byte, never over a file that is there. The `.jpn.` is the mark (fork 5); the original is kept, as a timed one is. ⛔ hato never writes those bytes itself | |
 | | ⛔ **Write into a media folder itself.** The only write there is tsubasa's |
 | | 🚨 **Hand tsubasa an original with no language tag in its name.** Measured 2026-09-17: tsubasa then writes `<video>.ass`, `unpaired(lang="ja")` reads that as *no Japanese subtitle*, and every later run fetches again. Name it `<jimaku stem>.ja.<ext>` |
 | | ⛔ **Accept a `subs_dir` inside a scanned folder.** The originals would be discovered as candidates for the videos beside them, and a tsubasa run over that folder could supersede them. Config ERROR at startup |
@@ -159,7 +160,8 @@ for video in discovered_videos:
     if db.blacklisted(video):                    return SKIP("blacklisted by you")  # ⛔ --force does NOT override
     tracks = track_reader(video)                                # T4, tsubasa's public reader
     if has_text_track(tracks, lang):             return SKIP("embedded track present")
-    if not tracks:                               return SKIP("no subtitle track, can't sync yet")  # ⛔ never a refusal
+    if not tracks and untimed == "off":          return SKIP("no subtitle track, can't sync yet")  # ⛔ never a refusal
+    if not tracks:                               return untimed_road(video)  # ⭐ LAYER 15, opt-in -- below
     if db.negative(video) and not force:         return SKIP("no source, retry after D")
                                                  # ⚠ HARD **or** SOFT, unexpired. Checking only the hard one
                                                  # re-lists the entry's files every run for an episode jimaku
@@ -209,6 +211,33 @@ for video in discovered_videos:
 
 ⛔ **Note what is NOT in that loop:** no network call inside the candidate loop except the
 unmetered download, and no metered call at all once the caches are warm.
+
+⭐ **LAYER 15 — `untimed_road(video)`, BUILT 2026-09-26** (the design, its 14 forks and 26
+edge cases: `spec/RUNBOOK.md` §*LAYER 15*; the code: `pipeline._untimed_candidates`, `_place`,
+`_road_wait`, `untimed.py`):
+
+```
+untimed_road(video):                             # only for a video with NO usable track, and only
+                                                 # while `untimed` is same_provider or any_provider
+    if a wait on this road stopped (a WEEK from its first miss, or its next look falls past
+       that) and not retry_now:                  return SKIP("stopped looking -- ...")   # nothing looks again
+    identify · list · align                      # unchanged -- the calls a timed video costs
+    if the entry is only a LIKELY match:         return a wait    # ⭐ 15z (C1): nothing to check it by
+    cands = PROVEN fits only                     # ⭐ 15z (B1): range · overlap · literal · movie --
+          + files named exactly as the video     #    ⛔ never the alignment's guesses
+    cands = rank's FILTERS(tier(cands))          # ⭐ 15z (B4): the tier FIRST -- exact · same
+                                                 #    (same_provider stops here) · other
+    for c in cands[:candidate_cap]:
+        path = download_to_cache(c, tag=lang)    # "<stem>.ja.<ext>", as ever
+        if not reads_as_japanese(path, 20 lines): continue  # the ONE check -- ⛔ never recorded as refused
+        if tsubasa's name for it would not be counted by the present-check:
+                                                 # ⭐ 15z (B5): asked BEFORE the write
+            remember why; continue               # ...then a REFUSED wait, bounded: the fix is a rename
+        placed = tsubasa.place_subtitle(video, path, write=True, lang_tag="jpn")
+        if not written or not counted by the present-check:   return ERROR  # no wait recorded
+        keep_original(path);                     return CONFIDENT (untimed = tier)
+    return NOT_FOUND(soft, bounded to the week)  # ⛔ no words naming the setting (fork 14)
+```
 
 ⚠ **AMENDED 2026-09-16 — the port is `sync()`, not `align()`.** This loop read
 `align(video, path)`, and `tsubasa.align` is a different function: the low-level aligner

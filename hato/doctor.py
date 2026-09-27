@@ -52,6 +52,9 @@ from hato import __version__, credentials, paths
 API = "https://jimaku.cc/api"
 SITE = "https://jimaku.cc"
 CROWN_JEWEL = 11446        # Sousou no Frieren 2nd Season -- spec/08-research.md
+#: ⭐ LAYER 15 -- Seihantai na Kimi to Boku: a raw provider's own files beside four others
+#: (spec/RUNBOOK.md §LAYER 15, *Measured before scoping*).
+UNTIMED_ENTRY = 11407
 INVALID_ENTRY = 999999
 LIVE_ACTION_QUERY = "Kamen Rider Decade"
 MOVIE_QUERIES = ("Kimi no Na wa", "Koe no Katachi")
@@ -78,6 +81,7 @@ CAPTURE_STEMS = (
     "search__anime_false_retry",
     "search__movie",
     "entries_movie_flag",
+    "entries_11407_files",
     "entries_invalid_id_files",
     "download__invalid_id",
     "search__query_sousou_no_frieren",
@@ -629,6 +633,7 @@ def _tsubasa_lines(ro, video):
                "`embedded_subs`, tsubasa RUNBOOK 3f). hato's fetch loop "
                "(RUNBOOK 4b) is blocked on it.")
         _extractor_line(ro, public)
+        _placer_line(ro, public)
         return
     extra = []
     if video is not None:
@@ -649,6 +654,19 @@ def _tsubasa_lines(ro, video):
         extra.append("pass --video <file> to read one video through it")
     ro.add("track reader", OK, "tsubasa.%s" % reader, extra)
     _extractor_line(ro, public)
+    _placer_line(ro, public)
+
+
+def _placer_line(ro, public):
+    u"""⭐ LAYER 15 (15z, O2) -- a video with no subtitle track, given a subtitle by its
+    NAME, is placed through tsubasa's `place_subtitle` (0.1.10). Without it the road
+    places nothing and says why -- said here first, and the frozen smoke reads it."""
+    if "place_subtitle" in public:
+        ro.add("placer", OK, "tsubasa.place_subtitle")
+    else:
+        ro.add("placer", MISSING,
+               "this tsubasa cannot place a subtitle it cannot time (0.1.10 can) -- a "
+               "video with no subtitle track is skipped whatever the choice")
 
 
 def _extractor_line(ro, public):
@@ -783,6 +801,16 @@ def _traps(ro, capture, session, api_get, full_url, sleep, rng):
     else:
         capture.missing("entries_movie_flag", "no flags.movie entry in the results for %s"
                         % ", ".join(MOVIE_QUERIES))
+
+    # 3b. ⭐ LAYER 15 -- the untimed road's own list: a raw's provider (NanakoRaws) naming
+    # its files as its videos, letter for letter, beside four other providers.
+    _pause(sleep, rng)
+    resp, url = api_get("/entries/%d/files" % UNTIMED_ENTRY)
+    capture.body_and_meta("entries_%d_files" % UNTIMED_ENTRY, resp, url,
+                          "LAYER 15 (the untimed road): Seihantai na Kimi to Boku -- "
+                          "NanakoRaws' own captions named as its videos letter for letter "
+                          "(TBS/TV/BSN TV), SweetSub, Nekomoe kissaten&LoliHouse, 24 "
+                          "unbracketed WEB files, one SubsPlease. No episode= param.")
 
     # 4. an invalid entry id -- through the API, and through the unmetered route.
     _pause(sleep, rng)

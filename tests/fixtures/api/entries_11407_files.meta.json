@@ -1,0 +1,24 @@
+{
+ "body_kept": true,
+ "bytes": 29061,
+ "captured_at": "2026-09-26T23:02:31+00:00",
+ "captured_by": "hato/1.0.8 (doctor)",
+ "final_url": "https://jimaku.cc/api/entries/11407/files",
+ "method": "GET",
+ "note": "LAYER 15 (the untimed road): Seihantai na Kimi to Boku -- NanakoRaws' own captions named as its videos letter for letter (TBS/TV/BSN TV), SweetSub, Nekomoe kissaten&LoliHouse, 24 unbracketed WEB files, one SubsPlease. No episode= param.",
+ "provenance": "hato doctor --capture (spec/RUNBOOK.md 0b). Real response bytes; never hand-edited -- re-capture instead (spec/07-test-plan.md).",
+ "response_headers": {
+  "access-control-allow-credentials": "true",
+  "content-encoding": "br",
+  "content-type": "application/json",
+  "date": "Sat, 26 Sep 2026 23:02:31 GMT",
+  "transfer-encoding": "chunked",
+  "vary": "origin, accept-encoding",
+  "x-ratelimit-limit": "25",
+  "x-ratelimit-remaining": "24",
+  "x-ratelimit-reset": "1790463700"
+ },
+ "sha256": "6e4c56e4a859fd5a27358df1013ddf45184e24d00fa1e766d3260a5fa040fc96",
+ "status": 200,
+ "url": "https://jimaku.cc/api/entries/11407/files"
+}

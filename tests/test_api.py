@@ -285,6 +285,51 @@ def test_skip_embedded_given_alone_keeps_the_meaning_it_had_before_save(tmp_path
         assert settings.extract_embedded is want, (given, settings.extract_embedded)
 
 
+def test_15_scan_takes_the_untimed_choice_for_one_call_and_the_files_otherwise(
+        tmp_path, monkeypatch):
+    u"""⭐ LAYER 15 -- `scan(untimed=...)` chooses for one call, as `--untimed` does for
+    one run; not given, config.toml's choice stands -- and 🚨 with neither, it is OFF
+    (his first constraint: *"It should NOT be a default option"*)."""
+    cfg = tmp_path / "config.toml"
+    monkeypatch.setenv("HATO_CONFIG", str(cfg))
+    cfg.write_text(u"", encoding="utf-8")
+    assert api._settings([str(tmp_path)], {}).untimed == u"off"
+    cfg.write_text(u'untimed = "same_provider"\n', encoding="utf-8")
+    for given, want in ((dict(), u"same_provider"), (dict(untimed=u"any_provider"),
+                                                     u"any_provider"),
+                        (dict(untimed=u"off"), u"off")):
+        assert api._settings([str(tmp_path)], dict(given)).untimed == want, given
+
+
+def test_15z_a_choice_the_settings_refuse_is_a_config_problem(tmp_path, monkeypatch):
+    u"""⚠ 15z (C8) -- `scan(untimed="on")` raised a bare `ValueError`: `scan()` promises ONE
+    exception type for a run that cannot start."""
+    cfg = tmp_path / "config.toml"
+    monkeypatch.setenv("HATO_CONFIG", str(cfg))
+    cfg.write_text(u"", encoding="utf-8")
+    with pytest.raises(pipeline.ConfigProblem) as refused:
+        api._settings([str(tmp_path)], dict(untimed=u"on"))
+    assert u"untimed must be one of" in str(refused.value), refused.value
+
+
+def test_15_a_result_carries_the_tier_and_the_wait_the_engine_sent():
+    u"""⭐ `api.Result.untimed` and `.untimed_wait` -- added, never renamed -- are the
+    engine's own, and None on a row of the timed road."""
+    placed = pipeline.VideoResult(u"D:/x - 01.mkv", pipeline.CONFIDENT, u"",
+                                  output_path=u"D:/x - 01.jpn.ass",
+                                  untimed={u"tier": u"same", u"provider": u"X",
+                                           u"video_provider": u"X"})
+    wait = {u"choice": u"same_provider", u"since": u"2026-09-26T00:00:00+00:00",
+            u"stops": u"2026-10-03T00:00:00+00:00", u"waits_for": u"nothing from [X]"}
+    waiting = pipeline.VideoResult(u"D:/x - 02.mkv", pipeline.NOT_FOUND, u"nothing from [X]",
+                                   untimed_wait=wait)
+    timed = pipeline.VideoResult(u"D:/x - 03.mkv", pipeline.CONFIDENT, u"",
+                                 output_path=u"D:/x - 03.ja.ass")
+    assert api.Result(placed).untimed == placed.untimed
+    assert api.Result(waiting).untimed_wait == wait
+    assert api.Result(timed).untimed is None and api.Result(timed).untimed_wait is None
+
+
 def test_the_outcome_words_are_importable_so_nobody_compares_a_string_literal():
     u"""⚠ tsubasa's `certain` was a SUBSTRING of `uncertain` and that re-armed a
     real defect for every consumer that string-matched (`LEDGER.md` §Interface).

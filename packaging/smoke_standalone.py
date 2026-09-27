@@ -254,6 +254,14 @@ def _taken_out(cli, env, store):
     check(u"save: the frozen doctor names the extractor, and a tsubasa at the floor",
           extractor.get(u"state") == u"ok" and floor >= (0, 1, 9),
           u"extractor %s · tsubasa %s" % (extractor.get(u"state"), engine.get(u"text")))
+    # ⭐ LAYER 15 (15z, O2) -- and the PLACER: a video with no subtitle track is given one
+    # by its name through `tsubasa.place_subtitle` (0.1.10). ⛔ Every check of that road
+    # imports hato from SOURCE; a freeze over a tsubasa below 0.1.10 would pass them all
+    # and quietly place nothing.
+    placer = lines.get(u"placer") or {}
+    check(u"untimed: the frozen doctor names the placer, and a tsubasa at 0.1.10",
+          placer.get(u"state") == u"ok" and floor >= (0, 1, 10),
+          u"placer %s · tsubasa %s" % (placer.get(u"state"), engine.get(u"text")))
 
 
 def _log_blocks(path):
@@ -1128,8 +1136,9 @@ def _stop_all(install, swap):
 
 
 def _going_back(install, root, was, store, swap):
-    u"""⭐ 14z (C-1/C-2) -- the rehearsal's arm 3: *Save them beside the video* chosen by
-    the NEW version, then *Go back* through its own CLI -- the window closed, the TRAY
+    u"""⭐ 14z (C-1/C-2) -- the rehearsal's arm 3: a choice the kept version never heard of
+    (1.0.9: the untimed road; 1.0.8: *Save them beside the video*) chosen by the NEW
+    version, then *Go back* through its own CLI -- the window closed, the TRAY
     LEFT RUNNING, the harder road: the kept tray must start on the file it reads. The
     kept version is the RELEASED one, so it is its own parser that must accept the file.
     ⛔ Everything stopped by its program file, inside the rehearsal's folder."""
@@ -1142,12 +1151,27 @@ def _going_back(install, root, was, store, swap):
         waited += 0.5
     cli = os.path.join(install, CLI_NAME)
     here = dict(os.environ)
-    code, out, err = run([cli, u"config", u"--set", u"skip_embedded=true",
-                          u"--set", u"extract_embedded=true", u"--json"], here)
+    # ⭐ THE KEY THE KEPT VERSION NEVER HEARD OF -- asked of the table Go back itself reads
+    # (`config.unknown_to`). ⚠ It was always `extract_embedded`: right against 1.0.7, and
+    # against the released 1.0.8 -- which knows it -- Go back changed nothing, and this arm
+    # failed the 1.0.9 smoke (2026-09-26). LAYER 15's `untimed` is 1.0.8's unknown key.
+    from hato import config as _config
+    if u"untimed" in _config.unknown_to(was):
+        choose = [u"--set", u"untimed=same_provider"]
+        took, becomes = (lambda cfg: cfg.untimed == u"same_provider"), u"becomes “Skip it”"
+    else:
+        choose = [u"--set", u"skip_embedded=true", u"--set", u"extract_embedded=true"]
+        took, becomes = (lambda cfg: cfg.extract_embedded is True), u"Leave them there"
+    code, out, err = run([cli, u"config"] + choose + [u"--json"], here)
     with open(os.path.join(store, u"config.toml"), encoding="utf-8") as handle:
         saved = handle.read()
+    # ⚠ READ, not matched as text: the writer's quoting is its own (`'same_provider'`)
+    try:
+        written = took(_config.parse(saved))
+    except _config.ConfigError:
+        written = False
     check(u"rehearsal: the new version saves a choice the kept one never heard of",
-          code == 0 and u"extract_embedded = true" in saved,
+          code == 0 and written,
           u"exit %d%s" % (code, u"" if code == 0 else u" :: " + (err or out)[-160:]))
     result = os.path.join(str(root), u"result.json")
     since = time.time()
@@ -1161,7 +1185,7 @@ def _going_back(install, root, was, store, swap):
         if said.get(u"type") == u"applying":
             applying = said
     check(u"rehearsal: going back says what it changes",
-          code == 0 and any(u"Leave them there" in c for c in applying.get(u"changed") or ()),
+          code == 0 and any(becomes in c for c in applying.get(u"changed") or ()),
           u"exit %d · %s" % (code, applying.get(u"changed") or (err or out)[-200:]))
     done, waited = {}, 0.0
     while waited < 240.0:

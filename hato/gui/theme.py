@@ -342,10 +342,18 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: t
 #row { background: transparent; border-left: 2px solid transparent; }
 #row:hover                { background: %(HOVER)s; border-left: 2px solid %(LINE_HI)s; }
 #row[expanded="true"]     { background: %(HOVER)s; border-left: 2px solid %(ACCENT)s; }
+/* ⭐ LAYER 15 (fork 3, ruled "Row mark amber A+B") -- a subtitle placed NOT TIMED: the
+ * row's own 2px edge in amber, on hover too. ⚠ OPEN, it turns coral as every row does
+ * (the shipped idiom) and the amber mark carries the meaning. The ORDER is the rule:
+ * [untimed]:hover and [untimed][expanded] weigh the same, so the open one comes last. */
+#row[untimed="true"]                  { border-left: 2px solid %(LOOK)s; }
+#row[untimed="true"]:hover            { background: %(HOVER)s; border-left: 2px solid %(LOOK)s; }
+#row[untimed="true"][expanded="true"] { background: %(HOVER)s; border-left: 2px solid %(ACCENT)s; }
 #ep { font-size: 13px; color: %(INK)s; }
 #pc { font-size: 13px; font-weight: 650; color: %(OK)s; }
 #pc[tier="look"] { color: %(LOOK)s; }
 #pc[tier="none"] { color: %(INK_FAINT)s; }
+#pc[tier="untimed"] { color: %(LOOK)s; }
 #nm { font-size: 12px; color: %(INK_DIM)s; }
 /* [!] ON HOVER ONLY. Eight static markers down a calm list is eight things to
  * look at for no information. The colour carries the state; the OPACITY is
@@ -356,6 +364,8 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: t
 #detkey { font-size: 11px; color: %(INK_FAINT)s; }
 #detval { font-size: 11px; color: %(INK_DIM)s; }
 #detval[lead="true"] { color: %(INK)s; font-weight: 600; }
+#detval[untimed="true"] { color: %(LOOK)s; font-weight: 600; }
+#showmeta[untimed="true"] { color: %(LOOK)s; }
 
 /* ---- one quiet line, not nineteen pills -------------------------------- */
 #had  { font-size: 11px; color: %(PRESENT)s; }
@@ -519,6 +529,12 @@ QPushButton:disabled { background: %(RAISED)s; color: %(INK_FAINT)s;
  * that clears the floor. Same rule the row treatment records. */
 #keybad { font-size: 12px; color: %(REFUSED_INK)s; background: transparent; }
 #hint  { font-size: 11px; color: %(INK_FAINT)s; }
+/* ⭐ LAYER 15 -- *"may be off"*: amber, the worth-a-look hue, never the failure one */
+#hint[warn="true"] { color: %(LOOK)s; }
+/* ⭐ LAYER 15, fork 12 -- the caution under the untimed choice: a mild red ⚠ in the
+ * text-weight crimson (4.79 on the card) and its reason in the secondary ink */
+#cautionic  { font-size: 12px; color: %(REFUSED_INK)s; background: transparent; }
+#cautionwhy { font-size: 11px; color: %(INK_DIM)s; background: transparent; }
 #code  { font-size: 12px; color: %(INK_DIM)s; }
 #dotok { font-size: 12px; color: %(OK)s; }
 #stale {

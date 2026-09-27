@@ -201,9 +201,9 @@ LAYER 14 — SUBTITLES ALREADY INSIDE THE VIDEO. Ruled 2026-09-25 (*"I take all 
   ├── 14a ✅ Settings: leave them there, or download from jimaku anyway (skip_embedded, at last)
   ├── 1.0.7 ✅ RELEASED 2026-09-25 -- tag b85cffe; a published 1.0.6 took it by itself
   ├── 14b ✅ RELEASED -- tsubasa 0.1.9 (2026-09-25): extract_subtitle, verified from PyPI
-  ├── 14c ✅ BUILT -- the third choice: save them beside the video, as a file
+  ├── 14c ✅ the third choice: save them beside the video, as a file (tsubasa writes it)
   ├── 14z ✅ the adversarial pass -- 30 findings, every one ended (ADVERSARY-2026-09-25 §14z)
-  └── 1.0.8 ⏳ released with 14c
+  └── 1.0.8 ✅ RELEASED 2026-09-26 -- tag a1f0128; a published 1.0.7 took it by itself
 
 LAYER 6 — release
 ```
@@ -2005,13 +2005,321 @@ it was ruled on: D12's own crash with a prototype net — the window stays up an
 | **14a** | `ui` | **Settings → Subtitle format: *"When the video already has Japanese subtitles inside it"* — ○ Leave them there · ○ Download from jimaku anyway.** The ruled `skip_embedded`, in the window at last; the row's tooltip points at it instead of at `config.toml`. ⚠ Every hato since 1.0.0 reads the key, so no older-tray note. ⛔ Touches the card, the window's state and the tooltip; not the engine | the choice reads the setting and writes it through `hato config`; the file round-trips into the window; the tooltip names Settings · the card LOOKED · ⭐ **its adversarial pass** (`ADVERSARY-2026-09-25.md` §*Layer 14*, register Z14 — ⚠ PARTIAL: an interrupt stopped the adversary, its probes were triaged and every lead reproduced): the two radios one group — clicking the chosen one emptied both circles (Z14-1) · the older tray's note back under the rows it speaks for (Z14-2) · 🚨 **every Settings control keeps the keyboard across a rebuild — Space, Tab, Space had turned the daily run OFF** (Z14-3) · a video switched back to *Leave them there* stops asking for a pick (Z14-4, DATA-F16) · a pick is copied to surasura (Z14-5) · both config readouts show every setting (Z14-6) · M14-09…21, 21 of 21 caught |
 | **1.0.7** | `delivery` | ✅ **RELEASED 2026-09-25** — with 14a and its pass, authorized with the leans (*"I take all your leans. Go"*). Step 6's sequence, the stamp rehearsal first | Step 6 — tag `b85cffe`, every gate green |
 | **14b** | `data` (tsubasa) | ✅ **RELEASED — tsubasa 0.1.9, 2026-09-25, verified from its published bytes (Sonic kept the name `extract_subtitle` and gave the go) — tsubasa takes a text track out of an MKV, in its own format** — `.ass`/`.ssa` with their header and styles, `.srt`; the track's compression undone; ⛔ never converted; ⛔ a WebVTT track REFUSED, by name (its cue settings live in BlockAdditions — tsubasa's 3h). Checked against ffmpeg's own `-c:s copy` of the same real files. tsubasa's runbook, and its release FIRST (hato's floor rises) | tsubasa's |
-| **14c** | `data` · `ui` | ✅ **BUILT 2026-09-25 — the third choice: *"Save them beside the video, as a file"*** — the track taken out and **written by tsubasa** (`extract_subtitle(write=True)`, Whitelist 1) as `<video>.ja.<ext>` in the folder the present-check reads, its own format, never over a file that is there; copied to surasura; nothing in the state DB, zero requests. The row *"taken from the video"* (no %, the track on hover; the panel names it). A video it cannot be taken out of — not MKV, a FORCED track only (saved as `.ja.forced.` it would never count as present, and be taken out again every run), a track tsubasa refuses, a tsubasa before 0.1.9 — is downloaded for, and the row says why (`not_taken`: Mode A, `--json`, hover, the panel, a pick). A write that fails: ERROR, no negative. Several whole tracks: the preferred format, the file's default, its order. `extract_embedded` (1.0.8's key: `NEWER_THAN_1_0_7`, tray token `extract`) — both keys in ONE `hato config`; `formats.embedded_choice` the one reader; `--even-if-embedded` downloads whatever the file says. Floor `tsubasa-sync>=0.1.9` | the pipeline's 14c section (stub seam + the REAL tsubasa on a real MKV: every cue, `.srt` stays `.srt`, the next run present) · the CLI road end to end (`test_endtoend`) · the window's 14c section · M14-22…68, **every one caught** (M14-50 SURVIVED the first gate: the three-choice check compared the card with the window's own reader — re-aimed at the choice clicked, then caught) · M14-01…08/15/16/20/63 re-aimed · LOOKED: the card (picture B, exactly), the older tray's note under the choice, the row and its panel — ⚠ a long reason ran off the window's edge: the *downloaded* line wraps now (M14-67/68) |
-| **14z** | — | ✅ **RUN 2026-09-25/26 — the adversarial pass over ALL of Layer 14** (14a's fixes, tsubasa's write, 14c, the seams): three adversaries by surface, over a snapshot 0 bytes from the vault, the owner's six candidates given to the surface that owned each. **30 findings, every one ended: 24 fixed, 4 deferred, 2 dropped** — the worst: *Go back* to 1.0.7 after *Save* never held (the published 1.0.7 REFUSED the new key), a folder that cannot be written HUNG the run for days, a video still downloading got jimaku's file for ever, the keyboard sat on an unchosen radio, a dry run walked every file. `ADVERSARY-2026-09-25.md` §*14z* | the register · 34 new checks · M14-69…119 · 13 older mutants re-aimed · the anchor preflight 0 problems · the full runner **2,580 GREEN** · LOOKED (the Go back card, both strips) · the smoke's 5d and the rehearsal's arm 3 (at the release) |
-| **1.0.8** | `delivery` | ⏳ Released with 14c | Step 6 |
+| **14c** | `data` · `ui` | ✅ **BUILT 2026-09-25, RELEASED in 1.0.8 — the third choice: *"Save them beside the video, as a file"*** — the track taken out and **written by tsubasa** (`extract_subtitle(write=True)`, Whitelist 1) as `<video>.ja.<ext>` in the folder the present-check reads, its own format, never over a file that is there; copied to surasura; nothing in the state DB, zero requests. The row *"taken from the video"* (no %, the track on hover; the panel names it). A video it cannot be taken out of — not MKV, a FORCED track only (saved as `.ja.forced.` it would never count as present, and be taken out again every run), a track tsubasa refuses, a tsubasa before 0.1.9 — is downloaded for, and the row says why (`not_taken`: Mode A, `--json`, hover, the panel, a pick). A write that fails: ERROR, no negative. Several whole tracks: the preferred format, the file's default, its order. `extract_embedded` (1.0.8's key: `NEWER_THAN_1_0_7`, tray token `extract`) — both keys in ONE `hato config`; `formats.embedded_choice` the one reader; `--even-if-embedded` downloads whatever the file says. Floor `tsubasa-sync>=0.1.9` | the pipeline's 14c section (stub seam + the REAL tsubasa on a real MKV: every cue, `.srt` stays `.srt`, the next run present) · the CLI road end to end (`test_endtoend`) · the window's 14c section · M14-22…68, **every one caught** (M14-50 SURVIVED the first gate: the three-choice check compared the card with the window's own reader — re-aimed at the choice clicked, then caught) · M14-01…08/15/16/20/63 re-aimed · LOOKED: the card (picture B, exactly), the older tray's note under the choice, the row and its panel — ⚠ a long reason ran off the window's edge: the *downloaded* line wraps now (M14-67/68) |
+| **14z** | — | ✅ **RUN 2026-09-25/26 — the adversarial pass over ALL of Layer 14** (14a's fixes, tsubasa's write, 14c, the seams): three adversaries by surface, over a snapshot 0 bytes from the vault, the owner's six candidates given to the surface that owned each. **30 findings, every one ended: 24 fixed, 4 deferred, 2 dropped** — the worst: *Go back* to 1.0.7 after *Save* never held (the published 1.0.7 REFUSED the new key), a folder that cannot be written HUNG the run for days, a video still downloading got jimaku's file for ever, the keyboard sat on an unchosen radio, a dry run walked every file. `ADVERSARY-2026-09-25.md` §*14z* | the register · 34 new checks · M14-69…119 · 13 older mutants re-aimed · the anchor preflight 0 problems · the full runner **2,580 GREEN** · LOOKED (the Go back card, both strips) · the smoke's 5d and the rehearsal's arm 3, both held at the release (smoke 54/54) |
+| **1.0.8** | `delivery` | ✅ **RELEASED 2026-09-26** — with 14c and 14z, authorized with the leans (*"I take all your leans. Go"*). Step 6's sequence, the stamp rehearsal first | Step 6 — tag `a1f0128`, every gate green (`tests` on the SECOND push) |
 
 ---
 
-## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.7`, 2026-09-25 (`v1.0.6` the same day, `v1.0.5` and `v1.0.4` 2026-09-24, `v1.0.3` and `v1.0.2` 2026-09-23, `v1.0.1` 2026-09-19). ⛔ NO PyPI, RULED
+## ⭐ LAYER 15 — SUBTITLES NOTHING COULD TIME. Asked 2026-09-26 · ✅ SIGNED OFF, BUILT, ATTACKED AND SHIPPED THE SAME DAY
+
+> **Sonic, 2026-09-26:** *"a setting of 2 options. Both of which involve working if there is no
+> exsiting sub track (and works before the audio related check is in effect) Specifically for
+> people who want subtitles and are willing to risk them not being timed properly. first is 1
+> toggle, off by default, that if checked will search for a match based on naming and only do it
+> if it's the same provider and episode … In these cases, even if there is no inherent sub it will
+> include it. It will NOT be able to time it, so there needs to be a subtle indicator (yellow
+> indent? or something simple that fits, please brainstorm) that shows that. Up to you whether it
+> will include a % confidence but it wouldn't be based on timing unless there is something there.
+> for testing, would need to assume there is nothing there. The second, is the 'No match but I
+> still want one that fits the episode number' even if it won't time it. If there is no way for us
+> to verify this without the sound right now that is fine, but would need to let them know that it
+> isn't timed and may have errors. Potentially even naming the subs as that way as well?"*
+
+> ⭐ **RULED BY SONIC, 2026-09-26:** *"From the mock i like Row mark amber A+B, for setting 1-one
+> choice of three"* · fork 1: *"yes, and worth adding a mild red caution icon there if toggled on
+> with a short reason for the warning. They can turn it on if they want, but it will show that
+> warning in the settings"* · the marker: *"I would like a way to mark that it wasn't time[d], just
+> in case. This way hato knows what has been downloaded but not timed... Maybe in the name scheme
+> or? what do you suggest? Not essential if unrealistic but nice to have"* · 🚨 **and three
+> constraints:** *"It should NOT be a default option and it should NOT be recommended and it should
+> NOT run over and over and over again forever if there will be no file."*
+>
+> ⭐ **What those changed, below:** fork 3 is A+B · fork 5 is now the `.jpn` marker (measured —
+> it loads everywhere tried) · fork 9 lost its Needs-you pick (it recommended the road) · every
+> hint pointing at the setting is gone · a wait on this road looks once a day for a WEEK, then stops
+> (fork 13) · the Settings caution (fork 12). Forks 4, 6, 7, 8, 10, 11 were left unanswered and take
+> their leans, as the report said they would.
+>
+> ✅ **SIGNED OFF BY SONIC, 2026-09-26:** *"sign off."* Every row not ruled in his words takes its ⭐
+> lean — among them fork 5 (the `.jpn` marker), fork 9 (no Needs-you pick), fork 12 (the caution's
+> words as in `07-7…`/`08-8…`, the reason SHOWN), fork 13 (a week, then stop) and fork 14.
+
+> ⭐ **BUILT 2026-09-26 (`/dev-build`, one session): 15a–15z, every step.** tsubasa's
+> `place_subtitle` + `lang_tag` + the A-1/C3 writer fixes · the engine · the CLI, the API and
+> `hato problems` · the window and Needs you, LOOKED beside the mock · ⭐ **15f on real media:**
+> `same_provider` 4 of 4 placed at **+0.00 s, 100%**; another provider **+2.53 s** · ⭐ **15z, the
+> ONE pass** (`ADVERSARY-2026-09-26.md`): four adversaries, **50 findings — 45 fixed · 1 dropped ·
+> 4 deferred**; the blockers: GUESSED episode numbers placed as *"same provider"* (only numbers
+> proven across a release now, or a file named exactly as the video), the window never saying
+> *not timed* from the second run, *"looks once a day"* with nothing running hato, a new show's one
+> look then *stopped*. Edges 27–30 below are the pass's · the full runner **34 suites / 2,698
+> checks GREEN** · M15 **133 mutants, every one caught** (the gate's one survivor, M15-110 — a
+> fuzz that stopped short of the edge — fixed) · 17 older mutants re-aimed · tsubasa's 3i probe
+> **52 of 52** · ✅ **tsubasa 0.1.10 released FIRST** (tag `v0.1.10` = `eb08e62`, CI 16/16), and
+> hato's floor rose to `>=0.1.10` · ⏳ 1.0.9.
+
+**In one paragraph.** Today a video with no subtitle track inside it is skipped — *"can't sync
+yet"* — because tsubasa has nothing to time a download against until its audio path exists.
+Layer 15 adds ONE opt-in, OFF-by-default road for exactly those videos: hato picks a subtitle by
+its NAME — ⭐ one the video's own provider made for the same episode, or, if asked, the best one
+for the episode from any provider — has tsubasa place it beside the video **untouched and
+untimed**, and says *not timed* everywhere a person meets it. ⛔ A video with any usable track
+keeps today's timed road, unchanged.
+
+**The pictures:** `gui-mock/mock-untimed.html` (open it and click it — the ruled design is its
+default; the other mechanisms stay a toggle away) · `gui-mock/shots-untimed/` (11 states, as ruled,
+1100 and 860 wide) · `gui-mock/routes-untimed.json`.
+
+- **Launch:** the setting, OFF by default, with its caution · the same-provider road · the
+  any-provider road · tsubasa's `place_subtitle` · the `.jpn` mark, the record, and the mark on
+  later runs · waits bounded to a week · the window, the CLI, the API · Go back · the real-media
+  acceptance (15f)
+- **Evolution, not now:** fork 10 (a better file replacing a placed one) · fork 11 (re-time placed
+  files once audio timing exists) · *same provider* for names with no brackets (a WEB distributor,
+  `WEBRip.Netflix`) · a notice shown inside the player
+- **Who uses it:** anyone running hato — Sonic and the public release · **contacts a person:** no ·
+  **destructive:** no — one file written beside a video, nothing deleted · **the stack:** unchanged
+  (ratified 2026-09-07/17)
+- **Judged on:** the window at 1100 × 660 on Windows (Sonic's DPI 240 — the shooter sizes in device
+  pixels) · **not verifiable here:** players other than mpv 0.33 (fork 5), macOS and Linux (CI's
+  matrix)
+
+### ✍ Rule these
+
+| # | Fork | ⭐ Lean | Why — the evidence | Picture | ✍ Sonic |
+| --- | --- | --- | --- | --- | --- |
+| **1** | 🚨 **The pack's Rule 1** (`00-INDEX.md`): hato never writes a file it is merely confident about | ⭐ **Amend it, in writing:** *"— except on the Layer 15 road, which the person turns on, and whose every file hato calls NOT TIMED wherever it appears."* | This road IS that file, by request. An exception written down, not drifted into | — | ✅ **RULED:** *"yes"* — with the caution in Settings (fork 12) |
+| **2** | The setting's shape | ✅ **1 · one choice of three**, under the choice above it: *Skip it* (the default — today) · *Download one from the same provider* · *Download one that fits the episode number* (his words) | The shape of the embedded choice right above it (Layer 14: one choice, picture B, ruled). Two boxes carry a state that means nothing — the second on, the first off | `06-6…` (the default) · `07-7…` · `08-8…` | ✅ **RULED:** *"for setting 1-one choice of three"* |
+| **3** | The row mark for *not timed* | ✅ **A + B — the row's amber left edge AND an amber ≈ where the % goes** | The % column IS the timing column; ≈ answers it with *not measured*. The edge is the row's own 2px edge, amber on hover too; ⚠ while a row is OPEN it turns coral (the shipped idiom, `#row[expanded]`) and the ≈ carries the meaning. Amber already means *written, worth a look* | `01-1…` · hovered `02-2…` · opened `03-3…` | ✅ **RULED:** *"Row mark amber A+B"* |
+| **4** | A % confidence | ⭐ **No number — two named tiers.** Same provider: the mark alone. Another provider: the mark + *"· another provider — may be off"* | A name-match % would stand where the TIMING % stands and read as a measurement. The tiers themselves are measured: same provider **8 of 8** on time; another provider **0 of 14** (below) | `01…`, `02…` | *"Up to you whether it will include a % confidence"* |
+| **5** | 🔁 **Mark it as not timed, so hato knows** — *"maybe in the name scheme"* (revised after his question) | ⭐ **Yes — in the language code: `<video>.jpn.<ext>` for a file nobody timed; `<video>.ja.<ext>` stays the one tsubasa timed.** Both are Japanese to every player and to tsubasa; only hato reads the difference — and only on a file that is byte for byte one of hato's OWN kept originals, so a person's own `.jpn.` file is never marked | **Measured:** `.jpn.ass` loads AND is selected in Sonic's mpv under his config and under mpv's defaults; VLC autodetects it; hato counts it present. Every name carrying a WORD (`.ja.untimed.`, `.untimed.ja.`, `.ja-untimed.`, `.ja[untimed].`) stopped loading under mpv's defaults, and 3 of 4 made hato download again every run. ⭐ The mark survives *Clear hato's memory* (the name and the kept original are both on disk), and a later timed `.ja.` file replaces it in tsubasa's one slot (to the trash — recoverable). The alternative: the plain `.ja.` and hato's record alone — lost on a clear | — | *"I would like a way to mark that it wasn't time[d], just in case … Maybe in the name scheme or? what do you suggest?"* |
+| **6** | Who writes the file (architecture) | ⭐ **tsubasa gains `place_subtitle()`**, released first as 0.1.10 together with its two pending writer fixes | *How:* the kept original's bytes, never converted, named `<video>.<lang>.<ext>` by tsubasa's rule (`sidecar.output_name`), atomic, never over a file — the writer `extract_subtitle(write=True)` already uses. *Costs:* a tsubasa release before hato's; nothing per run. *Can never:* time anything. **Alternative:** hato copies it itself — no tsubasa release, but a second writer in the media folder (Whitelist 1, ruled 2026-09-17) and a second atomic writer to keep | — | |
+| **7** | What *same provider* means | ⭐ The bracketed group at the start of both names, ignoring case and punctuation (`NanakoRaws` = `Nanako-Raws`) · ⛔ not when both names state different sources (BD · TV · WEB) · a file named exactly as the video goes first | jimaku's `[NanakoRaws] … - 01 (TBS 1080p HEVC AAC)` IS the video's own name. NanakoRaws' own names say `TBS`, `TV` or `BSN TV` for one broadcast — a broadcaster is TV, not another source; and episode 09's video said `AVC` where the file says `HEVC` — an encode, not a source | — | *"only do it if it's the same provider and episode"* |
+| **8** | surasura | ⭐ **Copy them**, as every file hato writes; the row says *not timed* | surasura receives every subtitle hato writes (Layer 14) | — | |
+| **9** | 🔁 A same-provider miss (revised by his constraint) | ⭐ **It waits, says so and until when, and stops after a week (fork 13); *Look again now* stays one click away.** ⛔ **No button offering the other providers' files** | 🚨 *"it should NOT be recommended"*: a button on a waiting row offering another provider's file IS a recommendation of the riskier choice — so it went. The frozen UX rule still holds: the row says it waits, until when, and the manual *Look again now* is one click. The way to another provider's file is the Settings choice, with its caution | `04-4…` | |
+| **10** | Another provider's file was placed; the provider's own appears later | ⭐ **Evolution** — the record keeps each file's tier, so it can be done later | Not asked for, and it costs a daily list per show to watch | — | |
+| **11** | Once tsubasa can time from audio | ⭐ **Evolution** — re-time every file hato placed untimed, from its kept original | The `.jpn` mark and the kept originals make it possible (fork 5) — a re-timed `.ja.` file then replaces the `.jpn.` one in tsubasa's one slot | — | *"works before the audio related check is in effect"* |
+| **12** | 🔴 **The caution in Settings** (his addition to fork 1) | ⭐ **A mild red ⚠ and ONE short reason, under the choice, shown whenever it is not *Skip it*** — *same provider:* *"Not timed. hato can't check these against the video, so they may be early or late, and may have errors."* · *fits the episode:* *"Not timed. hato can't check these against the video. One from another provider is often a second or more off, and may have errors."* The red is the window's own `REFUSED_INK` (#ef4d6d): **4.79 on the Settings card** (AA 4.5 — color-kit's audit, beside a control that failed at 2.77). ⛔ No new colour. The alternative: the icon alone, its reason on hover | He asked for it SHOWN — *"it will show that warning in the settings"* — so the lean is his | `07-7…` · `08-8…` · alt `09-9…` | *"a mild red caution icon there if toggled on with a short reason for the warning"* |
+| **13** | 🚨 **Never looking for ever** (his constraint) | ⭐ **A wait on this road looks once a day for a WEEK from its first miss, then STOPS.** The row: *"looks once a day until 3 Oct, then stops"*, then *"stopped looking — nothing from [NanakoRaws] for this episode on jimaku"*. It starts over only when the person asks: *Look again now* (ONE look), or a change of the choice. The same bound for this road's three waits — nothing from the provider · nothing for the episode · nothing that reads as Japanese | *"it should NOT run over and over and over again forever if there will be no file."* A raw's own captions reach jimaku within days of airing or not at all. A week is ≤ 7 `files` calls per show, then 0. ⚠ The TIMED road's daily retry is unchanged (ruled 2026-09-17) | `04-4…` | *"it should NOT run over and over and over again forever"* |
+| **14** | 🚨 **Nothing recommends it** (his constraint) | ⭐ **The only way in is the Settings choice itself.** ⛔ No tip, hint or button anywhere else points at it: the *can't sync yet* tip stays exactly as today; a video with no provider in its name says only that; Needs you offers nothing (fork 9); no *(recommended)*; *Skip it* is the default | *"It should NOT be a default option and it should NOT be recommended"* | `05-5…` · `06-6…` | *"It should NOT be a default option and it should NOT be recommended"* |
+
+**Value leans, taken unless changed:** the key `untimed = "off" | "same_provider" | "any_provider"` ·
+the words in the mock (*"When the video has no subtitles inside it"* · *"Skip it · hato can't time a
+download yet"* · *"Download one from the same provider · not timed"* · *"Download one that fits the
+episode number · not timed, may be off"* — his words) · Mode A `✓ 01  ≈ not timed · same provider
+→ ….jpn.ass` · the summary *"N fetched, not timed"*.
+
+### Measured before scoping — 2026-09-26
+
+The probes are in `%TEMP%\hato-15-spec\` (disposable; `p5_premise.py`, `p5b_offsets.py`,
+`p2_shifts.py`, `p6_mpv.py`). ⭐ **The numbers are here, so a cleaned `%TEMP%` loses nothing.**
+
+| Question | Answer | How |
+| --- | --- | --- |
+| Is Sonic's example really *no track*? | ⚠ **No.** Every NanakoRaws video in `Downloads\[NanakoRaws] Seihantai na Kimi to Boku 01-12 (TV 1080p AAC)` carries NanakoRaws' own TBS captions (an ASS and an SRT track), and hato timed SweetSub's files against them on 2026-09-19. The setting never applies to that folder — ⭐ *"assume there is nothing there"* means testing on COPIES with the tracks removed (15f) | ffprobe |
+| Does jimaku have same-provider files? | ✅ **24** — `[NanakoRaws] Seihantai na Kimi to Boku - NN (TBS\|TV 1080p HEVC AAC).ass/.srt`, 01–12, named as the videos letter for letter (11 of 12). Entry 11407's 87 files: NanakoRaws 24 · SweetSub 24 · Nekomoe kissaten&LoliHouse 14 · Netflix 12 · Amazon 12 · SubsPlease 1 | `hato files 11407 --json` — 1 metered call |
+| Same provider → on time? | ✅ **8 of 8** (episodes 01/04/05/07, `.ass` and `.srt`): **+0.00 s, 100% match, `locked`**, against the video's own caption track | `tsubasa.sync_to_reference` |
+| Another provider → on time? | ⚠ **0 of 14** on the same episodes: **0.28 to 2.67 s off, median 1.4 s** (SweetSub −0.32…+2.67 · Netflix −1.31…+1.61 · Amazon −0.82…+2.16 · SubsPlease +2.53 · Nekomoe −0.36). ⚠ **And 0 of 25 across Sonic's library** — every file hato wrote, its kept original against the file written: **median 0.8 s, 8 over 1 s** (Tetsunabe −10 s, One Piece +9.6 s, shincaps −42.9 s), one cut mid-episode. ⚠ Those 25 PASSED timing — the refused ones are not in the sample | a cue-by-cue diff over `last-run.json`'s rows |
+| A marker in the name? | Fork 5. mpv 0.33 (Sonic's): his config (`sub-auto=fuzzy`) loads every name; mpv's defaults (`exact`, `--slang=ja`) load only a language code (`.ja.`, ⭐ **`.jpn.`**, `.jp.` — each loaded AND selected) or nothing (`<video>.ass`) — ⛔ never a word (`.untimed.`), not even the known flag `.ja.forced.` · ⭐ **VLC (Sonic's, its own settings) autodetects `.ja.` and `.jpn.`**; the word-names hung VLC's back-to-back headless runs and were NOT measured there — not needed, since the lean uses no word · hato counts `.ja.`, `.jpn.`, `.jp.` present | a 4-second MKV with no track, one name per folder |
+| Would it fire on Sonic's library today? | **0 videos** — his last run: 65 present, 1 waiting, none *can't sync yet*. ⚠ The 2026-09-17 library had **37.5% of 120** with no track (`01-scope.md`): it serves raws, and other people | `last-run.json` |
+
+### The design — for the builder
+
+**The road.** `03-permissions.md`'s read rule, changed in ONE place:
+
+```
+the container's tracks   ok=False          -> ERROR (unchanged)
+                         a ja TEXT track   -> Layer 14's choice (unchanged)
+                         no track, or none usable:
+                           untimed = off               -> SKIP, can't sync yet (unchanged; never a refusal)
+                           same_provider|any_provider  -> ⭐ the UNTIMED road, below
+a negative?              SKIP with its date -- ⭐ a wait on THIS road: once a day for a week, then STOPPED (fork 13)
+the folder takes a file? (unchanged, before anything is fetched)
+a kept original, no file? ⭐ an UNTIMED row -> PLACE it again, zero network · a timed row -> re-sync (unchanged)
+identify · list · align  unchanged -- the same metered calls a timed video costs
+choose ONE               ⭐ *Choosing*, below. ⛔ No timing loop: nothing can referee it
+download -> it must READ AS JAPANESE (9b) -> tsubasa places it as `<video>.jpn.<ext>` -> the present-check must count it -> keep the original
+record                   CONFIDENT · `untimed` = its tier · the placed file's size and mtime
+```
+
+**Choosing.** The alignment's candidates for the video, through rank's FILTERS unchanged (AI ·
+tagged non-Japanese · duplicates · the format preference). Then a TIER, ahead of rank's key:
+
+1. `exact` — the file's stem (tsubasa's parse: language and flags off) is the video's stem (normcase)
+2. `same` — `tokens.release_group` of both is a BRACKETED group, equal ignoring case and every
+   non-alphanumeric · ⛔ unless both names state a source and they differ: `BD` (BD, BDRip,
+   Blu-ray, BluRay) · `WEB` (WEB, WEBRip, WEB-DL and the distributors `tokens.py` knows) · `TV`
+   (TV and the broadcasters: TBS, NTV, AT-X, BS11, MX, TVA, BSN …). A name that states none never
+   vetoes
+3. `other` — everything else · `any_provider` only
+
+`same_provider` takes tiers 1–2 only. None → NOT_FOUND, soft, bounded (fork 13): *"nothing from
+[NanakoRaws] on jimaku for this episode yet · looks once a day until 3 Oct, then stops."* A video
+whose name has no bracketed provider: *"this video's name doesn't say which provider it came from,
+so nothing can be matched to it."* ⛔ **Neither says what else exists or what setting would take
+it** (fork 14 — nothing recommends the road).
+
+Within a tier, rank's key as today (the format first). The top one is downloaded and must pass
+`present.reads_as_japanese` — **the one check this road has**; if not, the next, up to the
+`candidates` cap. ⛔ A file failing the read is NOT recorded as refused (no permanent verdict from a
+heuristic — and it must stay available to the audio road). None passes → the video waits a day:
+*"none of the N files for this episode reads as Japanese"* (a `[CHS, JPN]`-only episode lands here).
+
+**Placing.** `tsubasa.place_subtitle(video, subtitle, write=True, out_dir=…, lang_tag="jpn")` → a
+`PlacedSubtitle` (`ok` · `reason` · `output_path` · `write_failed` · `notes` · `ext` · `lang`;
+truth-testing raises, as `ExtractedSubtitle`). ⭐ `lang_tag` writes the language code AS GIVEN —
+`<video>.jpn.<ext>` — refused unless it resolves to the subtitle's own language (`jpn` → `ja`):
+`output_name` alone would canonicalise it back to `.ja.` (fork 5). The subtitle is the working-cache
+copy named `<jimaku stem>.ja.<ext>` (`keep.download_name` — ⛔ never untagged). Placed first, kept
+second, as timed. A write that fails: ERROR, no negative. A placed file the present-check cannot
+count: ERROR (14z, A-5).
+
+**What hato remembers.** ⭐ **The file itself carries the mark** (fork 5): `<video>.jpn.<ext>`,
+byte for byte one of hato's kept originals. Both are on disk, so the mark survives *Clear hato's
+memory*. The record is the FAST path and carries the tier.
+Four nullable columns on `attempts` — ⛔ **no version bump** (the 8b pattern, `_ADDED_COLUMNS`: an
+older hato's open check asks only for ITS columns; a bump makes 1.0.8 refuse the whole DB):
+`untimed` (`exact` · `same` · `other`; NULL on every timed row) · `written_size` ·
+`written_mtime_ns` · `untimed_since` (on this road's NOT_FOUND rows: when its wait began — each new
+one copies it forward; fork 13's week is counted from it). The placed row: CONFIDENT, `match_rate`
+NULL, `subtitle_hash` the original's (the placed file is byte-identical).
+- ⛔ **Not a fifth outcome.** The outcome list is a CHECK constraint; growing it rebuilds the table
+  and bumps the version — and Go back would lose hato's memory. 14c's precedent: CONFIDENT plus a
+  field (`taken_from`).
+- ⭐ **Canonicity, one line:** *the disk decides — a subtitle beside the video is not timed when its
+  name says `.jpn.` AND its bytes are one of hato's kept originals; hato's record only makes that
+  quick and says which tier.*
+- Every later run: the present-check already lists the folder, so `.jpn.` costs nothing to see
+  (`Found` carries tsubasa's `Sidecar.tag`). Then ONE query (`db.untimed_placed()`: path → tier,
+  size, mtime) and one `stat` per such file; a match → the PRESENT row carries `untimed`. ⚠ No row
+  (a cleared memory): a kept original of the same SIZE is looked for in `subs_dir` and hashed only
+  then — a match is marked, no match is a person's own `.jpn.` file and a plain present row.
+- 1.0.8 against this DB: sees nothing new, and its gate skips a no-track video BEFORE its re-sync
+  (`pipeline._gate`: the NO_TRACK skip precedes `synced()`), so it never re-times one — and it
+  counts `<video>.jpn.<ext>` as present (tsubasa reads `jpn` as `ja`; measured on 0.1.9), so it
+  never downloads over one. Read in the code; 15z tries it for real.
+
+**What a person sees** — the pictures, as ruled:
+- *Settings → Subtitle format:* the choice (fork 2), *Skip it* the default; ⭐ **the caution (fork
+  12) under it whenever it is not *Skip it*** — a mild red ⚠ (`REFUSED_INK`) and its one reason, in
+  `INK_DIM`; its ⓘ — *only for a video with no subtitles inside it; chosen by its name; never timed,
+  so it may be early or late; a wait stops after a week; hato puts one back if it goes missing —
+  choose Skip it, or the skip list, to stop that*; the older-tray note under it (pid-file token
+  `untimed`). ⛔ No *(recommended)*, anywhere (fork 14).
+- *Subtitles:* the mark (fork 3: the amber edge AND ≈), no % (fork 4), *"· another provider — may
+  be off"* on tier 3, the hover words and the opened panel exactly as the mock (timing · chosen by ·
+  written — *".jpn marks it not timed"* · original kept), the show's *"· N added · not timed"*, the
+  footer's *"N not timed"*. ⛔ The *can't sync yet* tip stays exactly as today (fork 14).
+- *Needs you* (15e): this road's waits as waits — *"nothing from this video's provider on jimaku
+  yet · looks once a day until 3 Oct, then stops"*, then *"stopped looking"* — with *Look again
+  now* (ONE look). ⛔ No candidates offered from other providers (fork 9).
+- *The CLI:* Mode A `✓ 01  ≈ not timed · same provider  → …(TBS 1080p HEVC AAC).jpn.ass`; tier 3
+  `… · another provider, may be off`; the summary *"4 fetched, not timed"* (a report kind, like
+  `TAKEN`); the plan *"would download … — not timed (same provider)"*; `--untimed
+  off|same_provider|any_provider` for one run (as `--archives`); `hato problems` says the wait and
+  when it stops.
+- *`--json`, NDJSON, `api.Result`:* `untimed` = `{"tier": "exact"|"same"|"other", "provider":
+  "NanakoRaws", "video_provider": "NanakoRaws"}` or null — added, never renamed. `api.scan(untimed=…)`.
+
+**Go back and older versions.** `config.NEWER_THAN_1_0_8 = ("untimed",)` → `NEWER_KEYS` and
+`NEWER_THAN`; written only when not `off`. `_GOING_BACK["untimed"]`: the key dropped (off), said on
+the card before the press — *"“Download … not timed” becomes “Skip it” — %s cannot download a
+subtitle it cannot time. The ones already downloaded stay."* ⭐ The smoke rehearsal's arm 3 presses
+Go back to the REAL published 1.0.8 with `untimed` saved (the 14z lesson, `HANDOFF.md` §7).
+
+**Cost model** — it runs on every run:
+
+| | Today (a no-track video) | With the setting on |
+| --- | --- | --- |
+| A run where nothing changed | 0 calls | **0 calls** — placed files are present, a miss waits its day; 1 DB query, 1 `stat` per placed file |
+| A new raw episode | 0 calls, nothing | ≤ 1 `files` call per show (its identity is cached for ever) + unmetered downloads |
+| A miss | — | ≤ 1 `files` call per show per day, **for a week at most — then 0** (fork 13) |
+| 10× the library | 0 | the same shape per show; the stats scale with placed files (500 → 500 stats) |
+
+**Edge cases — each decided:**
+
+1. A video with ANY usable track — English, a bitmap one, a forced Japanese one → today's timed road; this one never runs. ⭐ Sonic's example folder is this case
+2. Tracks, none usable (`NO_USABLE`) → this road, as no track
+3. No bracketed provider in the video's name → `same_provider` never matches, and says why; `any_provider` goes on
+4. `NanakoRaws` · `Nanako-Raws` · `nanakoraws` → one provider
+5. Same group, BD against TV, both stated → another provider
+6. The provider's `.ass` and `.srt` → the format preference; `[CHS, JPN]` after `[JPN]`; an exact name first
+7. Only bilingual files → the Japanese read fails → waits, and says so
+8. Two episodes in one name → REFUSED, as today
+9. Dry run → PLANNED, the metered calls a timed plan makes
+10. The placed file deleted, its original kept → placed again, zero network, as a timed one is re-synced — ⚠ a deliberate delete comes back; the ⓘ says how to stop it
+11. Both deleted → downloaded again
+12. The person puts their own file there → its size or mtime differ → a plain present row, never touched
+13. The setting turned off → the files stay; no new ones
+14. *Clear hato's memory* → the files stay, and so do their marks: the `.jpn` name and the kept original are both on disk (fork 5)
+15. Go back → above · an older tray → the note and *Restart the tray*
+16. `--out` → the mirrored folder, as timed
+17. A folder that cannot take a file → ERROR before any request (the 14z gate, unchanged)
+18. A video still downloading → today's guards (unreadable → ERROR, retried)
+19. The provider's own file appears after another provider's was placed → nothing changes (fork 10)
+20. Audio timing lands → fork 11
+21. A movie entry → the same tiers; every file a candidate
+22. Archives on → their members are candidates like files (unchanged)
+23. AI-generated → excluded unless `allow_ai` (unchanged)
+24. A person's own `<video>.jpn.<ext>` → no kept original matches it → a plain present row, never marked
+25. The week runs out → *"stopped looking"*, said on the row and in `hato problems` · *Look again now* looks ONCE · changing the choice starts a new week
+26. A timed `.ja.` file later for a video that has a `.jpn.` one (fork 11) → one slot in tsubasa: the `.jpn.` one goes to the trash, recoverable
+27. ⭐ **15z (B1, C1):** the provider's episode MISSING, or a gap → the alignment's GUESSES are never placed: only a number proven across its release, or a file named exactly as the video (wherever the alignment put it) · a likely-only entry (LOW CONFIDENCE) → nothing placed by its name, a bounded wait
+28. ⭐ **15z (B5):** a name the present-check could not count (a stem trimmed to fit) → never written; a REFUSED wait, bounded — *"A shorter video name fixes it"*
+29. ⭐ **15z (B6):** a short's whole script (under 100 lines) → placed: this road reads Japanese from 20 lines
+30. ⭐ **15z (C7):** Go back to a version before the road → its waits are forgotten (1.0.8 would list them for ever), said on the card first
+
+### Steps
+
+| Step | surfaces | What | Its proof |
+| --- | --- | --- | --- |
+| **15a** | `data` (tsubasa) · `delivery` | **tsubasa 0.1.10 — `place_subtitle()`** (tsubasa's RUNBOOK 3i) with `lang_tag` (writes `.jpn.` as given), and the two writer fixes waiting in `Workshop/tsubasa/HANDOFF.md` (A-1's hang, C3's overwrite race) — this is a second caller of that writer. **Released FIRST**; hato's floor → `tsubasa-sync>=0.1.10` | tsubasa's suite: atomic · never over a file · bytes identical · the language from the name · `lang_tag="jpn"` writes `.jpn.`, a tag of another language refused · `und` refused · empty and oversize refused · a 255-byte trim said in `notes` · a reserved stem disarmed · `out_dir` — its mutants — the PyPI install, outside a checkout |
+| **15b** | `data` · `logic` | **The engine**: the key and `Settings`; the gate; *Choosing*; the Japanese read; placing as `.jpn.`; the four columns; placing again; the mark on later PRESENT rows (the `.jpn` tag + the record, or + a kept original after a clear); this road's waits, bounded to a week (fork 13); the NOT_FOUND words (⛔ none naming the setting — fork 14); the plan | `python run_tests.py -j 4` — `test_pipeline` §15, one check per edge case: videos with NO track from `tests/_media.py`; entry 11407's list RECORDED as a fixture (metadata only); synthetic Japanese and bilingual bodies from `tests/_subtitles.py` through the downloader seam (⛔ never a jimaku body); the REAL tsubasa placing `.jpn.` into a temp folder, then the next run PRESENT with its mark — and again after the state DB is cleared · a person's own `.jpn.` file left unmarked · the eighth day stops, *Look again now* looks once, a changed choice starts over (a fake clock) · `test_state` (the columns added, `SCHEMA_VERSION` still 2) · `test_config` · `node _mutants.mjs --scratch --jobs=4 "--filter=^M15-"` |
+| **15c** | `ui` (CLI) | Mode A · the summary · the plan · `--untimed` · `--json` and NDJSON · `api.Result.untimed` · `hato problems` | `test_report` · `test_api` (its defaults guard) · `test_problems` · `test_endtoend` · mutants |
+| **15d** | `ui` (the window) | Settings (fork 2) and **its caution (fork 12)**, the older-tray note, Go back's words · the row mark (forks 3–4: the amber edge AND ≈), the hover words, the panel, the header, the footer. ⛔ Nothing else points at the setting (fork 14). ⛔ Every new control carries a `kept` name — a rebuild hands the keyboard back (`LEDGER-HOT.md`, Z14-3) | `test_gui_*` (the caution shown for either download choice and gone for *Skip it*; its red is `theme.REFUSED_INK`) · `test_update` (Go back's mapping) · the REAL window shot (`%TEMP%\hato-13\visual\shots_all_z.py` + a Layer 15 shooter) and LOOKED beside `gui-mock/shots-untimed/` · mutants |
+| **15e** | `ui` · `logic` | Needs you: this road's waits as waits — until when, then *stopped looking* — with *Look again now*. ⛔ No other provider's file offered (fork 9) | `test_problems` · `test_gui_*` · a shot LOOKED |
+| **15f** ✅ | `harness` | ⭐ **REAL MEDIA, "assuming there is nothing there"** — copies of Sonic's 01/04/05/07 with every subtitle track removed (`ffmpeg -map 0:v -map 0:a -c copy`, in `%TEMP%`; ⛔ never his folder), the real list, real downloads: `same_provider` → four NanakoRaws files placed, each measured against the ORIGINAL video's caption track (`tsubasa.sync_to_reference`) → expect **+0.00 s, 100%** · a copy renamed `[Other] …` under `any_provider` → another provider's file placed, its offset measured and reported · every placed file loads in Sonic's mpv, both arms | the probe's log, and its numbers in the register · ✅ **MEASURED 2026-09-26** (`%TEMP%\hato-15\probes\p15f_real.py`): `same_provider` **4 of 4** placed, each **+0.00 s, 100%** against its original's caption track, 2 API calls · `[Other]` under `any_provider` → **SubsPlease, +2.53 s** — the *"may be off"* the words say · every placed file loads in Sonic's mpv, both arms |
+| **15z** ✅ | — | The adversarial pass over all of Layer 15 — ONE pass (ruled 2026-09-25) | the register, every row ended · ✅ `ADVERSARY-2026-09-26.md`: **50 rows — 45 fixed · 1 dropped · 4 deferred** (and D10's third part), four found while fixing (O5–O8) |
+| **1.0.9** | `delivery` | Step 6's sequence, tsubasa 0.1.10 FIRST · the stamp rehearsal · the smoke's Go back arm with `untimed` saved · `verify-release` · the real update from the published 1.0.8 | Step 6 |
+
+**Amendments the build lands in the numbered parts** (each where Layer 14 put its own):
+`00-INDEX.md` Rule 1 (fork 1 — ✅ landed at the sign-off, 2026-09-26) · `02-data-model.md` (the columns, the canonicity line, the cost
+model) · `03-permissions.md` (Whitelist 1: tsubasa places an untimed file; the read rule above) ·
+`05-interface.md` (the key, Mode A, `--untimed`, `untimed` in `--json` and the API, the window) ·
+`06-edge-cases.md` §6 (the list above) · `07-test-plan.md` (the fixture, 15f) · `08-research.md`
+(✅ already landed: *Not-timed subtitles — measured 2026-09-26*).
+
+**Credentials.** None to build. At release: a GitHub token, which Sonic mints (the 1.0.8 one is due
+for revocation — `HANDOFF.md` §4); tsubasa's tag publishes through Trusted Publishing, as 0.1.9 did.
+
+**What this layer can never do.** Tell whether a file is in time — nothing inside the video says.
+Fix an offset. Catch a mislabelled upload, or a provider's re-release with different cuts under
+the same name. Tell a VIEWER it is not timed — to a player `.jpn` only means Japanese (fork 5).
+
+---
+
+## Step 6 — Release — ✅ TAGGED AND SHIPPED: `v1.0.8`, 2026-09-26 (`v1.0.7` and `v1.0.6` 2026-09-25, `v1.0.5` and `v1.0.4` 2026-09-24, `v1.0.3` and `v1.0.2` 2026-09-23, `v1.0.1` 2026-09-19). ⛔ NO PyPI, RULED
+
+> ⭐ **`v1.0.8` IS LIVE — LAYER 14 COMPLETE: 14c (*"Save them beside the video, as a file"*) and
+> 14z, the adversarial pass over all of Layer 14.** The sequence unchanged, the stamp rehearsal
+> first: stamp `1.0.8` (`sha256:3e04f4bc…`, 83 files — the rehearsal's own hash; the
+> version-touching suites and the window's over the stamped copy, 1,050 passed, the same 2 skips)
+> → the full runner **33 suites / 2,581 checks** over the stamped tree → freeze (61 warnings, as
+> 1.0.7's) → smoke **54/54** (⭐ two new with 14z: **5d**, the FROZEN bytes take a real track out —
+> 12 of 12 cues, 0 requests, the next run present, the doctor's extractor OK and tsubasa 0.1.9; and
+> the REHEARSAL's **arm 3**, *Go back* to the REAL released 1.0.7 with *Save* chosen — the card's
+> words, the swapper's *success*, 1.0.7 reading its settings) → `update-manifest` (signed; read
+> back 3/3) → sync → `a0f7f4e` → 🚨 `tests` **6/12 RED on the first push**: every Linux and macOS
+> job, over ONE window check that had only ever run on Windows (`LEDGER.md` §delivery, *"IT DID
+> NOT TRAVEL A THIRD TIME"*) → `a1f0128`, the check only (no shipped file changed, so the stamp,
+> the build and the signature stood) → `tests` **12/12** → `--go`: tag `v1.0.8` = `a1f0128`, THREE
+> assets → `verify-release` **10 held · 0 failed · 0 skipped** (`an_install_takes_it`: a copy at
+> 1.0.4 heard *ready 1.0.8*) → `release` **2/2** on the tag → ⭐ **the published 1.0.7 took the
+> published 1.0.8 end to end** (`e2e_update.py 1.0.7 1.0.8`, **9/9**: *ready 1.0.8* from GitHub,
+> downloaded and proved in 17 s, 1.0.8's own swapper, *Updated to 1.0.8* in its window, 1.0.7
+> kept). Before it: 14z's gate, **234 mutants, 231 caught** — the 3 survivors closed (two checks
+> re-aimed, one mutant retired as equivalent) — and **4 of 4** caught after the LOOKED fix.
 
 > ⭐ **`v1.0.7` IS LIVE — LAYER 14's first step (14a) and its adversarial pass.** The sequence
 > unchanged, the stamp rehearsal first: stamp `1.0.7` (`sha256:1b1b2588…`, 83 files — the

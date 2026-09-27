@@ -44,6 +44,13 @@ The consequences, all mandatory:
 something exists that does not, the worst outcome is a skipped fetch — never an
 overwrite.
 
+> ⭐ **LAYER 15 (built 2026-09-26) — what "not timed" means, in one line:** *the disk decides
+> — a subtitle beside the video is not timed when its name says `.jpn.` AND its bytes are one
+> of hato's kept originals; hato's record only makes that quick and says which tier.* So the
+> mark survives *Clear hato's memory* (both are on disk), and a person's own `<video>.jpn.<ext>`
+> — no kept original matches it — is a plain present row, never marked. A `.jpn.` file answers
+> LAST: beside a `.ja.` one the video has a subtitle something may have timed.
+
 ### What "already exists" means — RULED
 
 **Per (video × language).** An `.en.srt` sitting beside the video does **not** mean the
@@ -101,6 +108,22 @@ SQLite, one file, per-user app data. It answers two questions the filename canno
 > last_modified changed) is a new candidate. Every row carries `lang`, and a CONFIDENT row
 > carries `output_path` and `kept_path` so a deleted subtitle re-syncs from its kept original.
 > ⚠ The **resolution cache** is its own store (step 2b), not a table here.
+
+> ⭐ **LAYER 15 (built 2026-09-26) — four NULLABLE columns on `attempts`, ⛔ no version bump**
+> (`state._ADDED_COLUMNS`, the 8b pattern: an older hato's open check asks only for ITS columns;
+> a bump would make 1.0.8 refuse the whole DB — `SCHEMA_VERSION` stays 2):
+>
+> | Column | Notes |
+> | --- | --- |
+> | `untimed` | On a PLACED row: its tier, `exact` · `same` · `other`. On this road's NOT_FOUND row: the CHOICE it waits under. NULL on every timed row |
+> | `written_size` · `written_mtime_ns` | The placed file as it landed — a later run's mark is one `stat` against them |
+> | `untimed_since` | On this road's NOT_FOUND rows: when the wait began. Each new miss copies it forward; a change of the choice starts it again. The WEEK (`formats.UNTIMED_WAIT_DAYS`) is counted from it |
+>
+> ⛔ **Not a fifth outcome.** A placed row is CONFIDENT with `match_rate` NULL and
+> `subtitle_hash` the original's (the placed file is byte-identical); the outcome list is a
+> CHECK constraint, and growing it rebuilds the table — 14c's precedent, CONFIDENT plus a field.
+> A wait whose next look falls on or past its stop is STOPPED: `retry_dues` leaves it out, so
+> nothing is woken for it.
 
 ### Question 2 — *"is it worth asking jimaku about this show again?"*
 
@@ -175,6 +198,12 @@ you could easily blacklist it."*
 🚨 **The expensive shape is many different shows, not many episodes.** *"A few a day from
 different series"* is the worst case for quota and the best case for the resolution cache
 — each show pays 2 calls once, then never again.
+
+⭐ **LAYER 15's road (built 2026-09-26), OFF by default:** a run where nothing changed — **0
+calls** (placed files are present; 1 DB query and 1 `stat` per placed file for the mark) · a
+new raw episode — ≤ 1 `files` call per show, the identity cached for ever, downloads unmetered ·
+a miss — ≤ 1 `files` call per show per day, **for a week at most, then 0** (fork 13: *"it
+should NOT run over and over and over again forever"*).
 
 ---
 

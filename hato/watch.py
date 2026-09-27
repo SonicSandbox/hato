@@ -1420,7 +1420,9 @@ def watching_pid():
 #: while every run it started died on `prefer_format` (ADVERSARY 2026-09-23 #1).
 #: `extract` -- 14c. Its runs READ `extract_embedded`; an older one's refuse a
 #: config.toml carrying it, and the window says so under the choice.
-CAPABILITIES = (u"retries", u"formats", u"updates", u"extract")
+#: `untimed` -- LAYER 15. Its runs READ `untimed`; 1.0.8's refuse a config.toml
+#: carrying it, and the window says so under that choice.
+CAPABILITIES = (u"retries", u"formats", u"updates", u"extract", u"untimed")
 
 
 def watching_capabilities():

@@ -125,6 +125,8 @@ import re
 
 import tsubasa
 
+from hato import formats
+
 #: What tsubasa answers for a name with no readable language.
 UND = u"und"
 
@@ -163,6 +165,11 @@ FETCH = u"fetch"
 #: anything with a dot or a separator in it would be read as several tokens.
 _TAG = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$")
 
+#: ⭐ LAYER 15 -- the language code that marks a file nobody timed: ONE owner,
+#: `formats.UNTIMED_CODE`. ⛔ The tag alone never marks a file: `pipeline` asks whether
+#: its bytes are one of hato's kept originals.
+_MARK = formats.UNTIMED_CODE
+
 
 class LanguageUnknown(ValueError):
     u"""tsubasa's reader cannot resolve this language tag.
@@ -177,15 +184,19 @@ class LanguageUnknown(ValueError):
 class Found(object):
     u"""The subtitle that is already there. `path` · `name` · `flags` ·
     `by_text` -- True when its NAME said no language and its text was read (9b),
-    so whatever reports it can say which of the two answered."""
+    so whatever reports it can say which of the two answered · `tag` -- the language
+    code its name carries, as tsubasa read it (`jpn`): ⭐ LAYER 15's mark is the code
+    `.jpn.` on a file that is also one of hato's kept originals, and the listing that
+    found it already knows the first half, for nothing."""
 
-    __slots__ = ("path", "name", "flags", "by_text")
+    __slots__ = ("path", "name", "flags", "by_text", "tag")
 
-    def __init__(self, path, name, flags, by_text=False):
+    def __init__(self, path, name, flags, by_text=False, tag=u""):
         self.path = path
         self.name = name
         self.flags = tuple(flags)
         self.by_text = by_text
+        self.tag = tag or u""
 
     def __repr__(self):
         return "<Found %s>" % self.name
@@ -277,13 +288,28 @@ class Presence(object):
         """
         video = os.fspath(video)
         folder = os.fspath(folder) if folder is not None else os.path.dirname(video)
+        return self._match(video, folder, self._names(folder))
+
+    def would_find(self, video, name, folder=None):
+        u"""⭐ 15z (B5, C6) -- would `find` count a file NAMED `name` as `video`'s, asked
+        BEFORE it is written? -> bool. The very rule `find` applies, on one name: the
+        untimed road writes nothing it could not find again -- the next run would call
+        the video bare and fetch for it again, every day. ⛔ Reads nothing on disk."""
+        video = os.fspath(video)
+        folder = os.fspath(folder) if folder is not None else os.path.dirname(video)
+        return self._match(video, folder, (name,), read=False) is not None
+
+    def _match(self, video, folder, names, read=True):
+        u"""`find`'s rule over `names`. -> `Found`, or None. `read=False`: no untagged
+        file's text is read (`would_find`: its file is not there yet)."""
         stem = os.path.splitext(os.path.basename(video))[0]
         # ⭐ 14z (A-6) -- ON WINDOWS A NAME IS ONE NAME IN ANY CASE (`normcase`; POSIX
         # is left exact). A video renamed by case only after its subtitle was saved
         # read as having none -- and every run after ended ERROR *"already there"*.
         same = os.path.normcase(stem)
         untagged = []
-        for name in self._names(folder):
+        marked = None
+        for name in names:
             side = _read(name)
             if side is None:
                 continue
@@ -304,12 +330,22 @@ class Presence(object):
                         # `<stem>.ja.<ext>` and this one `<stem>.ja.forced.<ext>`, so
                         # they are different names and neither disturbs the other.
                         continue
-                    return Found(os.path.join(folder, name), name, side.flags)
+                    found = Found(os.path.join(folder, name), name, side.flags,
+                                  tag=side.tag)
+                    if _MARK != (side.tag or u"").casefold():
+                        return found
+                    # ⭐ LAYER 15 -- a `.jpn.` file ANSWERS LAST. Beside a `.ja.` one
+                    # the video HAS a subtitle something may have timed, and a row
+                    # marked *not timed* over it would be the wrong way round.
+                    marked = marked or found
+                    continue
             # ⚠ `not side.flags`: a flag with no language to its left does not
             # parse as a flag, so this is the plain `<stem>.<ext>` (or `.und.`).
             if (exact or (side.lang == UND and not side.flags)) and side.ext in TEXT_FORMATS:
                 untagged.append(name)
-        if self.lang != u"ja":
+        if marked is not None:
+            return marked
+        if self.lang != u"ja" or not read:
             return None                    # ⛔ only Japanese text is ever judged
         for name in sorted(untagged):
             path = os.path.join(folder, name)
@@ -363,12 +399,16 @@ def _read(name):
 # ⭐ question 1c -- does an untagged subtitle's TEXT say Japanese? (9b)
 # ---------------------------------------------------------------------------
 
-def reads_as_japanese(path):
+def reads_as_japanese(path, min_lines=MIN_LINES):
     u"""Is this subtitle file, beyond reasonable doubt, Japanese dialogue? -> bool
 
     ⭐ FALSE IS THE SAFE ANSWER and every doubt returns it: the caller then
     fetches, exactly as hato did before this existed. True needs all three
     measured thresholds (the module docstring, question 1c).
+
+    `min_lines` -- 9b's floor by default. ⭐ LAYER 15's road passes its own
+    (`untimed.MIN_LINES`, 15z B6): there the file was CHOSEN as the episode's
+    Japanese, and a short's whole script is under 100 lines. The two SHARES stand.
 
     ⚠ Reads at most `READ_LIMIT` bytes and writes nothing -- and a file bigger
     than that is a doubt: part of a file is judged never (see `READ_LIMIT`).
@@ -385,7 +425,7 @@ def reads_as_japanese(path):
     if text is None:
         return False
     lines = _dialogue(text, os.path.splitext(os.fspath(path))[1][1:].lower())
-    if len(lines) < MIN_LINES:
+    if len(lines) < min_lines:
         return False
     with_kana = sum(1 for line in lines if _KANA.search(line))
     kana = sum(len(_KANA.findall(line)) for line in lines)

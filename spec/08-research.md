@@ -315,6 +315,61 @@ direction:**
 
 ---
 
+## Not-timed subtitles — measured 2026-09-26 (RUNBOOK §LAYER 15)
+
+Probes in `%TEMP%\hato-15-spec\` (disposable — the numbers are the record).
+
+### A marker in the NAME stops mpv's defaults loading it
+
+A 4-second MKV with no subtitle track, one candidate `.ass` beside it per folder, Sonic's installed
+**mpv 0.33.0**, two arms: his own `mpv.conf` (`sub-auto=fuzzy`) and `--no-config --slang=ja` (mpv's
+defaults: `sub-auto=exact`).
+
+| Name | tsubasa reads | hato counts it present | mpv, Sonic's config | mpv, defaults |
+| --- | --- | --- | --- | --- |
+| `<video>.ja.ass` | `ja`, the video's stem | ✅ | loaded, `ja`, selected | loaded, `ja`, selected |
+| `<video>.ja.untimed.ass` | `und` | ⛔ fetched again every run | loaded, no language | ⛔ **not loaded** |
+| `<video>.untimed.ja.ass` | `ja`, stem `<video>.untimed` | ⛔ fetched again every run | loaded, `ja` | ⛔ **not loaded** |
+| `<video>.ja-untimed.ass` | `ja` (the region form), the video's stem | ✅ | loaded, no language | ⛔ **not loaded** |
+| `<video>.ja[untimed].ass` | `und` (an unknown bracket flag) | ⛔ fetched again every run | loaded, no language | ⛔ **not loaded** |
+| control `<video>.ja.forced.ass` | `ja` + forced | not a whole subtitle (06 §6) | loaded | ⛔ not loaded |
+| control `<video>.ass` | `und` | (9b reads the text) | loaded | loaded |
+| ⭐ `<video>.jpn.ass` | `ja` (tag `jpn`), the video's stem | ✅ | loaded, `jpn`, selected | loaded, `jpn`, **selected** |
+| `<video>.jp.ass` | `ja` (tag `jp`), the video's stem | ✅ | loaded, `jp`, selected | loaded, `jp`, selected |
+
+⭐ **mpv 0.33's `exact` loads only `<video>.<lang>.<ext>` and `<video>.<ext>`** — a language CODE
+passes (`ja`, `jpn`, `jp`), a word never does, and even the flag it knows breaks it.
+**VLC** (Sonic's install, its own `vlcrc`: `sub-autodetect-fuzzy` at its default) autodetected
+`<video>.ja.ass` and `<video>.jpn.ass` (*"autodetected subtitle … with priority 3"*). ⚠ Its
+back-to-back headless runs hung on the WORD names, which were left unmeasured there — the lean
+(`.jpn.`, RUNBOOK §LAYER 15 fork 5) uses no word. Newer mpv, MPC-HC, Plex and Jellyfin were NOT
+measured.
+
+### Same provider is on time; another provider is not
+
+Jimaku entry 11407 (*Seihantai na Kimi to Boku*) lists 87 files — `[NanakoRaws]` 24, `[SweetSub]`
+24, `[Nekomoe kissaten&LoliHouse]` 14, Netflix 12, Amazon 12, `[SubsPlease]` 1. The NanakoRaws ones
+carry the videos' own names, letter for letter. Each measured with `tsubasa.sync_to_reference`
+against the video's OWN caption track (NanakoRaws ships TBS's captions inside), episodes 01, 04,
+05, 07:
+
+| Provider | Files | Offset | Match |
+| --- | --- | --- | --- |
+| **NanakoRaws — the video's own** | 8 (`.ass` + `.srt`) | **+0.00 s, every one** | 100%, `locked` |
+| SweetSub `[JPN]` | 4 | +2.55 · −0.32 · +2.67 · −0.28 s | 67–74% |
+| Netflix `ja[cc]` | 4 | +1.52 · −1.31 · +1.61 · −1.29 s | 74–77% |
+| Amazon `ja-jp[sdh]` | 4 | +2.07 · −0.79 · +2.16 · −0.82 s | 77–83% |
+| SubsPlease `.jpn.ass` (01 only) | 1 | +2.53 s | 100% |
+| Nekomoe `[JPN]` (07 only) | 1 | −0.36 s | 64% |
+
+⭐ **Another provider: 0 of 14 on time — 0.28 to 2.67 s off, median 1.4 s.** Across Sonic's own
+library (the 25 files hato wrote whose kept original could be matched, `last-run.json`), the shift
+tsubasa applied was never zero: **median 0.8 s, 8 of 25 over 1 s** (Tetsunabe no Jan! −9.8 and
+−10.1 s, One Piece +9.6 s, Hell Mode −4.2 s, `[shincaps]` −42.8 and −42.9 s), one cut mid-episode.
+⚠ Those 25 PASSED the timing check; the refused ones are not in that sample.
+
+---
+
 ## Prior art — what not to rebuild
 
 | Tool | Licence | Why we are not it |

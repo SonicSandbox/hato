@@ -78,6 +78,7 @@ import os
 import tsubasa
 
 from hato import cache as _cache, episodes, formats, keep, paths, pipeline, present, report, state
+from hato import untimed
 
 #: `source` on every row this module makes. ⭐ A run's rows and these are merged
 #: into one list (RUNBOOK 8e); this is how a consumer tells them apart.
@@ -124,6 +125,9 @@ def open_problems(cfg, db, cache, now=None):
         if formats.embedded_choice(cfg.skip_embedded, cfg.extract_embedded) \
                 == formats.EMBEDDED_LEAVE and _left_inside(video, lang):
             continue                    # ⭐ Z14-4 -- the next run leaves it alone
+        if _on_the_road(problem.latest) and cfg.untimed == formats.UNTIMED_OFF:
+            continue                    # ⭐ LAYER 15 -- the road is off: the next run
+            #                             skips it before looking, and it needs nobody
         kept.append(problem)
     parsed = _parsed(p.video_path for p in kept)
     # ⭐ 14z (C4) -- UNDER *Save them beside the video*, WHY IT WAS NOT TAKEN OUT. The
@@ -262,6 +266,14 @@ def _outcome(latest, candidates):
     return latest.outcome
 
 
+def _on_the_road(latest):
+    u"""⭐ LAYER 15 -- is this the wait of a video with no subtitle track, on the road
+    that places a file by its NAME? -> bool. The row says so itself: it carries the
+    choice it waits under and when its wait began."""
+    return bool(latest.outcome == state.NOT_FOUND and latest.untimed_since is not None
+                and latest.untimed in state.UNTIMED_CHOICES)
+
+
 def _row(problem, item, lang, cache, not_taken=None):
     u"""One problem -> the NDJSON object a run would have printed for it."""
     latest = problem.latest
@@ -278,13 +290,28 @@ def _row(problem, item, lang, cache, not_taken=None):
                             row.jimaku_size or 0, row.match_rate,
                             keep.remembered_file(row, lang, cache), row.attempted_at)
         for row in problem.candidates)
+    outcome = _outcome(latest, problem.candidates)
+    road = _on_the_road(latest)
+    if road:
+        # ⭐ LAYER 15 (fork 9) -- a wait on this road is a WAIT, and ⛔ offers no file to
+        # pick: a pick would TIME a subtitle this video has nothing to time against.
+        # 🚨 15z (C9) -- unless a RENAME is what it waits for: then it is trouble, as the
+        # run said (`untimed.is_refusal`), never *"not on jimaku yet"*.
+        earlier = ()
+        outcome = (state.REFUSED if untimed.is_refusal(untimed.base_of(latest.reason))
+                   else latest.outcome)
     result = pipeline.VideoResult(
-        video, _outcome(latest, problem.candidates), latest.reason,
+        video, outcome, latest.reason,
         name=os.path.basename(video), title=title, season=season, episode=episode,
         jimaku_entry=latest.jimaku_entry, jimaku_filename=latest.jimaku_filename,
         candidates_offered=None, retry_after=latest.retry_after, tried_before=earlier,
         newest_offered=latest.newest_offered)
     result.not_taken = not_taken                            # ⭐ 14z (C4)
+    if road:
+        # ⭐ Fork 13 -- the week, ABSOLUTE: when it began and when it STOPS. The view reads
+        # no clock; the window says *"looks once a day until 3 Oct"* or *"stopped looking"*.
+        result.untimed_wait = untimed.wait_field(latest.untimed, latest.untimed_since,
+                                                 untimed.base_of(latest.reason))
     row = report.as_dict(result)
     row[u"source"] = SOURCE
     return row

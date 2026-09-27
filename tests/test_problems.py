@@ -961,3 +961,119 @@ def test_hato_problems_files_a_format_wait_under_its_own_heading(library, capsys
     assert "only as .srt or .vtt" in other[0], other[0]
     waiting = section(found, "not on jimaku yet")
     assert len(waiting) == 1 and missing.name in waiting[0], text
+
+
+# ===========================================================================
+# ⭐ LAYER 15 -- a wait on the untimed road, remembered (15c / 15e)
+# ===========================================================================
+
+def road_wait(lab, video, choice="same_provider", since=None):
+    u"""A wait on the untimed road, recorded as the pipeline records it."""
+    lab.db.record_not_found(
+        video_hash=cache.video_hash(video), video_path=str(video), lang="ja", kind="soft",
+        jimaku_entry=ENTRY, untimed=choice, untimed_since=since,
+        reason=u"nothing from [G] for this episode on jimaku · looks once a day until 3 Oct, "
+               u"then stops")
+    lab.clock.advance(minutes=1)
+
+
+def road_cfg(lab, choice="same_provider"):
+    return config.parse(lab.config_text() + u'untimed = "%s"\n' % choice)
+
+
+def test_15_a_road_wait_is_a_wait_with_its_end_and_never_a_pick(lab):
+    u"""⭐ Fork 13 + fork 9: the remembered wait carries its week -- ABSOLUTE, the view
+    reads no clock -- and ⛔ no file to pick, even with timed refusals from before."""
+    video = lab.video("[G] Show - 01.mkv")
+    refuse(lab, video, "[G] Show - 01 [JPN].ass", 0.4)          # a TIMED refusal, earlier
+    road_wait(lab, video)
+    row = only(lab.rows(road_cfg(lab)))
+    assert row["outcome"] == state.NOT_FOUND and row["tried_before"] == [], row
+    wait = row["untimed_wait"]
+    assert wait["choice"] == "same_provider" and wait["waits_for"].startswith(
+        u"nothing from [G]"), wait
+    assert when(wait["stops"]) - when(wait["since"]) == timedelta(days=7), wait
+
+
+def test_15_with_the_road_off_its_waits_are_not_listed(lab):
+    u"""The next run skips such a video before looking: its wait needs nobody."""
+    video = lab.video("[G] Show - 01.mkv")
+    road_wait(lab, video)
+    assert lab.rows(road_cfg(lab, "off")) == []
+    assert len(lab.rows(road_cfg(lab, "any_provider"))) == 1
+
+
+def test_15_the_plain_list_says_when_the_wait_stops_and_that_it_stopped(lab):
+    video = lab.video("[G] Show - 01.mkv")
+    road_wait(lab, video)
+    row = only(lab.rows(road_cfg(lab)))
+    soon = when(row["untimed_wait"]["since"]) + timedelta(hours=1)
+    line = u" ".join(problems_cmd.plain([row], soon))
+    assert u"once a day until" in line and u"then stops" in line, line
+    later = when(row["untimed_wait"]["stops"]) + timedelta(hours=1)
+    line = u" ".join(problems_cmd.plain([row], later))
+    assert u"stopped looking" in line and u"looks again on the next run" not in line, line
+    # ⚠ Before the stop, but its next look falls ON or past it: nothing looks again
+    # either -- said now, not a day later
+    last = dict(row, retry_after=row["untimed_wait"]["stops"])
+    line = u" ".join(problems_cmd.plain([last], soon))
+    assert u"stopped looking" in line and u"once a day until" not in line, line
+
+
+def test_15z_a_road_wait_has_its_own_heading_never_not_on_jimaku_yet(lab):
+    u"""⭐ 15z (C12) -- *"not on jimaku yet"* was false of a wait on the untimed road:
+    jimaku may hold the episode, from another provider. ⛔ The heading names no setting."""
+    video = lab.video("[G] Show - 01.mkv")
+    road_wait(lab, video)
+    row = only(lab.rows(road_cfg(lab)))
+    soon = when(row["untimed_wait"]["since"]) + timedelta(hours=1)
+    found = sections(u"\n".join(problems_cmd.plain([row], soon)))
+    lines = section(found, u"no subtitle track — waiting for a subtitle to place by its name")
+    assert len(lines) == 1 and video.name in lines[0], found
+    assert not any(h.startswith(u"not on jimaku yet") for h in found), found
+
+
+def test_15z_a_wait_whose_fix_is_a_rename_is_trouble(lab):
+    u"""🚨 15z (C9) -- F20 RE-ARMED on this road: a no-track video whose name holds no
+    episode number waited under *"not on jimaku yet"* -- and its fix is a rename. It is
+    trouble, its reason said once (the schedule is on the line already)."""
+    from hato import episodes, untimed
+    video = lab.video("[G] Show.mkv")
+    stops = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+    lab.db.record_not_found(
+        video_hash=cache.video_hash(video), video_path=str(video), lang="ja", kind="soft",
+        jimaku_entry=ENTRY, untimed="same_provider",
+        reason=untimed.waiting_reason(episodes.NO_EPISODE, stops))
+    row = only(lab.rows(road_cfg(lab)))
+    assert row["outcome"] == state.REFUSED and row["untimed_wait"], row["outcome"]
+    soon = when(row["untimed_wait"]["since"]) + timedelta(hours=1)
+    found = sections(u"\n".join(problems_cmd.plain([row], soon)))
+    lines = section(found, u"had a problem")
+    assert len(lines) == 1 and u"No episode number was read" in lines[0], lines
+    assert lines[0].count(u"once a day") == 1, lines[0]
+
+
+def test_15z_next_due_is_never_a_stopped_wait_s(lab):
+    u"""⚠ 15z (C3) -- `--json`'s `next_due` named a STOPPED wait's date: its next look
+    falls past its week, and nothing keeps it."""
+    video = lab.video("[G] Show - 01.mkv")
+    road_wait(lab, video)
+    row = only(lab.rows(road_cfg(lab)))
+    soon = when(row["untimed_wait"]["since"]) + timedelta(hours=1)
+    assert problems_cmd.next_due([row], soon) == row["retry_after"]
+    stopped = dict(row, retry_after=row["untimed_wait"]["stops"])
+    assert problems_cmd.next_due([stopped], soon) is None
+
+
+def test_15z_a_changed_choice_looks_again_on_the_next_run(lab):
+    u"""⭐ 15z (C4) -- the choice changed since the wait began: *"stopped looking — nothing
+    looks again"*, and the next run looked (and spent a call). The run's own rule."""
+    video = lab.video("[G] Show - 01.mkv")
+    road_wait(lab, video)
+    cfg = road_cfg(lab, "any_provider")
+    row = only(lab.rows(cfg))
+    later = when(row["untimed_wait"]["stops"]) + timedelta(hours=1)
+    line = u" ".join(problems_cmd.plain([row], later, cfg))
+    assert u"looks again on the next run" in line and u"stopped looking" not in line, line
+    line = u" ".join(problems_cmd.plain([row], later, road_cfg(lab)))
+    assert u"stopped looking" in line, line

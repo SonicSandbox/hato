@@ -1677,6 +1677,57 @@ def test_rollback_leaves_a_file_the_kept_version_reads_and_says_so(capsys, monke
     assert u"extract_embedded" not in cfg.read_text(encoding="utf-8")
 
 
+def test_15_the_go_back_card_says_the_untimed_choice_goes_before_the_press(monkeypatch,
+                                                                          tmp_path):
+    u"""⭐ LAYER 15 -- `update.going_back_words`, what the Go back card says BEFORE the
+    press: back to 1.0.8 with a download choice saved, it becomes *Skip it* -- 1.0.8
+    refuses the key -- in the words of the choice made. ⛔ Asking changes nothing on
+    disk; and a version that reads the key hears nothing about it."""
+    from hato import config
+    cfg = tmp_path / "config.toml"
+    monkeypatch.setenv("HATO_CONFIG", str(cfg))
+    config.save(config.with_changes(config.load(cfg), untimed=u"any_provider"), cfg)
+    before = cfg.read_bytes()
+    words = update.going_back_words(u"1.0.8")
+    assert any(u"“Download one that fits the episode number” becomes “Skip it”" in w
+               for w in words), words
+    assert cfg.read_bytes() == before, u"asking what Go back would change changed the file"
+    assert not [w for w in update.going_back_words(u"1.0.9") if u"Skip it" in w], (
+        u"a version that reads `untimed` told it goes")
+
+
+def test_15z_going_back_before_the_road_forgets_its_waits_and_says_so_first(monkeypatch,
+                                                                          tmp_path):
+    u"""🚨 15z (C7, D7, B12) -- measured with the PUBLISHED 1.0.8: its gate skips a video with
+    no subtitle track BEFORE recording anything, so a wait of the untimed road's is never
+    settled -- its `hato problems` listed every one for ever, and its tray woke for a
+    stopped wait's date. ⭐ The Go back card says so BEFORE the press (asking changes
+    nothing); the press takes those waits out -- and ⛔ nothing else."""
+    from hato import state
+    monkeypatch.setenv("HATO_CONFIG", str(tmp_path / "config.toml"))
+    db_path = str(tmp_path / "state.db")
+    with state.StateDB(db_path) as db:
+        db.record_not_found(video_hash=u"a" * 32, video_path=u"D:/raw/[G] x - 01.mkv",
+                            lang=u"ja", kind=u"soft", jimaku_entry=1,
+                            reason=u"nothing from [G] for this episode on jimaku",
+                            untimed=u"same_provider")
+        db.record_not_found(video_hash=u"b" * 32, video_path=u"D:/tv/y - 01.mkv", lang=u"ja",
+                            kind=u"soft", jimaku_entry=2, reason=u"nothing on jimaku yet")
+    said = u"1 episode waiting for a subtitle by its name is no longer waited for — 1.0.8"
+    words = update.going_back_words(u"1.0.8", db_path=db_path)
+    assert any(w.startswith(said) for w in words), words
+    with state.StateDB(db_path) as db:
+        assert db.untimed_waits() == 1, u"asking what Go back would change changed the memory"
+    changed = update.settings_for_going_back(u"1.0.8", db_path=db_path)
+    assert any(w.startswith(said) for w in changed), changed
+    with state.StateDB(db_path) as db:
+        assert db.untimed_waits() == 0
+        assert db.negative(u"b" * 32, u"ja") is not None, u"a timed wait went too"
+    for version in (u"1.0.9", u"1.1.0"):
+        assert not any(u"by its name" in w for w in update.going_back_words(
+            version, db_path=db_path)), version
+
+
 @pytest.fixture
 def auto(monkeypatch, tmp_path):
     u"""`hato update --auto` as the tray and the daily run call it: frozen, Windows,

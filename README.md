@@ -84,7 +84,7 @@ installs itself. If a new version cannot start, the one you had is put back.
 ```bash
 git clone https://github.com/SonicSandbox/hato
 cd hato
-pip install "tsubasa-sync[parsing]>=0.1.8" requests
+pip install "tsubasa-sync[parsing]>=0.1.10" requests
 ```
 
 Python 3.10 or newer. On 3.10 also `pip install "tomli>=1.1"` — 3.11 has it built in.

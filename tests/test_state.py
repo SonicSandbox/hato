@@ -1920,3 +1920,112 @@ def test_a_clear_that_took_over_a_dead_runs_lock_says_so(tmp_path, monkeypatch, 
     assert code == 0 and said["ok"] is True and said["cleared"]["attempts"] == 4, said
     assert [n for n in said["notes"] if str(child.pid) in n and "no longer running" in n], (
         "the clear took over a dead run's lock and said nothing about it: %r" % said["notes"])
+
+
+# ===========================================================================
+# ⭐ LAYER 15 -- the untimed road's four columns, and its week (spec/RUNBOOK.md
+# §LAYER 15, signed off 2026-09-26)
+# ===========================================================================
+
+_ROAD = ("untimed", "written_size", "written_mtime_ns", "untimed_since")
+
+
+def test_15_the_four_columns_join_an_older_file_with_no_version_bump(tmp_path, clock):
+    u"""⛔ NO VERSION BUMP (the 8b pattern): 1.0.8 asks only for ITS columns when it opens
+    the file, and a `user_version` of 3 would make it keep no state at all -- and *Go back*
+    to 1.0.8 would lose hato's memory."""
+    path = tmp_path / "state.db"
+    _old_db(path)
+    with state.StateDB(path, now=clock) as db:
+        assert db.persistent and db.notes == [], db.notes
+    raw = sqlite3.connect(str(path))
+    try:
+        have = set(r[1] for r in raw.execute("PRAGMA table_info(attempts)"))
+        assert set(_ROAD) <= have, sorted(set(_ROAD) - have)
+        assert raw.execute("PRAGMA user_version").fetchone()[0] == 2 == state.SCHEMA_VERSION
+    finally:
+        raw.close()
+
+
+def test_15_an_insert_naming_only_1_0_8_s_columns_still_lands_and_reads_as_timed(tmp_path, clock):
+    u"""⭐ The other direction: 1.0.8 -- kept for *Go back* -- writes rows naming only its
+    own columns. They land, and read back with no tier and no wait."""
+    path = tmp_path / "state.db"
+    with state.StateDB(path, now=clock):
+        pass
+    old = [f for f in state.Attempt._fields if f not in _ROAD + ("id",)]
+    raw = sqlite3.connect(str(path))
+    try:
+        values = {"video_hash": V2, "video_path": "D:/A/ep02.mkv", "lang": "ja",
+                  "jimaku_entry": 11446, "jimaku_filename": "x.ass", "outcome": "CONFIDENT",
+                  "reason": "", "output_path": "D:/A/ep02.ja.ass",
+                  "attempted_at": "2026-09-17T03:00:00.000000+00:00"}
+        raw.execute("INSERT INTO attempts (%s) VALUES (%s)" % (
+            ", ".join(old), ", ".join("?" for _ in old)), [values.get(f) for f in old])
+        raw.commit()
+    finally:
+        raw.close()
+    with state.StateDB(path, now=clock) as db:
+        row = db.synced(V2, "ja")
+        assert row.untimed is None and row.untimed_since is None, row
+        assert db.untimed_placed("ja") == {}
+
+
+def test_15_a_placed_row_carries_its_tier_and_never_a_match_rate(db):
+    confident(db, output_path="D:/A/ep01.jpn.ass", untimed="exact", written_size=10,
+              written_mtime_ns=123)
+    row = db.synced(V1, "ja")
+    assert (row.untimed, row.written_size, row.written_mtime_ns) == ("exact", 10, 123), row
+    for bad in (dict(untimed="certain"),                       # not a tier
+                dict(untimed="exact", match_rate=0.9),         # nothing timed it
+                dict(written_size=10),                         # a size with no tier
+                dict(untimed="exact", written_size=True)):     # ⚠ bool is an int
+        with pytest.raises(ValueError):
+            confident(db, **bad)
+    with pytest.raises(ValueError):
+        attempt(db, untimed="exact")                            # a REFUSED row is no placing
+
+
+def test_15_untimed_placed_is_the_latest_confident_row_of_each_video(db):
+    u"""ONE query a run says which `.jpn.` files are hato's; a video TIMED since (fork 11,
+    evolution) has no placed file any more."""
+    confident(db, output_path="D:/A/ep01.jpn.ass", untimed="same", written_size=5,
+              written_mtime_ns=7)
+    confident(db, video_hash=V2, output_path="D:/A/ep02.ja.ass")
+    placed = db.untimed_placed("ja")
+    key = os.path.normcase(os.path.abspath("D:/A/ep01.jpn.ass"))
+    assert list(placed) == [key], placed
+    assert (placed[key].tier, placed[key].size, placed[key].mtime_ns) == ("same", 5, 7)
+    confident(db, output_path="D:/A/ep01.ja.ass")
+    assert db.untimed_placed("ja") == {}
+
+
+def test_15_a_wait_keeps_its_choice_and_its_start_and_stops_a_week_on(db, clock):
+    u"""Fork 13: each wait copies its START forward; `stops` is that start and a week."""
+    first = dict(video_hash=V1, video_path="D:/A/ep01.mkv", lang="ja", kind="soft",
+                 jimaku_entry=11407, reason="nothing from [G] for this episode on jimaku")
+    db.record_not_found(untimed="same_provider", **first)
+    wait = db.untimed_wait(V1, "ja")
+    assert (wait.choice, wait.since) == ("same_provider", clock.now), wait
+    assert wait.stops == clock.now + timedelta(days=7)
+    clock.advance(days=3)
+    db.record_not_found(untimed="same_provider", untimed_since=wait.since, **first)
+    assert db.untimed_wait(V1, "ja").since == wait.since
+    db.record_not_found(**first)                               # a TIMED wait is no road's
+    assert db.untimed_wait(V1, "ja") is None
+    for bad in (dict(untimed="off"), dict(untimed_since=clock.now),
+                dict(untimed="same_provider", untimed_since=datetime(2026, 9, 1))):
+        with pytest.raises(ValueError):
+            db.record_not_found(**dict(first, **bad))
+
+
+def test_15_retry_dues_leave_out_a_wait_whose_next_look_is_past_its_week(db, clock):
+    u"""⭐ Fork 13 at the tray: a wait whose next look falls past its week is not OWED --
+    waking for it would be a run for nobody, on every start of the tray, for ever."""
+    base = dict(video_path="D:/A/ep01.mkv", lang="ja", kind="soft", jimaku_entry=11407,
+                reason="nothing from [G] for this episode on jimaku", untimed="same_provider")
+    db.record_not_found(video_hash=V1, untimed_since=clock.now - timedelta(days=6, hours=12),
+                        **base)
+    assert db.retry_dues("ja") == [], u"a stopped wait woke the tray"
+    db.record_not_found(video_hash=V2, **base)
+    assert db.retry_dues("ja") == [clock.now + timedelta(days=1)]

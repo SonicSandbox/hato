@@ -3472,3 +3472,802 @@ def test_a_subtitle_named_in_another_case_is_the_video_s_own(tmp_path):
     assert one.skip == pipeline.PRESENT, (one.outcome, one.skip, one.reason)
     assert lab.extracted == []
 
+
+# ===========================================================================
+# 15. ⭐ LAYER 15 -- A VIDEO WITH NO SUBTITLE TRACK: A SUBTITLE PLACED BY ITS NAME,
+# NOT TIMED (spec/RUNBOOK.md §LAYER 15, signed off by Sonic 2026-09-26)
+# ===========================================================================
+#
+# 🚨 His three constraints are the spine, and each is a check here: NOT a default
+# (`test_15_off_is_the_default_and_today_s_skip_word_for_word`), NOT recommended (no
+# word of any wait names the setting or another provider's file, and no pick is ever
+# offered), NOT looking for ever (the eighth day stops). ⭐ The placing is the REAL
+# tsubasa's `place_subtitle` -- every file below lands through it -- and entry 11407's
+# list is the REAL recording (`entries_11407_files.json`, metadata only). The bytes are
+# synthetic Japanese (`tests/_subtitles.py`): ⛔ never a jimaku body.
+
+import _subtitles as subs                                          # noqa: E402
+
+from hato import tokens as tokens_module                          # noqa: E402
+from hato import untimed as untimed_module                         # noqa: E402
+
+SEIHANTAI = u"[NanakoRaws] Seihantai na Kimi to Boku - %02d (TBS 1080p HEVC AAC).mkv"
+ROAD_ENTRY = 11407
+#: ⚠ IN THE WIRE'S SHAPE: an `.ass` name gets an ASS body, an `.srt` one an SRT body. One
+#: SRT body under every name failed the `.ass` file's Japanese read -- it has no
+#: `Dialogue:` lines -- and the road rightly fell through to the `.srt` (`LEDGER-HOT.md`:
+#: seed every fixture in the wire's shape).
+JA_SRT = subs.srt(subs.lines(subs.JA, 150)).encode("utf-8")
+JA_ASS = subs.ass(subs.lines(subs.JA, 150)).encode("utf-8")
+#: ⚠ Japanese beside Chinese, line for line: a `[CHS, JPN]` file. 9b's measured read
+#: calls it not Japanese (kana under 0.55 of kana + kanji).
+_MIXED = [t for pair in zip(subs.lines(subs.JA, 150), subs.lines(subs.ZH, 150)) for t in pair]
+MIXED_SRT = subs.srt(_MIXED).encode("utf-8")
+MIXED_ASS = subs.ass(_MIXED).encode("utf-8")
+
+
+def _is_ass(item):
+    return item["name"].lower().endswith((u".ass", u".ssa"))
+
+
+def ja_body(item):
+    return JA_ASS if _is_ass(item) else JA_SRT
+
+
+def mixed_body(item):
+    return MIXED_ASS if _is_ass(item) else MIXED_SRT
+
+
+def road(tmp_path, numbers=(1,), pattern=SEIHANTAI, body=None, names=None,
+         low_confidence=False):
+    u"""A Lab of videos with NO subtitle track, identified -- from the resolution cache,
+    zero calls -- as entry 11407, whose file list is the real recording; every download
+    answered with a synthetic body (`body(item) -> bytes`, Japanese by default).
+    `low_confidence`: the entry is only a likely match (15z, C1)."""
+    names = names or [pattern % n for n in numbers]
+    lab = Lab(tmp_path, names=names)
+    for name in names:
+        lab.tracks[name] = Answer(tracks=())
+    video = tsubasa.scan(videos=str(lab.media)).videos[0]
+    lab.resolutions.put(
+        resolution.cache_key(video.title, video.season, tokens_module.year(video.name)),
+        resolution.Resolved(ROAD_ENTRY, u"Seihantai na Kimi to Boku", False,
+                            0.62 if low_confidence else 0.95, low_confidence,
+                            resolution.SOURCE_JIMAKU))
+    answer = body or ja_body
+
+    def download(item):
+        lab.downloads.append(item["name"])
+        return answer(item)
+
+    lab.download = download
+    return lab
+
+
+def placed_in(lab):
+    return sorted(n for n in lab.names_in(lab.media) if not n.endswith(u".mkv"))
+
+
+def test_15_off_is_the_default_and_today_s_skip_word_for_word(tmp_path):
+    u"""🚨 HIS FIRST CONSTRAINT: *"It should NOT be a default option."* With nothing set,
+    a video with no track is the skip it has always been -- word for word, zero requests,
+    nothing recorded, nothing placed."""
+    lab = road(tmp_path, numbers=(1, 4))
+    assert pipeline.Settings(folders=[lab.media]).untimed == u"off"
+    assert config.parse(u"").untimed == u"off"
+    report = lab.run()
+    assert [r.skip for r in report.results] == [pipeline.NO_TRACK] * 2
+    assert all(r.reason == u"no subtitle track in the video -- can't sync yet"
+               for r in report.results), [r.reason for r in report.results]
+    assert all(r.untimed is None and r.untimed_wait is None for r in report.results)
+    assert lab.spent == 0 and lab.downloads == [] and placed_in(lab) == []
+    assert sum(lab.rows().values()) == 0
+
+
+def test_15_same_provider_places_the_providers_own_file_as_jpn(tmp_path):
+    u"""⭐ THE ROAD, END TO END, the real tsubasa placing: the provider's own file -- named
+    exactly as the video -- downloaded once, placed untouched as `<video>.jpn.ass`, kept,
+    and recorded with its TIER and no match rate: nothing timed it."""
+    lab = road(tmp_path)
+    one, = lab.run(untimed=u"same_provider").results
+    assert one.outcome == pipeline.CONFIDENT, one.reason
+    stem = u"[NanakoRaws] Seihantai na Kimi to Boku - 01 (TBS 1080p HEVC AAC)"
+    assert os.path.basename(one.output_path) == stem + u".jpn.ass", one.output_path
+    assert Path(one.output_path).read_bytes() == JA_ASS, u"the bytes changed"
+    assert lab.downloads == [stem + u".ass"], lab.downloads
+    assert one.untimed == {u"tier": u"exact", u"provider": u"NanakoRaws",
+                           u"video_provider": u"NanakoRaws"}, one.untimed
+    assert Path(one.kept_path).read_bytes() == JA_ASS
+    assert lab.spent == 1                    # the file list; identification was cached
+    row = lab.db.synced(lab.hash_of(SEIHANTAI % 1), u"ja")
+    assert (row.untimed, row.match_rate) == (u"exact", None), row
+    assert row.written_size == len(JA_ASS) and row.written_mtime_ns, row
+    back = tsubasa.parse_subtitle_name(os.path.basename(one.output_path))
+    assert (back.lang, back.tag) == (u"ja", u"jpn"), back
+
+
+def test_15_the_next_run_is_present_and_carries_the_mark_for_nothing(tmp_path):
+    u"""⭐ Fork 5: the next run's present-check counts `<video>.jpn.ass` -- and the row
+    carries the mark from ONE query and one `stat`: zero requests, nothing downloaded."""
+    lab = road(tmp_path)
+    lab.run(untimed=u"same_provider")
+    again, = lab.run(untimed=u"same_provider").results
+    assert again.skip == pipeline.PRESENT, again.reason
+    assert again.untimed and again.untimed[u"tier"] == u"exact", again.untimed
+    assert lab.spent == 0 and len(lab.downloads) == 1
+
+
+def test_15_after_clearing_memory_the_mark_comes_from_the_kept_original(tmp_path):
+    u"""⭐ Fork 5, edge 14: *Clear hato's memory* keeps the files AND their marks -- the
+    `.jpn` name and the kept original are both on disk, and a kept original of the same
+    size is hashed only then."""
+    lab = road(tmp_path)
+    lab.run(untimed=u"same_provider")
+    lab.db.clear(dry_run=False)
+    again, = lab.run(untimed=u"same_provider").results
+    assert again.skip == pipeline.PRESENT, again.reason
+    assert again.untimed and again.untimed[u"tier"] == u"exact", again.untimed
+
+
+def test_15_a_person_s_own_jpn_file_is_never_marked(tmp_path):
+    u"""⛔ Edge 24: a `.jpn.` file hato did not place -- no kept original matches it -- is
+    a plain present row, never marked, never touched. The setting need not be on."""
+    lab = road(tmp_path)
+    theirs = lab.media / (u"[NanakoRaws] Seihantai na Kimi to Boku - 01 (TBS 1080p HEVC AAC)"
+                          u".jpn.srt")
+    theirs.write_bytes(u"彼らの字幕".encode("utf-8"))
+    for choice in (u"off", u"same_provider"):
+        one, = lab.run(untimed=choice).results
+        assert one.skip == pipeline.PRESENT and one.untimed is None, (choice, one.untimed)
+    assert theirs.read_bytes() == u"彼らの字幕".encode("utf-8")
+
+
+def test_15_a_person_s_own_file_over_a_placed_one_is_theirs(tmp_path):
+    u"""Edge 12: the person put their own file where hato placed one -- its size or mtime
+    differ from the record, and its bytes are no kept original: a plain present row."""
+    lab = road(tmp_path)
+    one, = lab.run(untimed=u"same_provider").results
+    Path(one.output_path).write_bytes(u"自分で直した".encode("utf-8"))
+    again, = lab.run(untimed=u"same_provider").results
+    assert again.skip == pipeline.PRESENT and again.untimed is None, again.untimed
+
+
+def test_15_same_provider_takes_nothing_from_another_and_waits_a_week(tmp_path):
+    u"""⭐ Fork 9 + 13 + 14: nothing from the video's own provider -> a WAIT: until when,
+    then it stops -- ⛔ no other provider's file downloaded, offered or named, and no
+    word naming the setting that would take one."""
+    lab = road(tmp_path, pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    one, = lab.run(untimed=u"same_provider").results
+    assert one.outcome == pipeline.NOT_FOUND, (one.outcome, one.reason)
+    assert one.reason.startswith(u"nothing from [Other] for this episode on jimaku · looks "
+                                 u"once a day until "), one.reason
+    assert one.reason.endswith(u"then stops"), one.reason
+    assert lab.downloads == [] and placed_in(lab) == []
+    assert not one.attempts and not one.tried_before, u"a pick would be offered"
+    assert one.untimed_wait[u"choice"] == u"same_provider", one.untimed_wait
+    for word in (u"another provider", u"any provider", u"setting", u"SweetSub"):
+        assert word not in one.reason, word
+    wait = lab.db.untimed_wait(lab.hash_of(u"[Other] Seihantai na Kimi to Boku - 01 "
+                                           u"(TBS 1080p).mkv"), u"ja")
+    assert wait.choice == u"same_provider" and wait.stops - wait.since == timedelta(days=7)
+
+
+def test_15_any_provider_places_another_providers_file_and_says_so(tmp_path):
+    u"""Tier 3, `any_provider` only: another provider's file, placed and recorded
+    `other` -- the row says whose, so the window can say *"another provider -- may be
+    off"* (measured: 0 of 14 were on time)."""
+    lab = road(tmp_path, pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    one, = lab.run(untimed=u"any_provider").results
+    assert one.outcome == pipeline.CONFIDENT, one.reason
+    assert one.untimed[u"tier"] == u"other", one.untimed
+    assert one.untimed[u"video_provider"] == u"Other"
+    assert one.untimed[u"provider"] != u"Other", one.untimed
+    assert os.path.basename(one.output_path).endswith(u".jpn.ass"), one.output_path
+
+
+def test_15_the_providers_own_file_goes_before_rank_s_first_choice(tmp_path):
+    u"""⭐ The TIER is ahead of rank's key: under `any_provider` the provider's own file is
+    still the one taken, though rank alone would try another first."""
+    lab = road(tmp_path)
+    one, = lab.run(untimed=u"any_provider").results
+    assert one.untimed[u"tier"] == u"exact", one.untimed
+    assert lab.downloads[0].startswith(u"[NanakoRaws]"), lab.downloads
+
+
+def test_15_a_video_whose_name_names_no_provider_says_why(tmp_path):
+    u"""Edge 3: no bracketed group in the video's name -> `same_provider` can match only
+    an EXACT name; with none it says why, and ⛔ nothing about what else exists."""
+    lab = road(tmp_path, pattern=u"Seihantai na Kimi to Boku - %02d.mkv")
+    one, = lab.run(untimed=u"same_provider").results
+    assert one.outcome == pipeline.NOT_FOUND, one.reason
+    assert one.reason.startswith(u"this video's name doesn't say which provider it came "
+                                 u"from"), one.reason
+    assert lab.downloads == []
+
+
+def test_15_the_week_counts_from_the_first_miss_and_the_eighth_day_stops(tmp_path):
+    u"""🚨 HIS THIRD CONSTRAINT: *"it should NOT run over and over and over again forever
+    if there will be no file."* Once a day for a WEEK from the FIRST miss -- each wait
+    copies its start forward -- then STOPPED: no request, and the row says so."""
+    lab = road(tmp_path, pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    video = lab.hash_of(u"[Other] Seihantai na Kimi to Boku - 01 (TBS 1080p).mkv")
+    first, = lab.run(untimed=u"same_provider").results
+    started = lab.db.untimed_wait(video, u"ja").since
+    looks = 1
+    for day in range(1, 7):
+        lab.now[0] += timedelta(days=1)
+        again, = lab.run(untimed=u"same_provider").results
+        assert again.outcome == pipeline.NOT_FOUND and lab.spent == 1, (day, again.reason)
+        assert lab.db.untimed_wait(video, u"ja").since == started, day
+        looks += 1
+    lab.now[0] += timedelta(days=1)
+    stopped, = lab.run(untimed=u"same_provider").results
+    assert stopped.skip == pipeline.NEGATIVE and lab.spent == 0, stopped.reason
+    assert stopped.reason.startswith(u"stopped looking — nothing from [Other]"), stopped.reason
+    assert stopped.retry_after is None and stopped.untimed_wait, stopped.untimed_wait
+    assert looks == 7, u"a week is seven looks: the first miss and six more"
+    assert lab.db.retry_dues(u"ja") == [], u"the tray would wake for a wait that stopped"
+
+
+def test_15_look_again_now_looks_once_and_the_row_stays_stopped(tmp_path):
+    u"""Fork 13: *Look again now* (`retry_now`) looks ONCE past the stop; it does not
+    start a new week, so the next ordinary run is stopped again."""
+    lab = road(tmp_path, pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    lab.run(untimed=u"same_provider")
+    lab.now[0] += timedelta(days=8)
+    once, = lab.run(untimed=u"same_provider", retry_now=True).results
+    assert once.outcome == pipeline.NOT_FOUND and lab.spent == 1, once.reason
+    assert once.reason.startswith(u"stopped looking"), once.reason
+    lab.now[0] += timedelta(days=1)
+    after, = lab.run(untimed=u"same_provider").results
+    assert after.skip == pipeline.NEGATIVE and lab.spent == 0, after.reason
+
+
+def test_15_changing_the_choice_starts_a_new_week(tmp_path):
+    u"""Fork 13: a change of the choice looks at once and starts its own week."""
+    lab = road(tmp_path, pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    lab.run(untimed=u"same_provider")
+    lab.now[0] += timedelta(hours=2)          # the day's wait still stands
+    changed, = lab.run(untimed=u"any_provider").results
+    assert changed.outcome == pipeline.CONFIDENT and lab.spent == 1, changed.reason
+
+
+def test_15_only_bilingual_files_read_as_not_japanese_and_wait(tmp_path):
+    u"""Edge 7: the one check this road has is the Japanese READ. Every file failing it ->
+    a wait saying so -- ⛔ and nothing recorded as refused (no permanent verdict from a
+    heuristic: it must stay available to the audio road)."""
+    lab = road(tmp_path, body=mixed_body)
+    one, = lab.run(untimed=u"any_provider", candidates=2).results
+    assert one.outcome == pipeline.NOT_FOUND, one.reason
+    assert one.reason.startswith(u"none of the 2 files for this episode reads as "
+                                 u"Japanese"), one.reason
+    assert placed_in(lab) == [] and lab.rows()[pipeline.REFUSED] == 0
+    video = lab.hash_of(SEIHANTAI % 1)
+    assert not any(lab.db.refused(video, u"ja", ROAD_ENTRY, name, None, None)
+                   for name in lab.downloads)
+
+
+def test_15_a_placed_file_deleted_is_placed_again_for_nothing(tmp_path):
+    u"""Edge 10: the placed file deleted, its original kept -> placed again, zero network,
+    as a timed one is re-synced."""
+    lab = road(tmp_path)
+    one, = lab.run(untimed=u"same_provider").results
+    os.remove(one.output_path)
+    again, = lab.run(untimed=u"same_provider").results
+    assert again.outcome == pipeline.CONFIDENT and again.untimed[u"tier"] == u"exact"
+    assert Path(again.output_path).read_bytes() == JA_ASS
+    assert lab.spent == 0 and len(lab.downloads) == 1
+
+
+def test_15_both_deleted_downloads_again(tmp_path):
+    lab = road(tmp_path)
+    one, = lab.run(untimed=u"same_provider").results
+    os.remove(one.output_path)
+    os.remove(one.kept_path)
+    again, = lab.run(untimed=u"same_provider").results
+    assert again.outcome == pipeline.CONFIDENT and len(lab.downloads) == 2
+
+
+def test_15_the_setting_turned_off_keeps_the_files_and_places_no_new_ones(tmp_path):
+    u"""Edge 13."""
+    lab = road(tmp_path, numbers=(1, 4))
+    lab.run(untimed=u"same_provider")
+    before = placed_in(lab)
+    (lab.media / before[0]).unlink()
+    report = lab.run()
+    assert placed_in(lab) == before[1:], u"a file came back with the setting off"
+    assert sorted(r.skip for r in report.results) == sorted([pipeline.NO_TRACK,
+                                                             pipeline.PRESENT])
+
+
+def test_15_a_video_with_any_usable_track_keeps_the_timed_road(tmp_path):
+    u"""⛔ Edge 1: a video with ANY usable track -- English, a picture track -- is timed as
+    today; this road never runs for it."""
+    lab = road(tmp_path, numbers=(1, 4))
+    lab.tracks[SEIHANTAI % 1] = Answer()                          # English text
+    lab.tracks[SEIHANTAI % 4] = Answer(tracks=[Track(text=False, bitmap=True,
+                                                     codec=u"S_HDMV/PGS")])
+    report = lab.run(untimed=u"any_provider")
+    assert all(r.untimed is None for r in report.results), [r.untimed for r in report.results]
+    assert not any(n.endswith((u".jpn.ass", u".jpn.srt")) for n in placed_in(lab))
+
+
+def test_15_the_plan_says_what_it_would_download_and_writes_nothing(tmp_path):
+    u"""Edge 9: a dry run makes the metered calls a timed plan makes, downloads nothing,
+    writes nothing, records nothing -- and says NOT TIMED and whose."""
+    lab = road(tmp_path)
+    one, = lab.run(untimed=u"same_provider", dry_run=True).results
+    assert one.outcome == pipeline.PLANNED, one.reason
+    assert one.reason.startswith(u"would download [NanakoRaws]") and \
+        one.reason.endswith(u"-- not timed (same provider)"), one.reason
+    assert lab.downloads == [] and placed_in(lab) == [] and sum(lab.rows().values()) == 0
+    assert lab.spent == 1
+
+
+def test_15_a_folder_that_cannot_be_written_is_an_error_before_any_request(tmp_path):
+    u"""Edge 17: the 14z gate, unchanged, on this road too."""
+    lab = road(tmp_path)
+    put_back = _unwritable(lab.media)
+    try:
+        one, = lab.run(untimed=u"same_provider").results
+    finally:
+        put_back()
+    assert one.outcome == pipeline.ERROR and u"cannot be written" in one.reason, one.reason
+    assert lab.spent == 0 and lab.downloads == [] and sum(lab.rows().values()) == 0
+
+
+def test_15_out_places_it_in_the_mirrored_folder(tmp_path):
+    u"""Edge 16."""
+    lab = road(tmp_path)
+    one, = lab.run(untimed=u"same_provider", out=lab.out).results
+    assert one.outcome == pipeline.CONFIDENT, one.reason
+    assert Path(one.output_path).parent == lab.out and placed_in(lab) == []
+    again, = lab.run(untimed=u"same_provider", out=lab.out).results
+    assert again.skip == pipeline.PRESENT and again.untimed, again.reason
+
+
+def test_15_a_two_episode_name_is_refused_as_today(tmp_path):
+    u"""Edge 8."""
+    lab = road(tmp_path, names=[u"[NanakoRaws] Seihantai na Kimi to Boku - 01-02 (TBS).mkv"])
+    one, = lab.run(untimed=u"same_provider").results
+    assert one.outcome == pipeline.REFUSED and u"episodes 1-2" in one.reason, one.reason
+    assert lab.spent == 0
+
+
+def test_15_a_placed_file_is_copied_to_surasura(tmp_path):
+    u"""Fork 8: surasura receives every subtitle hato writes -- this one too."""
+    lab = road(tmp_path)
+    shelf = lab.root / u"surasura"
+    one, = lab.run(untimed=u"same_provider", surasura_dir=shelf).results
+    copy = shelf / keep.SURASURA_FOLDER / os.path.basename(one.output_path)
+    assert copy.read_bytes() == JA_ASS
+
+
+def test_15_a_write_that_fails_is_an_error_with_no_wait(tmp_path):
+    u"""🚨 `LEDGER-HOT.md`: a failed WRITE is never a verdict -- an ERROR, and NO wait:
+    the next run tries again the moment the disk is fixed. ⚠ 15z (C11): and it carries
+    no `untimed` -- the contract is null on every row but a PLACED one."""
+    lab = road(tmp_path)
+
+    class Refused(object):
+        ok, reason, write_failed, output_path, notes = True, u"it is locked", True, None, ()
+
+    report = pipeline.run(
+        lab.settings(untimed=u"same_provider"), client=lab.client, db=lab.db,
+        resolutions=lab.resolutions, cache=lab.cache, downloader=lab.download,
+        engine=lab.engine, reader=lab.reader, placer=lambda *a, **k: Refused())
+    one, = report.results
+    assert one.outcome == pipeline.ERROR and u"it is locked" in one.reason, one.reason
+    assert one.untimed is None, one.untimed
+    assert lab.rows()[pipeline.NOT_FOUND] == 0 and lab.rows()[pipeline.CONFIDENT] == 0
+
+
+def test_15_a_tsubasa_that_cannot_place_says_so_and_fetches_nothing(tmp_path, monkeypatch):
+    u"""⚠ A source checkout below the floor (0.1.10): no `place_subtitle`. The skip says
+    so; nothing is fetched for a file that could not be placed."""
+    lab = road(tmp_path)
+    monkeypatch.delattr(tsubasa, "place_subtitle", raising=False)
+    one, = lab.run(untimed=u"same_provider").results
+    assert one.skip == pipeline.NO_TRACK and u"0.1.10 can" in one.reason, one.reason
+    assert lab.spent == 0
+
+
+def test_15_a_timed_file_beside_a_placed_one_answers_first(tmp_path, monkeypatch):
+    u"""⭐ `present.find`: a `.jpn.` file answers LAST. Beside a `.ja.` one the video has a
+    subtitle something may have timed, and marking the row *not timed* would be wrong.
+
+    ⚠ IN EITHER ORDER THE FOLDER LISTS THEM. NTFS lists `.ja.` before `.jpn.` by the
+    alphabet; ext4 lists in hash order. Run only in the alphabet's order, this check
+    passed with the rule taken out (M15-34 SURVIVED the gate, 2026-09-26)."""
+    lab = road(tmp_path)
+    one, = lab.run(untimed=u"same_provider").results
+    timed = Path(one.output_path.replace(u".jpn.", u".ja."))
+    timed.write_bytes(u"timed".encode("utf-8"))
+    listing = present._listing
+    for backwards in (False, True):
+        monkeypatch.setattr(present, "_listing", lambda folder, b=backwards: tuple(
+            sorted(listing(folder), reverse=b)))
+        again, = lab.run(untimed=u"same_provider").results
+        assert again.skip == pipeline.PRESENT and again.untimed is None, (backwards,
+                                                                          again.untimed)
+        assert again.output_path == str(timed), (backwards, again.output_path)
+
+
+class Without(object):
+    u"""The real recorded client, with some of an entry's files LEFT OUT of its listing --
+    a provider's episode missing, or only one format. -> `files()` filtered by `drop`."""
+
+    def __init__(self, inner, drop):
+        self._inner, self._drop = inner, drop
+
+    @property
+    def metered(self):
+        return self._inner.metered
+
+    def search(self, *args, **kwargs):
+        return self._inner.search(*args, **kwargs)
+
+    def files(self, entry_id):
+        return [f for f in self._inner.files(entry_id) if not self._drop(f[u"name"])]
+
+    def download(self, item):
+        return self._inner.download(item)
+
+
+def _seihantai(episode, group=u"NanakoRaws"):
+    return u"[%s] Seihantai na Kimi to Boku - %02d " % (group, episode)
+
+
+def test_15_a_name_hato_could_not_find_again_is_never_placed(tmp_path):
+    u"""🚨 15z (B5, C6) -- a name hato's own present-check cannot COUNT is placed NEVER: the
+    next run called the video bare and fetched for it again, every day, beside a stray
+    `.jpn.`. ⭐ Asked BEFORE the write (`place_subtitle(write=False)`'s `target`, judged by
+    `Presence.would_find`): a REFUSED -- the fix is a rename -- bounded to the week.
+    ⚠ Portable (O1): the name tsubasa trims is stood in for, so no 255-unit video name
+    has to exist on the machine the check runs on."""
+    lab = road(tmp_path)
+    stem = SEIHANTAI[:-len(u".mkv")] % 1
+    cut = stem[:40] + u".jpn.ass"
+    asked = []
+
+    def placer(video, subtitle, write=False, out_dir=None, lang_tag=None):
+        asked.append(write)
+        got = tsubasa.place_subtitle(video, subtitle, write=False, out_dir=out_dir,
+                                     lang_tag=lang_tag)
+        got.target = os.path.join(out_dir or os.path.dirname(video), cut)
+        got.notes = (u"the name was cut to fit the file system",)
+        return got
+
+    report = pipeline.run(
+        lab.settings(untimed=u"same_provider"), client=lab.client, db=lab.db,
+        resolutions=lab.resolutions, cache=lab.cache, downloader=lab.download,
+        engine=lab.engine, reader=lab.reader, placer=placer)
+    one, = report.results
+    assert one.outcome == pipeline.REFUSED, (one.outcome, one.reason)
+    assert one.reason.startswith(u"its subtitle would have to be named %s, a name hato could "
+                                 u"not find beside the video again" % cut), one.reason
+    assert u"A shorter video name fixes it" in one.reason, one.reason
+    assert u"looks once a day until" in one.reason and one.untimed_wait, one.reason
+    assert True not in asked and asked, u"it WROTE a file it could not find again: %r" % asked
+    assert placed_in(lab) == [] and one.untimed is None
+    assert lab.rows()[pipeline.CONFIDENT] == 0 and lab.rows()[pipeline.NOT_FOUND] == 1
+    # ⭐ the file it would write, counted: the real placer's own name -- placed
+    fine, = lab.run(untimed=u"same_provider", force=True).results
+    assert fine.outcome == pipeline.CONFIDENT, fine.reason
+
+
+def test_15_a_placed_file_hato_cannot_count_is_still_an_error(tmp_path):
+    u"""⭐ 14z's A-5, behind the pre-check: a placer that NAMED one file and WROTE another --
+    one the present-check cannot count -- is an ERROR from the first run, nothing
+    recorded: the next run would call the video bare and place it again, for ever."""
+    lab = road(tmp_path)
+    stem = SEIHANTAI[:-len(u".mkv")] % 1
+
+    def placer(video, subtitle, write=False, out_dir=None, lang_tag=None):
+        got = tsubasa.place_subtitle(video, subtitle, write=False, out_dir=out_dir,
+                                     lang_tag=lang_tag)
+        if write:
+            landed = os.path.join(out_dir or os.path.dirname(video), stem[:40] + u".jpn.ass")
+            with open(landed, "wb") as handle:
+                handle.write(JA_ASS)
+            got.output_path = landed
+        return got
+
+    report = pipeline.run(
+        lab.settings(untimed=u"same_provider"), client=lab.client, db=lab.db,
+        resolutions=lab.resolutions, cache=lab.cache, downloader=lab.download,
+        engine=lab.engine, reader=lab.reader, placer=placer)
+    one, = report.results
+    assert one.outcome == pipeline.ERROR, (one.outcome, one.reason)
+    assert u"players will not load it with the video" in one.reason, one.reason
+    assert lab.rows()[pipeline.CONFIDENT] == 0 and lab.rows()[pipeline.NOT_FOUND] == 0
+
+
+def test_15_no_file_numbered_for_the_episode_says_so(tmp_path):
+    u"""⭐ 15z (B1) -- under `any_provider`, an episode jimaku holds only GUESSES for (no file
+    numbered for it): nothing is placed, and the wait says so -- ⛔ never what else exists."""
+    lab = road(tmp_path)
+    lab.client = Without(lab.real, lambda n: u" - 01 " in n or u"S01E01" in n)
+    one, = lab.run(untimed=u"any_provider").results
+    assert one.outcome == pipeline.NOT_FOUND, (one.outcome, one.reason)
+    assert one.reason.startswith(untimed_module.NO_FIT), one.reason
+    assert lab.downloads == [] and placed_in(lab) == []
+
+
+def test_15_the_present_check_judges_a_name_before_it_is_written(tmp_path):
+    u"""⭐ 15z (B5) -- `Presence.would_find`: the very rule `find` applies, on a name not
+    yet written -- the video's name with a language counts; a TRIMMED stem, a forced
+    flag, another video's name do not. ⛔ Nothing on disk is read."""
+    look = present.Presence(u"ja")
+    video = str(tmp_path / u"Show - 01.mkv")
+    assert look.would_find(video, u"Show - 01.jpn.ass")
+    assert look.would_find(video, u"Show - 01.ja.srt")
+    for name in (u"Show - 0.jpn.ass", u"Show - 01.jpn.forced.ass", u"Show - 02.jpn.ass",
+                 u"Show - 01.en.ass"):
+        assert not look.would_find(video, name), name
+    assert not os.path.exists(str(tmp_path)) or os.listdir(str(tmp_path)) == []
+
+
+def test_15_a_guessed_episode_is_never_placed_by_its_name(tmp_path):
+    u"""🚨 15z's BLOCKER (B1): with the provider's episode-01 file MISSING, the alignment's
+    guesses -- there for TIMING to refuse -- were tiered and placed: `… - 02 ….ass` as
+    `… - 01 ….jpn.ass`, *"same provider"*. ⭐ Only a number PROVEN across the release
+    (`untimed.FITS`) is placed; episode 01 waits, and 02 and 03 get their own."""
+    lab = road(tmp_path, numbers=(1, 2, 3))
+    lab.client = Without(lab.real, lambda n: n.startswith(_seihantai(1)))
+    report = lab.run(untimed=u"same_provider")
+    by = dict((r.episode, r) for r in report.results)
+    assert by[1].outcome == pipeline.NOT_FOUND, (by[1].outcome, by[1].reason)
+    for n in (2, 3):
+        assert by[n].outcome == pipeline.CONFIDENT, (n, by[n].reason)
+        assert os.path.basename(by[n].output_path).startswith(_seihantai(n)), by[n].output_path
+    assert not any(d.startswith(_seihantai(4)) for d in lab.downloads), lab.downloads
+    assert sorted(lab.downloads) == sorted(set(lab.downloads)), lab.downloads
+
+
+def test_15_a_likely_entry_places_nothing_by_its_name(tmp_path):
+    u"""🚨 15z (C1) -- a LOW-CONFIDENCE entry is only a likely match: the timed road checks
+    its guess by timing, this one cannot -- the S2 entry's 01 was placed beside an S1 01,
+    *"same provider"*. It waits, bounded, and downloads nothing."""
+    lab = road(tmp_path, low_confidence=True)
+    one, = lab.run(untimed=u"any_provider").results
+    assert one.outcome == pipeline.NOT_FOUND, (one.outcome, one.reason)
+    assert one.reason.startswith(untimed_module.UNSURE_SHOW), one.reason
+    assert lab.downloads == [] and placed_in(lab) == [] and one.untimed_wait
+
+
+def test_15_the_tier_comes_before_the_format(tmp_path):
+    u"""🚨 15z (B4, C5) -- the FORMAT filter ran before the tier, so a wait's words were
+    about files the choice never takes: the provider's own `.srt` read *"nothing from
+    [NanakoRaws]"*, and another provider's `.srt` made a 9a wait (*"only as .srt"*) that
+    turning the fallback on answered with *"nothing from"*."""
+    lab = road(tmp_path / u"own")
+    lab.client = Without(lab.real, lambda n: n.startswith(u"[NanakoRaws]") and n.endswith(u".ass"))
+    own, = lab.run(untimed=u"same_provider", prefer_format=u"ass",
+                   format_fallback=False).results
+    assert own.outcome == pipeline.NOT_FOUND and formats.only_as(own.reason) == (u"srt",), (
+        own.reason)
+    taken, = lab.run(untimed=u"same_provider", prefer_format=u"ass",
+                     format_fallback=True).results
+    assert taken.outcome == pipeline.CONFIDENT, taken.reason
+    assert taken.output_path.endswith(u".jpn.srt"), taken.output_path
+    lab = road(tmp_path / u"other",
+               pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    lab.client = Without(lab.real, lambda n: not (n.startswith(u"[NanakoRaws]")
+                                                   and n.endswith(u".srt")))
+    other, = lab.run(untimed=u"same_provider", prefer_format=u"ass",
+                     format_fallback=False).results
+    assert other.outcome == pipeline.NOT_FOUND, other.reason
+    assert other.reason.startswith(u"nothing from [Other] for this episode"), other.reason
+    assert formats.only_as(other.reason) is None, u"a 9a wait over another provider's file"
+
+
+def test_15_another_providers_file_is_not_placed_again_under_same_provider(tmp_path):
+    u"""🚨 15z (B3) -- a file placed under `any_provider` (tier other) and deleted came back
+    under `same_provider`: the re-place ignored the choice NOW. ⭐ Only a tier the choice
+    takes is placed again; under `any_provider` still, for nothing."""
+    lab = road(tmp_path, pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    one, = lab.run(untimed=u"any_provider").results
+    assert one.outcome == pipeline.CONFIDENT and one.untimed[u"tier"] == u"other", one.reason
+    os.remove(one.output_path)
+    same, = lab.run(untimed=u"same_provider").results
+    assert same.outcome == pipeline.NOT_FOUND and placed_in(lab) == [], (same.outcome,
+                                                                          same.reason)
+    again, = lab.run(untimed=u"any_provider").results
+    assert again.outcome == pipeline.CONFIDENT and lab.spent == 0, (again.reason, lab.spent)
+
+
+def test_15_a_short_episode_s_whole_script_is_placed(tmp_path):
+    u"""⭐ 15z (B6) -- *reads as Japanese* on this road is `untimed.MIN_LINES`, not 9b's 100
+    (a PRESENCE floor): a 3-minute short's whole script is ~40 lines and could never be
+    placed. ⛔ The two SHARES still stand: a 40-line bilingual file is turned away."""
+    short = subs.ass(subs.lines(subs.JA, 40)).encode("utf-8")
+    lab = road(tmp_path / u"ja", body=lambda item: short)
+    one, = lab.run(untimed=u"same_provider").results
+    assert one.outcome == pipeline.CONFIDENT, one.reason
+    mixed = subs.ass([t for pair in zip(subs.lines(subs.JA, 20), subs.lines(subs.ZH, 20))
+                      for t in pair]).encode("utf-8")
+    lab = road(tmp_path / u"mixed", body=lambda item: mixed)
+    two, = lab.run(untimed=u"same_provider", candidates=1).results
+    assert two.outcome == pipeline.NOT_FOUND and u"reads as Japanese" in two.reason, two.reason
+    assert present.reads_as_japanese.__defaults__ == (present.MIN_LINES,), (
+        u"9b's own floor moved")
+
+
+def test_15_no_jimaku_entry_at_all_looks_once_a_day_like_the_others(tmp_path):
+    u"""🚨 15z (B7, D6) -- a show jimaku has NO ENTRY for -- a new raw's likeliest miss --
+    waited its 30 days, past the week: ONE look, then *"stopped looking"*. ⭐ Every wait on
+    this road looks once a day for its week, then stops."""
+    lab = Lab(tmp_path, names=[SEIHANTAI % 1], blind=True)
+    lab.tracks[SEIHANTAI % 1] = Answer(tracks=())
+    one, = lab.run(untimed=u"any_provider").results
+    looked = lab.spent
+    assert one.outcome == pipeline.NOT_FOUND and looked, (one.outcome, one.reason)
+    assert one.reason.startswith(u"no jimaku entry matched"), one.reason
+    assert u"looks once a day until" in one.reason, one.reason
+    assert one.retry_after == lab.now[0] + timedelta(days=1), one.retry_after
+    lab.now[0] += timedelta(days=1, minutes=5)
+    two, = lab.run(untimed=u"any_provider").results
+    assert two.outcome == pipeline.NOT_FOUND and lab.spent == looked, (two.reason, lab.spent)
+    lab.now[0] += timedelta(days=40)
+    again, = lab.run(untimed=u"any_provider").results
+    assert again.skip == pipeline.NEGATIVE and lab.spent == 0, again.reason
+    assert again.reason.startswith(u"stopped looking"), again.reason
+
+
+def test_15_a_next_look_past_the_stop_is_stopped_already(tmp_path):
+    u"""🚨 15z (C2) -- the week's last look falls short of the stop by minutes: its next look
+    is PAST it, so nothing will look again -- yet the skip carried that date as a retry,
+    and every surface said *"waiting"*. ⭐ `formats.untimed_stopped`, at the gate."""
+    lab = road(tmp_path, pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    lab.run(untimed=u"same_provider")
+    lab.now[0] += timedelta(days=6, hours=2)        # a look whose next falls past the stop
+    last, = lab.run(untimed=u"same_provider").results
+    assert last.outcome == pipeline.NOT_FOUND and lab.spent == 1, last.reason
+    assert last.reason.startswith(u"stopped looking"), last.reason
+    lab.now[0] += timedelta(hours=1)                # before the stop itself
+    skip, = lab.run(untimed=u"same_provider").results
+    assert skip.skip == pipeline.NEGATIVE and skip.retry_after is None, skip.retry_after
+    assert skip.reason.startswith(u"stopped looking") and lab.spent == 0, skip.reason
+    assert report_module._kind(skip) == report_module.UNTIMED_STOPPED
+
+
+def test_15z_the_printed_stop_day_is_the_day_every_surface_says(tmp_path):
+    u"""⚠ 15z (C10) -- Mode A printed a wait's stop as the ISO's own date, UTC's: a day off
+    the row's *"until 3 Oct"* (the machine's zone) for anyone far enough east or west.
+    ⭐ `formats.untimed_day`, the one copy."""
+    lab = road(tmp_path, pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    lab.run(untimed=u"same_provider")
+    lab.now[0] += timedelta(hours=2)
+    report = lab.run(untimed=u"same_provider")
+    wait = report.results[0].untimed_wait
+    day = formats.untimed_day(datetime.fromisoformat(wait[u"stops"]))
+    shown = _mode_a(report)
+    assert u"(the first stops %s)" % day in shown, shown
+    assert wait[u"stops"][:10] not in shown, shown
+
+
+def test_15z_a_word_one_column_wider_than_the_room_is_still_broken(tmp_path):
+    u"""⚠ 15z (C13, pre-existing) -- `wrap` asked `clip(word, room + 1)`: a word exactly one
+    column wider than the room came back UNclipped, and its line ran one over (34 of 3,000
+    fuzzed). ⭐ Every width, every word length up to two and a half lines -- so a piece
+    lands exactly one column past the room on the first line AND on a line after it
+    (the gate's M15-110 survived a fuzz that stopped short of one line) -- never over."""
+    for width in range(20, 41):
+        for length in range(width - 6, 2 * width + width // 2):
+            word = u"x" * length
+            for first in (u"", u"head ", u"a longer head "):
+                lines = report_module.wrap(word, width, first=first, rest=u"    ")
+                over = [ln for ln in lines if report_module.cells(ln) > width]
+                assert not over, (width, length, first, over)
+                assert sum(ln.count(u"x") for ln in lines) == len(word), (
+                    u"a letter lost", width, length, first, lines)
+
+
+def test_15_a_plan_s_wait_is_still_the_roads_and_promises_nothing(tmp_path):
+    u"""⚠ 15z -- a dry run's wait carries `untimed_wait` (no surface may read it as the
+    timed road's: C12 filed it *"not on jimaku"*) and ⛔ no schedule: a plan starts none."""
+    lab = road(tmp_path, pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    one, = lab.run(untimed=u"same_provider", dry_run=True).results
+    assert one.outcome == pipeline.NOT_FOUND and one.untimed_wait, one.untimed_wait
+    assert u"looks once a day" not in one.reason and one.retry_after is None, one.reason
+    assert report_module._kind(one) == report_module.UNTIMED_WAITING
+    assert sum(lab.rows().values()) == 0
+
+
+# ---------------------------------------------------------------------------
+# 15c -- what the CLI says: EVERY surface says NOT TIMED (HANDOFF §7)
+# ---------------------------------------------------------------------------
+
+def test_15c_the_printed_run_says_not_timed_and_whose_and_never_a_percentage(tmp_path):
+    u"""⭐ Mode A (ruled): `✓ 01  ≈ not timed · same provider  → ….jpn.ass`, tier 3 `…
+    another provider, may be off`; the summary *"N fetched, not timed"* -- ⛔ never a
+    percentage (fork 4), never *"fetched"* alone. ⚠ The ENGINE's counts stay CONFIDENT."""
+    lab = road(tmp_path / u"same")
+    report = lab.run(untimed=u"same_provider")
+    shown = _mode_a(report)
+    assert u"≈ not timed · same provider → [NanakoRaws]" in shown or \
+        u"≈ not timed · same provider → …" in shown, shown
+    assert u".jpn.ass" in shown and u"1 fetched, not timed" in shown, shown
+    assert u"%" not in shown and u" 1 fetched ·" not in shown + u" ·", shown
+    assert dict(report.counts()) == {pipeline.CONFIDENT: 1}, report.counts()
+    other = road(tmp_path / u"other",
+                 pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    shown = _mode_a(other.run(untimed=u"any_provider"))
+    assert u"≈ not timed · another provider, may be off" in shown, shown
+
+
+def test_15c_a_present_file_placed_untimed_is_said_on_the_present_line(tmp_path):
+    lab = road(tmp_path, numbers=(1, 4))
+    lab.run(untimed=u"same_provider")
+    shown = _mode_a(lab.run(untimed=u"same_provider"))
+    assert u"subtitle already present" in shown and u"· 01 04 not timed" in shown, shown
+
+
+def test_15c_a_wait_says_when_it_stops_and_a_stopped_one_says_so_never_dry_run(tmp_path):
+    u"""A wait's line names its END; a stopped one says it stopped -- ⛔ and never
+    *"nothing was recorded (dry run)"* over a real run: a stopped wait has no retry date,
+    and that is not a dry run."""
+    lab = road(tmp_path, pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    shown = _mode_a(lab.run(untimed=u"same_provider"))
+    assert u"NOT FOUND" in shown and u"looks once a day until" in shown, shown
+    assert u"will retry after" not in shown and u"dry run" not in shown, shown
+    lab.now[0] += timedelta(hours=3)
+    shown = _mode_a(lab.run(untimed=u"same_provider"))
+    assert u"nothing to place by its name yet — looks once a day for a week, then stops" \
+        in shown and u"(the first stops" in shown, shown
+    assert u"1 waiting for a file by its name" in shown, shown
+    lab.now[0] += timedelta(days=8)
+    shown = _mode_a(lab.run(untimed=u"same_provider"))
+    assert u"stopped; `--retry-now` looks once more" in shown, shown
+    assert u"1 stopped looking" in shown and u"dry run" not in shown, shown
+    for word in (u"another provider", u"any_provider", u"setting"):
+        assert word not in shown, word
+
+
+def test_15c_the_plan_counts_what_it_would_fetch_not_timed(tmp_path):
+    lab = road(tmp_path)
+    report = lab.run(untimed=u"same_provider", dry_run=True)
+    shown = u" ".join(u" ".join(report_module.render_plan(report)).split())
+    assert u"1 to fetch, not timed" in shown, shown
+    # ⚠ Mode B prints COUNTS, never a row's reason, on either road: the row's own words
+    # (*"would download … -- not timed (same provider)"*) travel in `--json`, checked by
+    # `test_15_the_plan_says_what_it_would_download_and_writes_nothing`.
+    assert u"1 to fetch ·" not in shown + u" ·", u"a download not timed counted as a timed one"
+
+
+def test_15c_the_json_carries_the_tier_and_the_wait_added_never_renamed(tmp_path):
+    u"""`--json`, NDJSON and `--progress` all go through `report.as_dict`: `untimed` =
+    `{tier, provider, video_provider}` on a placed row, `untimed_wait` = `{choice, since,
+    stops, waits_for}` on a wait -- null on every other row."""
+    lab = road(tmp_path / u"placed")
+    row = report_module.as_dict(lab.run(untimed=u"same_provider").results[0])
+    assert row[u"untimed"] == {u"tier": u"exact", u"provider": u"NanakoRaws",
+                               u"video_provider": u"NanakoRaws"}, row[u"untimed"]
+    assert row[u"untimed_wait"] is None
+    lab = road(tmp_path / u"waits",
+               pattern=u"[Other] Seihantai na Kimi to Boku - %02d (TBS 1080p).mkv")
+    row = report_module.as_dict(lab.run(untimed=u"same_provider").results[0])
+    assert row[u"untimed"] is None and sorted(row[u"untimed_wait"]) == [
+        u"choice", u"since", u"stops", u"waits_for"], row[u"untimed_wait"]
+    json.dumps(row)                                   # ⛔ every value plain JSON
+
+
+def test_15c_the_flag_chooses_for_one_run_and_the_file_stands_otherwise(tmp_path, monkeypatch):
+    u"""`--untimed` for ONE run, as `--archives`: the file's choice stands when it is not
+    given, and a value that is not one of the three is refused by argparse."""
+    import argparse
+    from hato.commands import run as run_cmd
+    parser = argparse.ArgumentParser()
+    run_cmd.register(parser)
+    assert parser.parse_args([u"--untimed", u"any_provider"]).untimed == u"any_provider"
+    assert parser.parse_args([]).untimed is None, u"the flag decided for the file"
+    with pytest.raises(SystemExit):
+        parser.parse_args([u"--untimed", u"on"])
+    cfg = config.parse(u'untimed = "same_provider"\n')
+    for given, want in ((None, u"same_provider"), (u"off", u"off"),
+                        (u"any_provider", u"any_provider")):
+        settings = pipeline.Settings.from_config(cfg, folders=[str(tmp_path)],
+                                                 subs_dir=str(tmp_path / u"subs"),
+                                                 untimed=given)
+        assert settings.untimed == want, (given, settings.untimed)

@@ -4,6 +4,8 @@ The things tsubasa does not publish about a subtitle NAME, derived by hato in ON
 module (spec/RUNBOOK.md T1 scope table; orchestrator ruling 2, 2026-09-17).
 
     release_group(name)    who released it -- never empty
+    bracketed_group(name)  the `[Group]` a name opens with, or None (LAYER 15)
+    source_classes(name)   the sources it states -- TV · BD · DVD · WEB (LAYER 15)
     episode_span(name)     (1, 2) for a file holding episodes 1-2; None for one episode
     is_special(name)       SP / OVA / OAD / NCOP / NCED / S00 / 特別編 / 総集編 / 番外編
     version(name)          2 for `06v2`; 1 when the name carries none
@@ -323,7 +325,9 @@ def year(name):
 # Entry 11446's 20 unbracketed files are TWO releases, measured on the capture:
 # `…WEBRip.Amazon.ja-jp[sdh].srt` (10) and `…WEBRip.Netflix.ja[cc].srt` (10).
 
-_LEADING_BRACKET = re.compile(r"^\s*\[([^\[\]]+)\]")
+#: ⚠ 15z (B13) -- and the FULL-WIDTH brackets a Japanese group opens with (`【NanakoRaws】`,
+#: `［NanakoRaws］`): read as no provider, such a video matched nothing under `same_provider`.
+_LEADING_BRACKET = re.compile(r"^\s*(?:\[([^\[\]]+)\]|［([^［］]+)］|【([^【】]+)】)")
 _DISTRIBUTORS = frozenset(u"netflix amazon hulu bandai nf amzn fod u-next abema kktv viki dsnp "
                           u"tver dmmtv wowow abema-tv cr disney+ telasa dmm iqiyi unext nhk+ paravi".split())
 _SOURCES = frozenset(u"webrip web-dl hdtv bd bluray dvd bdrip web dvdrip blu-ray tvrip".split())
@@ -341,6 +345,86 @@ def release_group(name):
         return m.group(1).strip()
     fingerprint = _unbracketed_fingerprint(name)
     return fingerprint or name or u"(unnamed)"
+
+
+def bracketed_group(name):
+    """The group a name OPENS with in brackets -- `[NanakoRaws]` -- or None (LAYER 15).
+    ⚠ Only the leading bracket: an unbracketed name's fingerprint (`release_group`) is a
+    set of tokens, not a provider a person would recognise, and it never matches one."""
+    m = _LEADING_BRACKET.match(name)
+    group = next((g for g in m.groups() if g is not None), u"") if m else u""
+    return group.strip() or None
+
+
+# ---------------------------------------------------------------------------
+# source_classes -- LAYER 15's "same provider", ruled 2026-09-26 (fork 7)
+# ---------------------------------------------------------------------------
+# *"only do it if it's the same provider and episode"*: one group can release a show
+# from two SOURCES (a TV capture, then the BD), and those are different cuts and
+# different timing. ⭐ So a group matches only when the two names do not state
+# DIFFERENT sources -- a name that states none never vetoes. Measured over the
+# catalog's 233,877 distinct names, words inside a bracket or paren group (2026-09-26,
+# `%TEMP%\hato-15\probes\p_sources.py`):
+#   TV   tv 19,440 · at-x 15,922 · tx 2,566 · tbs 1,811 · ex-cs2 1,040 · ex 998 ·
+#        ntv 784 · cs-ex1 618 · cx 542 · nhke 408 · tva 405 · mx 392 · hdtv 386 ·
+#        bs-tx 327 · nhkg 299 · animax 290 · bs-ex 213 · bs8 203 · fujitv 185 ·
+#        abc 164 · wowow 159 · bs4 145 · tvo 135 · ktv 132 · cbc 132 · bs-animax 129 ·
+#        nhk 128 · nhkp 125 · bs-fuji 125 · bsp 112 · bs-shochiku 110 · bs-ntv 102 ·
+#        tvrip 92 · bs260 91 · bs11 88 · nhk-g 83 · wowow-prime 76 · cs-tbs2 76 ·
+#        ex-cs1 69 · ctv 63 · bsn 28 · kids 1,061 (Kids Station, `(KIDS 1440x1080 …)`)
+#        -- every sample read was a broadcaster in a capture's descriptor:
+#        `(TBS 1080p HEVC AAC)`, `(EX 1920x1080 x265 AAC)`, `(WOWOW 1920x1080 …)`
+#   BD   bd 7,024 · bdrip 4,104 · blu-ray 526 · bd720p 496 · bd1080p 401 · bluray 155 ·
+#        bd-rm 70
+#   DVD  dvd 1,142 · dvdrip 1,114 · dvdsub 92 -- ⚠ its own class, beside the ruled
+#        three: a DVD and a BD of one show are different masters
+#   WEB  webrip 5,002 · web-dl 1,447 · webdl 1,360 · netflix 859 · nf 638 · web 609 ·
+#        crunchyroll 268 · amzn 219 · tver 171 · cr 170 · dsnp 132 · dmm 69 -- and
+#        every distributor `_DISTRIBUTORS` knows, ⚠ EXCEPT `wowow`: in a name it is the
+#        satellite BROADCASTER (159 of 159 read), so it is TV
+# ⛔ A broadcaster's call sign is read ONLY inside a bracket or paren group: as a bare
+# token `kids`, `ex` and `abc` are ordinary words in titles. The unambiguous source
+# words (webrip, bdrip, hdtv, the distributors) are read from the dot tokens too, which
+# is where a scene-style name keeps them (`Show.S01E01.WEBRip.srt`).
+_TV = frozenset(u"tv hdtv tvrip tbs ntv at-x atx tx ex cx mx tva tvo ktv cbc abc ctv "
+                u"mbs ytv tvk nhk nhke nhkg nhk-g nhkp bsp bs4 bs8 bs11 bs260 bsn bs-tx "
+                u"bs-ex bs-ntv bs-fuji bs-tbs bs-animax bs-shochiku animax kids wowow "
+                u"wowow-prime ex-cs1 ex-cs2 cs-ex1 cs-tbs2 fujitv".split())
+_BD = frozenset(u"bd bdrip blu-ray bluray bd720p bd1080p bd-rm bdmv bdremux".split())
+_DVD = frozenset(u"dvd dvdrip dvdsub".split())
+_WEB = frozenset(u"web webrip web-dl webdl crunchyroll".split()) | (_DISTRIBUTORS
+                                                                    - frozenset([u"wowow"]))
+#: The words that name a source whatever surrounds them -- safe as a bare dot token.
+_UNAMBIGUOUS_SOURCES = frozenset(u"webrip web-dl webdl bdrip bluray blu-ray bdremux hdtv "
+                                 u"tvrip dvdrip".split()) | (_DISTRIBUTORS
+                                                             - frozenset([u"wowow", u"cr"]))
+_SOURCE_CLASSES = ((u"TV", _TV), (u"BD", _BD), (u"DVD", _DVD), (u"WEB", _WEB))
+_SOURCE_WORDS = re.compile(r"[\s,&+_/;.]+")
+
+
+def source_classes(name):
+    """The SOURCES a name states -- `TV`, `BD`, `DVD`, `WEB` -- as a frozenset, empty when
+    it states none. tsubasa publishes no source -- a candidate for tsubasa to expose."""
+    stem = _stem(name)
+    lead = _LEADING_BRACKET.match(stem)
+    if lead:
+        # ⚠ 15z (B8) -- the PROVIDER's own name states no source: `[TV Raws]` is a group
+        stem = stem[lead.end():]
+    words = set()
+    for group in _GROUP.findall(stem):
+        words.update(w for w in _SOURCE_WORDS.split(group.casefold()) if w)
+    for token in _DOT_TOKENS.split(stem.casefold()):
+        if token in _UNAMBIGUOUS_SOURCES:
+            words.add(token)
+    classes = frozenset(label for label, vocabulary in _SOURCE_CLASSES if words & vocabulary)
+    if classes & _DISCS:
+        # ⚠ 15z (B8) -- A DISC IS NEVER A BROADCAST: a BD rip's `TV` is its TITLE's
+        # (`Show (TV) - 01 [BD]`), and it took the TBS capture as the same provider
+        classes = classes - frozenset([u"TV"])
+    return classes
+
+
+_DISCS = frozenset([u"BD", u"DVD"])
 
 
 def _unbracketed_fingerprint(name):

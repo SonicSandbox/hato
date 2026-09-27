@@ -161,6 +161,130 @@ def embedded_choice(skip_embedded, extract_embedded):
     return EMBEDDED_LEAVE if skip_embedded else EMBEDDED_FETCH
 
 
+# ---------------------------------------------------------------------------
+# ⭐ RUNBOOK LAYER 15 -- a video with NO subtitle track, and a file picked by its name
+# ---------------------------------------------------------------------------
+# Signed off by Sonic 2026-09-26: ONE choice of three in Settings → Subtitle format --
+# skip it (the default), download one from the same provider, or one that fits the
+# episode number. ⚠ NOT TIMED: nothing inside the video can time it. 🚨 His three
+# constraints: *"It should NOT be a default option and it should NOT be recommended and
+# it should NOT run over and over and over again forever if there will be no file."*
+# ⭐ Here because the run, the window and `hato problems` all read the one key.
+
+#: `untimed`, as config.toml spells it.
+UNTIMED_OFF = u"off"
+UNTIMED_SAME = u"same_provider"
+UNTIMED_ANY = u"any_provider"
+#: In the order Settings shows them. ⛔ `off` first, and the default.
+UNTIMED_CHOICES = (UNTIMED_OFF, UNTIMED_SAME, UNTIMED_ANY)
+
+#: How sure a name is -- the TIER a placed file was chosen at. ⚠ No number: a name-match
+#: percentage would stand where the TIMING percentage stands and read as a measurement
+#: (fork 4). Measured: the same provider was on time 8 of 8, another provider 0 of 14.
+TIER_EXACT = u"exact"         # the file is named exactly as the video
+TIER_SAME = u"same"           # the video's own provider, the same source
+TIER_OTHER = u"other"         # anyone else -- `any_provider` only
+TIERS = (TIER_EXACT, TIER_SAME, TIER_OTHER)
+
+#: ⭐ Fork 13 -- a wait on this road looks once a day for a WEEK from its first miss,
+#: then STOPS. ⛔ Only *Look again now* (one look) or a change of the choice looks again.
+UNTIMED_WAIT_DAYS = 7
+
+#: The language code a placed file carries -- the MARK (fork 5): `<video>.jpn.<ext>` for a
+#: file nobody timed, beside `<video>.ja.<ext>` for one tsubasa timed. Measured to load in
+#: mpv under its defaults and under Sonic's config, and in VLC.
+UNTIMED_CODE = u"jpn"
+
+_UNTIMED_WORDS = {
+    UNTIMED_OFF: u"Skip it",
+    UNTIMED_SAME: u"Download one from the same provider",
+    UNTIMED_ANY: u"Download one that fits the episode number",
+}
+
+
+def untimed_words(choice):
+    u"""The choice, in the words Settings shows it in. -> text"""
+    return _UNTIMED_WORDS.get(choice, choice)
+
+
+def is_untimed_mark(tag):
+    u"""Does a subtitle name's language TAG say "not timed"? -> bool
+
+    ⚠ Only the tag: a file is marked when its name says `.jpn.` AND its bytes are one of
+    hato's kept originals -- `pipeline` asks the second half. A person's own `.jpn.` file
+    is never marked."""
+    return (tag or u"").casefold() == UNTIMED_CODE
+
+
+#: ⚠ The month by table, never `strftime("%b")`: that follows the C library's locale,
+#: which a toolkit may set -- and *"until 3 10月"* is not the day the CLI said.
+_MONTHS = (u"Jan", u"Feb", u"Mar", u"Apr", u"May", u"Jun", u"Jul", u"Aug", u"Sep", u"Oct",
+           u"Nov", u"Dec")
+
+
+def untimed_day(moment):
+    u"""`3 Oct` -- the day a wait on this road stops, in the machine's own zone. -> text
+
+    ⭐ ONE copy: the run, `hato problems` and the window say the same day."""
+    local = moment.astimezone()
+    return u"%d %s" % (local.day, _MONTHS[local.month - 1])
+
+
+def untimed_stopped(stops, next_look, now=None):
+    u"""⭐ Fork 13's ONE stop rule, for every reader -- the run's row, `hato problems`, the
+    window. -> bool. A wait on this road has STOPPED when it has no next look, when its
+    next look falls ON OR PAST its stop, or -- given the clock -- when the stop has passed.
+    ⚠ 15z (C2): three readers with three rules said *"waiting"*, *"stopped"* and *"retry
+    due"* of one row. Aware datetimes; `stops` None is no wait at all."""
+    if stops is None:
+        return False
+    if next_look is None or next_look >= stops:
+        return True
+    return now is not None and stops <= now
+
+
+#: The words a wait on this road opens with once its week is out (`untimed.stopped_reason`
+#: writes them). ⭐ Here, so every surface -- the window too -- can read a ROW by them.
+UNTIMED_STOPPED_LEAD = u"stopped looking — "
+
+
+def untimed_row_stopped(reason, stops, next_look, now=None):
+    u"""`untimed_stopped` for a ROW -- a run's, or a remembered one. -> bool
+
+    ⚠ A row with NO next look is either stopped or a PLAN's (a dry run records nothing, so
+    it starts no wait): its own words say which. Any other row, the one rule above."""
+    if (reason or u"").startswith(UNTIMED_STOPPED_LEAD):
+        return True
+    if next_look is None:
+        return False
+    return untimed_stopped(stops, next_look, now)
+
+
+def untimed_starts_over(then, waits_for, choice, prefer, fallback):
+    u"""⭐ Does a wait on this road begin again at the next run? -> bool
+
+    The CHOICE changed since it began (fork 13: *"changing the choice starts a new
+    week"*), or it waits for a FORMAT the settings now take (9a's rule: that wait ends
+    when they take it). ⭐ ONE rule: the run obeys it (`pipeline._starts_over`), and `hato
+    problems` and the window say *"looks again on the next run"* by it (15z, C4 and D4:
+    both said *"stopped looking"*, and the next run looked)."""
+    if then != choice:
+        return True
+    kinds = only_as(waits_for)
+    return bool(kinds and accepts_any(kinds, prefer, fallback))
+
+
+_TIER_WORDS = {TIER_EXACT: u"same provider", TIER_SAME: u"same provider",
+               TIER_OTHER: u"another provider"}
+
+
+def untimed_tier_words(tier):
+    u"""`same provider` / `another provider` -- ⛔ never a number (fork 4). -> text, or u""
+    for a tier this build does not know (15z, D10: a window reading a newer tray's row
+    said *"its name — chosen by its name"*)."""
+    return _TIER_WORDS.get(tier, u"")
+
+
 def of_codec(codec):
     u"""The family a subtitle TRACK comes out as, by its codec. -> `ass`, `srt` or None
 
@@ -180,4 +304,8 @@ def of_codec(codec):
 __all__ = ["PREFERENCES", "DEFAULT_PREFERENCE", "FAMILIES", "order", "accepts",
            "accepts_any", "fallback_words", "kinds_words", "waiting_reason", "only_as",
            "EMBEDDED_LEAVE", "EMBEDDED_FETCH", "EMBEDDED_SAVE", "embedded_choice",
-           "of_codec"]
+           "of_codec", "UNTIMED_OFF", "UNTIMED_SAME", "UNTIMED_ANY", "UNTIMED_CHOICES",
+           "TIER_EXACT", "TIER_SAME", "TIER_OTHER", "TIERS", "UNTIMED_WAIT_DAYS",
+           "UNTIMED_CODE", "untimed_words", "is_untimed_mark", "untimed_day",
+           "untimed_tier_words", "untimed_stopped", "UNTIMED_STOPPED_LEAD",
+           "untimed_row_stopped", "untimed_starts_over"]

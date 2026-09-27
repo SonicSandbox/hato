@@ -2030,10 +2030,19 @@ def test_the_window_is_found_by_its_program_file():
                                                   8: image(u"hato-cli.exe")}))
 
 
+def _newer(version):
+    u"""The release after `version`. ⚠ 15z (O4): the staged release was the literal
+    "1.0.9" -- NOT newer, and three checks red, the moment the tree was stamped 1.0.9 (the
+    stamp rehearsal caught it before a release did)."""
+    parts = [int(part) for part in version.split(u".")]
+    parts[-1] += 1
+    return u".".join(str(part) for part in parts)
+
+
 @pytest.fixture
 def idle(monkeypatch, tmp_path):
-    u"""A frozen install with 1.0.9 staged beside it, nothing open -> the world to
-    change one thing in, and the hand-offs made."""
+    u"""A frozen install with the NEXT release staged beside it, nothing open -> the world
+    to change one thing in, and the hand-offs made. `idle["to"]` is that release."""
     from hato import __version__, config as _config, runlock, update
     monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
     install = tmp_path / u"ツール置き場" / u"hato"
@@ -2041,17 +2050,18 @@ def idle(monkeypatch, tmp_path):
     monkeypatch.setattr(watch, "can_update_itself", lambda: True)
     monkeypatch.setattr(watch.sys, "executable", str(install / u"hato-watch.exe"))
     root = update.stage_root(str(install))
-    staged = root / u"staged" / u"1.0.9" / u"hato"
+    newer = _newer(__version__)
+    staged = root / u"staged" / newer / u"hato"
     staged.mkdir(parents=True)
-    (staged / u"hato.exe").write_bytes(b"1.0.9's window")
+    (staged / u"hato.exe").write_bytes(newer.encode("ascii") + b"'s window")
     # ⚠ THE WIRE'S SHAPE (LEDGER-HOT): a stage names its install and its entries --
     # 11z made both part of "staged" (A5: whole; A6: this copy's), and a fixture with
     # neither was a hand-off no stage writes. ⚠ And `from`: since the Layer 12 pass
     # (L12-1) a stage another version prepared is not waiting here
     update.save_json(os.path.join(str(root), update.PENDING_NAME),
-                     {u"to": u"1.0.9", u"staged": str(staged), u"install": str(install),
+                     {u"to": newer, u"staged": str(staged), u"install": str(install),
                       u"from": __version__, u"entries": {u"hato.exe": u"0" * 64}})
-    world = {u"auto": True, u"run": False, u"window": False, u"handed": []}
+    world = {u"auto": True, u"run": False, u"window": False, u"handed": [], u"to": newer}
 
     class Cfg(object):
         pass
@@ -2084,7 +2094,7 @@ def test_nothing_goes_in_while_hato_is_busy_or_told_not_to(idle, change):
     if change == u"auto":
         idle[u"auto"] = False
     elif change == u"skipped":
-        update.skip(u"1.0.9")
+        update.skip(idle[u"to"])
     else:
         idle[change] = True
     assert idle[u"install"]() is False and idle[u"handed"] == [], change
@@ -2128,7 +2138,7 @@ def test_an_updater_windows_will_not_start_is_said_and_rested_an_hour(idle, monk
         return watch.install_when_idle(hand_off=refused, clock=lambda: now[0])
 
     assert install() is False
-    assert len(said) == 1 and u"1.0.9" in said[0] and u"could not be started" in said[0] \
+    assert len(said) == 1 and idle[u"to"] in said[0] and u"could not be started" in said[0] \
         and u"Access is denied" in said[0], said
     now[0] += watch.INSTALL_EVERY
     assert install() is False and len(tries) == 1, u"tried again a minute later"
@@ -2191,3 +2201,10 @@ def test_this_tray_says_its_runs_read_the_choice_to_save_them_beside_the_video()
     u"""⭐ 14c -- the same rule: a tray whose runs can read `extract_embedded` says so,
     so a window can tell it from an older one that would refuse config.toml."""
     assert u"extract" in watch.CAPABILITIES
+
+
+def test_this_tray_says_its_runs_read_the_untimed_choice():
+    u"""⭐ LAYER 15 -- the same rule again: a tray whose runs read `untimed` says so. A
+    1.0.8 tray says `extract` and would refuse a config.toml carrying `untimed`; the
+    window's reader of the token is checked with the window's."""
+    assert u"untimed" in watch.CAPABILITIES

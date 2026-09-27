@@ -785,3 +785,195 @@ def test_the_memory_is_counted_in_words_a_person_recognises():
     assert said == u"1 video tried · 0 waiting to look again · 2 shows found on jimaku"
     assert gui_run.memory_summary(None) == u"" and gui_run.memory_summary({}) == u""
     assert "row" not in said and "table" not in said
+
+
+# ===========================================================================
+# ⭐ LAYER 15 -- a subtitle chosen by its NAME, placed NOT TIMED (15d, 15e)
+# ===========================================================================
+# ⚠ THE WIRE'S SHAPE, BUILT BY THE ENGINE'S OWN HELPERS: `untimed.as_field` and
+# `untimed.wait_field` are what `report.as_dict` carries -- never a hand-made dict
+# (`LEDGER-HOT.md`, *"Seed every fixture in the WIRE's shape"*). The window module
+# itself never imports them (tsubasa); a check may.
+
+from hato import formats, untimed as untimed_module                    # noqa: E402
+
+SEI = u"[NanakoRaws] Seihantai na Kimi to Boku - %02d (TBS 1080p HEVC AAC)"
+SHINCAPS = u"[shincaps] Tongari Boushi no Atelier - %02d (AT-X 1440x1080 MPEG2 AAC).ass"
+
+
+def placed_row(episode=1, tier=formats.TIER_EXACT, file_name=None):
+    video_name = SEI % episode + u".mkv"
+    file_name = file_name or SEI % episode + u".ass"
+    return video_row(video=u"D:/Raws/" + video_name, name=video_name, episode=episode,
+                     output_path=u"D:/Raws/" + SEI % episode + u".jpn.ass", tsubasa=None,
+                     jimaku_filename=file_name,
+                     untimed=untimed_module.as_field(tier, video_name, file_name))
+
+
+def road_row(video=u"D:/Raws/ep11.mkv", stops_in=timedelta(days=3),
+             next_in=timedelta(hours=14), skip=u"negative"):
+    u"""A wait on the untimed road: a gate's skip, or (`skip=None`) this run's miss."""
+    since = NOW + stops_in - timedelta(days=formats.UNTIMED_WAIT_DAYS)
+    base = u"nothing from [NanakoRaws] for this episode on jimaku"
+    wait = untimed_module.wait_field(formats.UNTIMED_SAME, since, base)
+    stops = since + timedelta(days=formats.UNTIMED_WAIT_DAYS)
+    return video_row(video=video, outcome=u"SKIPPED" if skip else u"NOT_FOUND", skip=skip,
+                     output_path=None, tsubasa=None, untimed_wait=wait,
+                     retry_after=(NOW + next_in).isoformat() if next_in is not None else None,
+                     reason=(untimed_module.waiting_reason(base, stops) if next_in is not None
+                             else untimed_module.stopped_reason(base)))
+
+
+def test_15_a_placed_row_says_not_timed_and_how_it_was_chosen():
+    u"""⭐ Forks 3-4, as ruled: the words the mock puts on the row's hover and in its
+    opened panel -- per tier, and ⛔ never a number. A timed row carries none of it."""
+    same = placed_row(1)
+    assert gui_run.untimed_of(same)[u"tier"] == formats.TIER_EXACT
+    assert gui_run.untimed_chosen(same) == u"same provider (NanakoRaws) · episode 01"
+    tip = gui_run.untimed_tip(same)
+    assert tip.startswith(u"Not timed.") and u"chosen by its name" in tip, tip
+    assert u"same provider ([NanakoRaws]) and episode 01" in tip, tip
+    assert u"nothing checked it" in tip, tip
+    other = placed_row(11, tier=formats.TIER_OTHER, file_name=SHINCAPS % 11)
+    assert gui_run.untimed_chosen(other) == u"another provider (shincaps) · episode 11"
+    tip = gui_run.untimed_tip(other)
+    assert u"episode 11 by another provider ([shincaps])" in tip, tip
+    assert u"a second or more off" in tip and u"same provider" not in tip, tip
+    timed = video_row()
+    assert gui_run.untimed_of(timed) is None, u"a timed row marked not timed"
+    assert gui_run.untimed_tip(timed) == u"" and gui_run.untimed_chosen(timed) == u""
+    assert gui_run.untimed_of(video_row(untimed=u"exact")) is None, u"only the wire's dict"
+    assert u"%" not in gui_run.UNTIMED_MARK, u"fork 4: never a number where timing goes"
+
+
+def test_15_a_road_wait_says_until_when_and_then_that_it_stopped():
+    u"""⭐ Fork 13 (*"it should NOT run over and over and over again forever"*): a wait
+    says the day it stops -- and once it has, says so: by its dates, and by the clock."""
+    looking = road_row()
+    stops = datetime.fromisoformat(looking[u"untimed_wait"][u"stops"])
+    assert gui_run.road_words(looking, NOW) == (
+        u"looks once a day until %s, then stops" % formats.untimed_day(stops))
+    assert not gui_run.road_stopped(looking, NOW)
+    for stopped in (road_row(next_in=None),                             # no next look
+                    road_row(stops_in=timedelta(hours=10))):             # it falls past
+        assert gui_run.road_stopped(stopped, NOW), stopped[u"retry_after"]
+        assert gui_run.road_words(stopped, NOW) == (
+            u"stopped looking — nothing looks again on its own")
+    assert gui_run.road_stopped(looking, NOW + timedelta(days=4)), u"the clock past the stop"
+    assert not gui_run.road_stopped(looking), u"with no clock, its dates alone"
+    assert gui_run.road_words(video_row(), NOW) == u""
+    assert not gui_run.road_stopped(waiting_row(), NOW), u"the timed road's wait is not one"
+
+
+def test_15_a_stopped_wait_is_never_called_waiting_to_retry():
+    u"""🚨 *"waiting to retry"* over a wait that STOPPED would have a person wait for
+    ever. It has its own word -- a skip -- and is counted as one, never as waiting;
+    the footer's numbers still add up to the videos."""
+    looking, stopped = road_row(), road_row(next_in=None)
+    assert gui_run.outcome_word(looking) == gui_run.RETRYING
+    assert gui_run.outcome_word(stopped) == gui_run.STOPPED_LOOKING
+    assert gui_run.is_skipped(gui_run.STOPPED_LOOKING)
+    assert gui_run.STOPPED_LOOKING in gui_run.interface_words()
+    first = road_row(skip=None, next_in=None)          # this run's miss, its week out
+    problems = [dict(looking, video=u"D:/A/1.mkv"), dict(stopped, video=u"D:/A/2.mkv"),
+                dict(first, video=u"D:/A/3.mkv")]
+    counts = gui_run.tally([], problems)
+    assert counts[gui_run.NOT_YET] == 1 and counts[gui_run.STOPPED_LOOKING] == 2, counts
+    assert sum(counts.values()) == len(problems), counts
+    assert gui_run.counts([stopped, looking])[gui_run.STOPPED_LOOKING] == 1
+
+
+def test_15z_a_schedule_is_said_only_while_something_keeps_it():
+    u"""🚨 15z (D2) -- *"looks once a day until 25 Sep"* with no tray and no daily run was
+    a promise nothing kept (8h's rule: say a schedule only when something runs hato).
+    With neither, it looks when hato next runs -- until its stop."""
+    looking = road_row()
+    day = formats.untimed_day(datetime.fromisoformat(looking[u"untimed_wait"][u"stops"]))
+    assert gui_run.road_words(looking, NOW, watching=False, daily=None) == (
+        u"looks again when hato next runs, until %s" % day)
+    for keeper in (dict(watching=True), dict(watching=False, daily=u"03:00")):
+        assert gui_run.road_words(looking, NOW, **keeper) == (
+            u"looks once a day until %s, then stops" % day), keeper
+
+
+def test_15z_a_changed_choice_or_skip_it_says_what_the_next_run_does():
+    u"""⭐ 15z (C4, D4) -- the choice CHANGED since the wait began: the next run looks, so
+    *"stopped looking"* was false; *Skip it*: nothing looks, so *"once a day"* was.
+    ⭐ The run's own rule (`formats.untimed_starts_over`), format waits included."""
+    stopped = road_row(next_in=None)
+    now = dict(watching=True, prefer=u"ass", fallback=False)
+    assert gui_run.road_words(stopped, NOW, choice=formats.UNTIMED_ANY, **now) == (
+        u"looks again on the next run")
+    assert gui_run.road_words(road_row(), NOW, choice=formats.UNTIMED_OFF, **now) == (
+        gui_run.NO_LONGER_LOOKED_FOR)
+    assert gui_run.road_words(stopped, NOW, choice=formats.UNTIMED_SAME, **now) == (
+        u"stopped looking — nothing looks again on its own")
+    base = formats.waiting_reason([u"srt"], u"ass", 2)
+    wait = dict(stopped, untimed_wait=dict(stopped[u"untimed_wait"], waits_for=base))
+    assert gui_run.road_words(wait, NOW, choice=formats.UNTIMED_SAME, watching=True,
+                              prefer=u"ass", fallback=True) == u"looks again on the next run"
+
+
+def test_15z_a_wait_stopped_on_the_clock_is_counted_stopped():
+    u"""⭐ 15z (D3) -- its stop passed and no run since: Needs you said *stopped*, while
+    the footer counted it *waiting* and the row said *waiting to retry* -- `outcome_word`
+    and `tally` asked without the clock."""
+    row = road_row(stops_in=timedelta(hours=20), next_in=timedelta(hours=14))
+    later = NOW + timedelta(days=1)
+    assert gui_run.outcome_word(row) == gui_run.RETRYING
+    assert gui_run.outcome_word(row, later) == gui_run.STOPPED_LOOKING
+    counts = gui_run.tally([], [dict(row, skip=None, outcome=u"NOT_FOUND")], now=later)
+    assert counts[gui_run.STOPPED_LOOKING] == 1 and counts[gui_run.NOT_YET] == 0, counts
+
+
+def test_15z_a_road_wait_the_memory_no_longer_lists_is_settled():
+    u"""⭐ 15z (D5) -- a STOPPED wait from this run carries no retry date, so it was not
+    taken as held by hato's memory: settled since (Skip it, the skip list, their own
+    subtitle), it kept asking in Needs you."""
+    stopped = road_row(skip=None, next_in=None)
+    assert gui_run.problem_kind(stopped) == gui_run.WAITING
+    assert gui_run.needs_you([stopped], remembered=[], rows_newer=False) == [], (
+        u"a settled road wait still asks")
+
+
+def test_15z_a_stop_that_cannot_be_read_is_no_road_wait():
+    u"""⚠ 15z (D9) -- `road_words` RAISED on a stop it could not read, the pane half-built."""
+    row = road_row()
+    row[u"untimed_wait"] = dict(row[u"untimed_wait"], stops=u"soon")
+    assert gui_run.untimed_wait_of(row) is None
+    assert gui_run.road_words(row, NOW) == u"" and not gui_run.road_stopped(row, NOW)
+
+
+def test_15z_an_unknown_tier_says_nothing_it_cannot_stand_behind():
+    u"""⚠ 15z (D10) -- a tier this window does not know read *"same provider"* on hover."""
+    row = placed_row(1)
+    row[u"untimed"] = dict(row[u"untimed"], tier=u"fuzzy")
+    tip = gui_run.untimed_tip(row)
+    assert tip.startswith(u"Not timed.") and u"nothing checked it" in tip, tip
+    assert u"same provider" not in tip and u"another provider" not in tip, tip
+    # ...and its panel's *chosen by* -- it read *"its name — chosen by its name"*
+    assert gui_run.untimed_chosen(row) == u"NanakoRaws · episode 01", gui_run.untimed_chosen(row)
+
+
+def test_15_the_stop_day_reads_the_same_everywhere_and_in_any_locale():
+    u"""The run, `hato problems` and the window say ONE day: `formats.untimed_day`.
+    ⚠ Its month by table -- `strftime("%b")` follows the C library's locale, which a
+    toolkit may set: two arms, the Japanese locale and the one it was in."""
+    import locale
+    moment = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+    assert formats.untimed_day(moment) == untimed_module.day(moment) == u"3 Oct"
+    before = locale.setlocale(locale.LC_TIME)
+    japanese = None
+    for name in (u"Japanese_Japan.932", u"ja_JP.UTF-8", u"ja_JP"):
+        try:
+            japanese = locale.setlocale(locale.LC_TIME, name)
+            break
+        except locale.Error:
+            continue
+    try:
+        if japanese is None:
+            pytest.skip(u"no Japanese locale on this machine to set")
+        assert moment.strftime(u"%b") != u"Oct", u"the arm did not change the locale"
+        assert formats.untimed_day(moment) == u"3 Oct", formats.untimed_day(moment)
+    finally:
+        locale.setlocale(locale.LC_TIME, before)

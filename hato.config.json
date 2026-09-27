@@ -132,6 +132,12 @@
         "why": "Steps 3a/3b. The seven name tokens tsubasa does not publish -- release group, multi-episode, special, version, language class, AI marker, year -- each with the measurement that justified it. Never a title, season or episode."
       },
       {
+        "name": "untimed",
+        "cmd": ["-m", "pytest", "tests/test_untimed.py", "-q", "--no-header"],
+        "default": true,
+        "why": "LAYER 15, the pure half: which file a video with NO subtitle track gets, by its NAME (fork 7) -- exact (named as the video, for a video whose name SAYS its provider -- edge 3), same (the leading [group] or its full-width brackets, punctuation and case folded but `&` and `+` kept, and no two DIFFERENT stated sources: TV, BD, DVD, WEB -- a broadcaster is TV, a disc never is, and the group's own name states none), other (any_provider only) -- the tier AHEAD of rank's order and rank's order within it; the sources a name states, a call sign only inside a bracket; and the words of a wait (a week, then stopped), none of which names the setting or another provider (fork 14). Pure functions, no I/O. ⛔ Structurally cannot cover whether the chosen file IS the episode's -- nothing can, which is why the road says NOT TIMED everywhere; test_pipeline §15 drives the road end to end."
+      },
+      {
         "name": "align_episodes",
         "cmd": ["-m", "pytest", "tests/test_align_episodes.py", "-q", "--no-header"],
         "default": true,

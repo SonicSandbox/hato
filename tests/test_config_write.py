@@ -56,7 +56,7 @@ def test_every_schema_key_is_written_so_a_person_can_read_what_is_in_force(tmp_p
         assert (u"\n%s = " % name) in text, name
     changed = config.with_changes(load_from(tmp_path), prefer_format=u"srt",
                                   format_fallback=True, auto_update=False,
-                                  extract_embedded=True)
+                                  extract_embedded=True, untimed=u"same_provider")
     text = config.dumps(changed)
     for name in config.NEWER_KEYS:
         assert (u"\n%s = " % name) in text, name
@@ -407,7 +407,10 @@ def test_going_back_writes_the_file_the_kept_version_can_read(tmp_path):
     config.save(config.with_changes(config.load(path), extract_embedded=True), path)
     before = path.read_bytes()
     assert config.make_readable_by(u"1.0.8", path) == [] and path.read_bytes() == before
-    assert config.unknown_to(u"1.0.7") == (u"extract_embedded",)
+    # ⭐ LAYER 15: 1.0.9's key is one 1.0.8 AND everything before it has never heard of.
+    assert config.unknown_to(u"1.0.7") == (u"extract_embedded", u"untimed")
+    assert config.unknown_to(u"1.0.8") == (u"untimed",)
+    assert config.unknown_to(u"1.0.9") == ()
     assert set(config.unknown_to(u"1.0.2")) == set(config.NEWER_KEYS)
 
 
@@ -511,3 +514,51 @@ def test_the_key_can_be_set_from_stdin_without_a_file_on_disk(
     assert credentials.read_key_file(target) == u"pipedkey9"
     assert "pipedkey9" not in capsys.readouterr().out     # only the last four
     assert list(tmp_path.glob("*.new-*")) == []
+
+
+# ===========================================================================
+# ⭐ LAYER 15 -- `untimed`, the choice for a video with no subtitle track
+# ===========================================================================
+
+def test_15_untimed_is_off_by_default_and_refuses_all_but_its_three_choices(tmp_path):
+    u"""🚨 His first constraint -- NOT a default: `off` when nothing says otherwise. And a
+    closed set, refused BY NAME (rule 2): a typo must never look like a choice that took."""
+    assert config.parse(u"").untimed == u"off"
+    for good in (u"off", u"same_provider", u"any_provider"):
+        assert config.parse(u'untimed = "%s"\n' % good).untimed == good
+    for bad in (u'"on"', u'"Same_Provider"', u'""', u"true", u'"any"'):
+        with pytest.raises(config.ConfigError) as caught:
+            config.parse(u"untimed = %s\n" % bad)
+        assert u"untimed" in str(caught.value), (bad, caught.value)
+    with pytest.raises(ValueError):
+        pipeline.Settings(folders=[str(tmp_path)], untimed=u"on")
+
+
+def test_15_the_key_is_written_only_once_chosen_so_an_older_hato_can_read_the_file(tmp_path):
+    u"""⭐ An older hato REFUSES a key it never heard of, so at its default `untimed` is left
+    out of the file -- and once chosen, the window says the tray must be restarted."""
+    path = tmp_path / "config.toml"
+    config.save(config.load(path), path)
+    assert u"untimed" not in path.read_text(encoding="utf-8")
+    config.save(config.with_changes(config.load(path), untimed=u"same_provider"), path)
+    assert u"\nuntimed = 'same_provider'\n" in path.read_text(encoding="utf-8")
+    assert u"untimed" in config.NEWER_KEYS and ((1, 0, 8), (u"untimed",)) in config.NEWER_THAN
+    # ⭐ And *Skip it* -- the window writes `untimed=off` -- takes the key AWAY again: the
+    # file an older tray reads is then one it can read
+    config.save(config.with_changes(config.load(path), untimed=u"off"), path)
+    assert u"untimed" not in path.read_text(encoding="utf-8")
+
+
+def test_15_going_back_takes_the_road_away_and_says_so_first(tmp_path):
+    u"""⭐ `config.readable_by` for 1.0.8 -- kept for *Go back* -- with the road chosen: the
+    key leaves the file (the choice becomes *Skip it*, the only one 1.0.8 has), in the
+    words of the choice that was made, and the files already placed STAY."""
+    path = tmp_path / "config.toml"
+    for choice, said in ((u"same_provider", u"Download one from the same provider"),
+                         (u"any_provider", u"Download one that fits the episode number")):
+        config.save(config.with_changes(config.load(path), untimed=choice), path)
+        words = config.make_readable_by(u"1.0.8", path)
+        assert u"untimed" not in path.read_text(encoding="utf-8"), choice
+        assert words == [u"“%s” becomes “Skip it” — 1.0.8 cannot download a subtitle it "
+                         u"cannot time. The ones already downloaded stay." % said], words
+        assert config.load(path).untimed == u"off"

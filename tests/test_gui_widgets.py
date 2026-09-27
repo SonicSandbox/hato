@@ -1581,7 +1581,7 @@ def test_a_row_only_ever_says_one_of_the_five_interface_words():
     words = gui_run.interface_words()
     assert gui_run.REFUSED not in words
     for row in full_rows():
-        assert gui_app.State.word(row) in words
+        assert gui_app.State().word(row) in words
 
 
 # ===========================================================================
@@ -6384,7 +6384,8 @@ def test_every_settings_control_the_keyboard_reaches_keeps_a_name_of_its_own(qap
     for what, fields in [(u"both notes, surasura on", None)] + _update_shapes():
         window = make(running=False, old_tray=True, prefer_format=u"srt",
                       surasura_dir=u"D:\\surasura", tray_reads_updates=False,
-                      update_key_in_file=True, extract_embedded=True)
+                      update_key_in_file=True, extract_embedded=True,
+                      untimed=formats.UNTIMED_ANY)                   # LAYER 15
         if fields is not None:
             shape = updating.Updates(current=u"1.0.4", frozen=fields.pop(u"frozen"))
             shape.now = 1000000.0
@@ -6414,12 +6415,14 @@ def test_every_settings_control_the_keyboard_reaches_keeps_a_name_of_its_own(qap
     wanted = {u"when.daily", u"when.restart_tray", u"format.restart_tray",
               u"surasura.choose",
               u"updates.auto", u"updates.restart_tray", u"blacklist.sweep",
-              u"format.embedded:save", u"format.embedded.restart_tray"}   # 14c
+              u"format.embedded:save", u"format.embedded.restart_tray",   # 14c
+              u"format.untimed:any_provider", u"format.untimed.restart_tray"}   # LAYER 15
     assert wanted <= reached, u"the shapes never built %s" % sorted(wanted - reached)
     window = make(running=False)
     window.show_tab(gui_app.TAB_SET)
     radios = window.panes[gui_app.TAB_SET].findChildren(gui_app.Radio)
-    assert len(radios) == 5 and all(r.property(gui_app.KEEP) for r in radios), (
+    # ⭐ LAYER 15 -- three more: the untimed choice's
+    assert len(radios) == 8 and all(r.property(gui_app.KEEP) for r in radios), (
         [r.property(gui_app.KEEP) for r in radios])
     # ⚠ And no two alike (the 14z gate: M14-14 survived once unchosen radios left the
     # Tab walk above -- Z14-3's rule is every control's, a Tab stop or not)
@@ -6888,3 +6891,471 @@ def test_a_problem_line_wraps_and_keeps_the_words_that_say_why(qapp):
         assert right <= pane.viewport().width(), (right, pane.viewport().width())
     finally:
         window.hide()
+
+
+# ===========================================================================
+# ⭐ LAYER 15 -- subtitles nothing could time (RUNBOOK §LAYER 15, 15d + 15e)
+# ===========================================================================
+# ⚠ THE WIRE'S SHAPE, built by the engine's own `untimed.as_field` / `wait_field`.
+
+from hato import untimed as untimed_module                            # noqa: E402
+
+SEI15 = u"[NanakoRaws] Seihantai na Kimi to Boku - %02d (TBS 1080p HEVC AAC)"
+SHINCAPS15 = u"[shincaps] Tongari Boushi no Atelier - %02d (AT-X 1440x1080 MPEG2 AAC).ass"
+UNTIMED_WORDS = dict((which, words) for which, words, _h, _w in gui_app.UNTIMED_CHOICES)
+
+
+def placed(episode=1, tier=formats.TIER_EXACT, file_name=None,
+           title=u"\u6b63\u53cd\u5bfe\u306a\u541b\u3068\u50d5"):
+    u"""A row placed NOT TIMED, as `report.as_dict` sends it: CONFIDENT, written as
+    `.jpn.`, its original kept -- no tsubasa result, no match rate, and `untimed`."""
+    video = SEI15 % episode + u".mkv"
+    file_name = file_name or SEI15 % episode + u".ass"
+    row = added(episode, title=title, season=None, name=file_name, entry=11407)
+    row.update({u"video": u"D:\\Anime\\Seihantai\\" + video, u"name": video,
+                u"tsubasa": None, u"bytes_downloaded": 87040,
+                u"output_path": u"D:\\Anime\\Seihantai\\" + SEI15 % episode + u".jpn.ass",
+                u"kept_path": u"C:\\hato\\subs\\%s.ja.ass" % (SEI15 % episode),
+                u"untimed": untimed_module.as_field(tier, video, file_name)})
+    return row
+
+
+def road_wait(episode=11, video=None, stops_in=timedelta(days=3),
+              next_in=timedelta(hours=14), skip=None):
+    u"""A wait on the untimed road -- this run's miss (`skip=None`) or a gate's skip."""
+    since = NOW8 + stops_in - timedelta(days=formats.UNTIMED_WAIT_DAYS)
+    base = u"nothing from [shincaps] for this episode on jimaku"
+    wait = untimed_module.wait_field(formats.UNTIMED_SAME, since, base)
+    stops = since + timedelta(days=formats.UNTIMED_WAIT_DAYS)
+    row = not_yet(episode, title=u"\u3068\u3093\u304c\u308a\u5e3d\u5b50\u306e\u30a2\u30c8\u30ea\u30a8")
+    row.update({u"video": video or u"D:\\Anime\\Tongari\\ep%02d.mkv" % episode,
+                u"outcome": u"SKIPPED" if skip else u"NOT_FOUND", u"skip": skip,
+                u"jimaku_entry": 11528, u"untimed_wait": wait,
+                u"retry_after": (NOW8 + next_in).isoformat() if next_in is not None else None,
+                u"reason": (untimed_module.waiting_reason(base, stops) if next_in is not None
+                            else untimed_module.stopped_reason(base))})
+    return row
+
+
+def _untimed_choice(window, which):
+    return _kept(window, u"format.untimed:%s" % which)
+
+
+def _caution(window):
+    u"""The caution under the untimed choice, or None."""
+    for widget in window.panes[gui_app.TAB_SET].findChildren(QWidget):
+        if widget.objectName() == u"caution":
+            return widget
+    return None
+
+
+def test_15_the_untimed_choice_reads_the_setting_and_writes_it_through_hato_config(qapp):
+    u"""⭐ Fork 2 (ruled: *"for setting 1-one choice of three"*): ONE group, *Skip it*
+    the default, each click written through `hato config` as every setting is -- and
+    the rebuilt card shows the one clicked. ⭐ *Skip it* is written as `off` (the
+    writer takes the key away: `test_config_write`)."""
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    radios = [_untimed_choice(window, w) for w in formats.UNTIMED_CHOICES]
+    assert [r.isChecked() for r in radios] == [True, False, False], u"Skip it is not the default"
+    assert radios[0].group() is not None and len(set(r.group() for r in radios)) == 1
+    for which in (formats.UNTIMED_SAME, formats.UNTIMED_ANY, formats.UNTIMED_ANY,
+                  formats.UNTIMED_OFF):
+        _untimed_choice(window, which).click()
+        assert window.state.untimed == which
+        shown = [_untimed_choice(window, w).isChecked() for w in formats.UNTIMED_CHOICES]
+        assert shown == [w == which for w in formats.UNTIMED_CHOICES], (which, shown)
+    said = [argv[argv.index(u"--set") + 1] for argv in window.spawned if u"config" in argv]
+    assert said == [u"untimed=same_provider", u"untimed=any_provider", u"untimed=off"], said
+    # ⛔ *Skip it* FIRST, where a person reads first -- by the card's layout
+    # ⚠ *Skip it* by its HINT: its words are in the ⓘ above it too
+    body = _format_body(window)
+    order = [_row_of(body, u"· hato can't time a download yet"),
+             _row_of(body, UNTIMED_WORDS[formats.UNTIMED_SAME]),
+             _row_of(body, UNTIMED_WORDS[formats.UNTIMED_ANY])]
+    assert order == sorted(set(order)), (u"the choices are not Skip it, same provider, "
+                                         u"any provider: rows %s" % order)
+
+
+def test_15_the_caution_shows_for_either_download_choice_and_is_gone_for_skip_it(qapp):
+    u"""⭐ Fork 12 (*"a mild red caution icon there if toggled on with a short reason for
+    the warning"*): shown under the choice for either download, its reason SHOWN (not on
+    hover), its ⚠ in `theme.REFUSED_INK` -- ⛔ no new colour -- and gone for *Skip it*."""
+    for which in formats.UNTIMED_CHOICES:
+        window = make(running=False, untimed=which)
+        window.show_tab(gui_app.TAB_SET)
+        caution = _caution(window)
+        if which == formats.UNTIMED_OFF:
+            assert caution is None, u"a caution over Skip it"
+            continue
+        assert caution is not None, u"no caution under %r" % which
+        text = u" ".join(u" ".join(gui_app.texts(caution)).split())
+        assert u"Not timed." in text and gui_app.UNTIMED_CAUTION[which] in text, text
+        icon, = [w for w in caution.findChildren(QLabel) if w.objectName() == u"cautionic"]
+        icon.ensurePolished()
+        ink = icon.palette().color(QPalette.ColorRole.WindowText).name()
+        assert ink == theme.REFUSED_INK.lower(), (ink, theme.REFUSED_INK)
+        body = _format_body(window)
+        assert _row_of(body, UNTIMED_WORDS[formats.UNTIMED_ANY]) < _row_of(body, u"Not timed."), (
+            u"the caution is not under the choice")
+
+
+def test_15_nothing_recommends_the_untimed_road(qapp):
+    u"""🚨 Fork 14 (*"It should NOT be a default option and it should NOT be
+    recommended"*): no *(recommended)* in Settings; and with the choice off, the
+    Subtitles and Needs-you tabs never mention it -- the *can't sync yet* tip is word
+    for word today's, and a video with no track offers nothing."""
+    window = make(rows=[skipped(7, skip=u"no-track"), added(6)], running=False)
+    window.show_tab(gui_app.TAB_SET)
+    assert u"recommend" not in _flat(window.panes[gui_app.TAB_SET]).lower()
+    assert gui_app.QUIET_TIPS[gui_run.CANT_SYNC] == (
+        u"This video has no subtitle track inside it for hato to time a download "
+        u"against, so nothing was requested yet."), u"the can't-sync tip changed"
+    for tab in (gui_app.TAB_SUBS, gui_app.TAB_PICK):
+        window.show_tab(tab)
+        text = _flat(window.panes[tab]).lower()
+        for words in (u"same provider", u"fits the episode", u"by its name",
+                      u"not timed", u"download one"):
+            assert words not in text, (tab, words)
+
+
+def test_15_the_untimed_choice_is_read_back_when_the_window_opens(qapp, tmp_path, monkeypatch):
+    u"""⛔ A setting the window writes and never reads back looks unsaved. From a real
+    file -- and whether the FILE carries the key, which an older tray refuses."""
+    config = tmp_path / u"config.toml"
+    monkeypatch.setenv(u"HATO_CONFIG", str(config))
+    config.write_text(u"untimed = \"same_provider\"\n", encoding="utf-8")
+    state = gui_app.settings_from_disk()
+    assert state.untimed == formats.UNTIMED_SAME and state.untimed_key_in_file is True
+    config.write_text(u"", encoding="utf-8")
+    state = gui_app.settings_from_disk()
+    assert state.untimed == formats.UNTIMED_OFF and state.untimed_key_in_file is False
+
+
+def test_15_an_older_tray_is_told_under_the_choice_and_restarting_takes_it_away(
+        qapp, monkeypatch):
+    u"""🚨 `LEDGER-HOT.md`: an older hato REFUSES a key it never heard of -- a 1.0.8 tray's
+    runs stop at a config.toml carrying `untimed`. Said under the choice it speaks for
+    (Z14-2), whenever the key is in the file; gone once the tray is this build's."""
+    for which, in_file, said in ((formats.UNTIMED_SAME, False, True),
+                                 (formats.UNTIMED_OFF, True, True),
+                                 (formats.UNTIMED_OFF, False, False)):
+        window = make(running=False, tray_reads_untimed=False, untimed=which,
+                      untimed_key_in_file=in_file)
+        window.show_tab(gui_app.TAB_SET)
+        text = _flat(window.panes[gui_app.TAB_SET])
+        assert (u"cannot read this setting" in text) is said, (which, in_file, text)
+    window = make(running=False, tray_reads_untimed=False, untimed=formats.UNTIMED_ANY)
+    window.show_tab(gui_app.TAB_SET)
+    qapp.processEvents()
+    body = _format_body(window)
+    assert _row_of(body, UNTIMED_WORDS[formats.UNTIMED_ANY]) < _row_of(
+        body, u"cannot read this setting"), u"the note is not under the choice"
+    monkeypatch.setattr(window, u"stop_watcher", lambda: None)
+    monkeypatch.setattr(window, u"start_watcher", lambda: None)
+    _kept(window, u"format.untimed.restart_tray").click()
+    assert window.state.tray_reads_untimed is True
+    assert u"cannot read this setting" not in _flat(window.panes[gui_app.TAB_SET])
+
+
+def test_15_any_settings_write_ends_the_note_about_a_key_the_writer_took_away(qapp):
+    u"""⭐ 14z's B-6, for `untimed`: `hato config` rewrites the WHOLE file, so a
+    hand-written `untimed = "off"` is gone after ANY setting's write -- and the older
+    tray's note about it must go with it, not wait for its own setter."""
+    window = make(running=False, tray_reads_untimed=False, untimed=formats.UNTIMED_OFF,
+                  untimed_key_in_file=True)
+    window.show_tab(gui_app.TAB_SET)
+    assert u"cannot read this setting" in _flat(window.panes[gui_app.TAB_SET]), u"the control"
+    _kept(window, u"format.fallback").click()               # another setting's write
+    assert window.state.untimed_key_in_file is False
+    assert u"cannot read this setting" not in _flat(window.panes[gui_app.TAB_SET])
+
+
+def test_15_the_window_asks_the_tray_for_the_untimed_token(qapp, monkeypatch):
+    u"""The reader of the pid file's token: a 1.0.8 tray says `extract` and not
+    `untimed`; this build's says both; no tray at all reads as able."""
+    from hato import watch
+    for caps, reads in ((frozenset([u"retries", u"formats", u"updates", u"extract"]), False),
+                        (frozenset(watch.CAPABILITIES), True), (None, True)):
+        monkeypatch.setattr(watch, u"watching_capabilities", lambda c=caps: c)
+        assert gui_app.HatoWindow.tray_reads_untimed() is reads, caps
+
+
+def test_15_a_placed_row_has_the_amber_edge_and_the_mark_and_never_a_percentage(qapp):
+    u"""⭐ Forks 3-4, ruled (*"Row mark amber A+B"*): the row's amber edge AND ≈ where
+    the % goes, in the amber (`theme.LOOK`); its hover says why and how it was chosen.
+    ⛔ No number. The control row keeps its percentage and no edge."""
+    window = make(rows=[placed(1), added(6)], running=False)
+    window.show_tab(gui_app.TAB_SUBS)
+    row = _sub_row(window, 1)
+    assert row.pc.text() == u"≈" and row.property(u"untimed") == u"true", (
+        row.pc.text(), row.property(u"untimed"))
+    row.pc.ensurePolished()
+    assert row.pc.palette().color(QPalette.ColorRole.WindowText).name() == theme.LOOK.lower()
+    assert row.nm.text() == SEI15 % 1 + u".ass", row.nm.text()
+    tip = u" ".join(row.toolTip().split())
+    assert tip.startswith(u"Not timed.") and u"same provider ([NanakoRaws])" in tip, tip
+    assert row.far is None, u"the first tier says another provider"
+    control = _sub_row(window, 6)
+    assert control.pc.text() == u"82%" and control.property(u"untimed") == u"false"
+    # ⚠ The edge is a border, which no palette reports: the sheet's rule is asserted
+    # here, and the shot is LOOKED at (amber at rest and hovered, coral open)
+    sheet = theme.qss()
+    for rule in (r'#row\[untimed="true"\]\s*\{\s*border-left: 2px solid %s',
+                 r'#row\[untimed="true"\]\[expanded="true"\]\s*\{[^}]*border-left: 2px solid %s'):
+        colour = theme.LOOK if u"expanded" not in rule else theme.ACCENT
+        assert re.search(rule % re.escape(colour), sheet), rule
+    assert sheet.index(u'#row[untimed="true"]:hover') < sheet.index(
+        u'#row[untimed="true"][expanded="true"]'), u"an open row hovered would go amber"
+
+
+def test_15_the_third_tier_says_another_provider_right_after_the_name(qapp):
+    u"""⭐ Fork 4: *"· another provider — may be off"* on the third tier -- beside the
+    name it speaks of, in amber. ⚠ Measured: at the name column's END it would stand a
+    column away from a short name.
+    ⚠ A SHORT name, and a control that the cell has room: under `offscreen` every glyph
+    is an em wide, so a real release name filled the column and a name STRETCHED to it
+    measured the same (M15-60 survived the gate, 2026-09-26)."""
+    window = lay_out(make(rows=[placed(11, formats.TIER_OTHER, u"[sc] Atelier - 11.ass")],
+                          running=False))
+    try:
+        window.show_tab(gui_app.TAB_SUBS)
+        lay_out(window)
+        row = _sub_row(window, 11)
+        assert row.far is not None and row.far.text() == u"· another provider — may be off"
+        spare = row.nm.parentWidget().width() - row.nm.width() - row.far.width()
+        assert spare > 24, u"the control: no room in the cell to stretch a name into (%d)" % spare
+        advance = row.nm.fontMetrics().horizontalAdvance(row.nm.text())
+        # ⚠ BOTH WAYS (the gate's M15-60, measured): given a stretch, Qt did not widen the
+        # name -- it SHARED the cell with the spacer and cut the name to 147 px of 252
+        assert advance <= row.nm.width() <= advance + 2, (
+            u"the name is %d px for %d px of words: stretched to its column, the words after "
+            u"it stand at the column's end; squeezed, it is cut with room to spare"
+            % (row.nm.width(), advance))
+        name_end = row.nm.mapTo(row, row.nm.rect().topRight()).x()
+        far_start = row.far.mapTo(row, row.far.rect().topLeft()).x()
+        assert 0 <= far_start - name_end <= 24, (name_end, far_start)
+        row.far.ensurePolished()
+        assert row.far.palette().color(QPalette.ColorRole.WindowText).name() == \
+            theme.LOOK.lower()
+    finally:
+        window.hide()
+
+
+def test_15_the_opened_row_says_not_timed_how_it_was_chosen_and_the_mark(qapp):
+    u"""The mock's opened panel, as ruled: *timing* not timed, *chosen by* its name,
+    *written* `.jpn.` beside the video -- *".jpn marks it not timed"* -- and the
+    original kept. ⛔ No shift, no verdict, nothing *checked against*: nothing timed it."""
+    shown = u" ".join(gui_app.texts(gui_app.detail_panel(placed(1))))
+    for words in (u"timing", u"not timed", u"nothing inside the video to time against",
+                  u"chosen by", u"its name — same provider (NanakoRaws) · episode 01",
+                  SEI15 % 1 + u".jpn.ass", u".jpn marks it not timed", u"original kept",
+                  u"85 KB"):
+        assert words in shown, (words, shown)
+    for words in (u"shifted", u"verdict", u"checked against"):
+        assert words not in shown, (words, shown)
+    timed = u" ".join(gui_app.texts(gui_app.detail_panel(added(6))))
+    assert u"not timed" not in timed and u".jpn marks" not in timed, timed
+
+
+def test_15_the_show_and_the_footer_say_how_many_are_not_timed(qapp):
+    u"""⭐ The show: *"· 4 added · not timed"* (ruled), or how many when some are. The
+    footer: INSIDE the added count -- *"5 added (4 not timed)"* -- because its numbers
+    add up to the rows on screen, and a subset shown as a sibling reads as more."""
+    rows = [placed(n) for n in (1, 4, 5, 7)] + [added(6)]
+    window = make(rows=rows, running=False)
+    window.show_tab(gui_app.TAB_SUBS)
+    window.render()
+    heads = [u" ".join(gui_app.texts(h)) for h in window.panes[gui_app.TAB_SUBS].findChildren(
+        QWidget) if h.objectName() == u"showhead"]
+    assert any(u"4 added" in h and u"· not timed" in h for h in heads), heads
+    assert not any(u"1 added" in h and u"not timed" in h for h in heads), heads
+    assert window.tally_labels[0].text() == u"5 added (4 not timed)", (
+        window.tally_labels[0].text())
+    mixed = make(rows=[placed(1), dict(placed(4), untimed=None)], running=False)
+    mixed.show_tab(gui_app.TAB_SUBS)
+    heads = [u" ".join(gui_app.texts(h)) for h in mixed.panes[gui_app.TAB_SUBS].findChildren(
+        QWidget) if h.objectName() == u"showhead"]
+    assert any(u"2 added" in h and u"· 1 not timed" in h for h in heads), heads
+    plain = make(rows=[added(6)], running=False)
+    plain.render()
+    assert plain.tally_labels[0].text() == u"1 added", plain.tally_labels[0].text()
+
+
+def test_15_needs_you_says_the_waits_until_when_then_stopped_with_one_look_again(
+        qapp, monkeypatch, tmp_path):
+    u"""⭐ 15e (fork 13): this road's waits as WAITS -- what they wait for, until when --
+    then *stopped looking*, each with *Look again now* (`--retry-now`: one look).
+    ⛔ Never *"not on jimaku yet · retrying in 14h"*, which would promise for ever, and
+    ⛔ no file offered from anyone (fork 9)."""
+    started = []
+    monkeypatch.setattr(gui_run, u"Runner",
+                        lambda **kw: started.append(kw.get(u"argv")) or _NullRunner())
+    looking = [road_wait(n, video=_on_disk(tmp_path, u"ep%02d.mkv" % n)) for n in (11, 12)]
+    stopped = road_wait(13, video=_on_disk(tmp_path, u"ep13.mkv"), next_in=None)
+    window = remembering([], looking + [stopped], watching=True,
+                         untimed=formats.UNTIMED_SAME)
+    window.show_tab(gui_app.TAB_PICK)
+    text = _flat(window.panes[gui_app.TAB_PICK])
+    stops = datetime.fromisoformat(looking[0][u"untimed_wait"][u"stops"])
+    assert u"2 episodes waiting for a file by its name" in text, text
+    assert (u"nothing from [shincaps] for this episode on jimaku · looks once a day until "
+            u"%s, then stops" % formats.untimed_day(stops)) in text, text
+    assert u"stopped looking for 1 episode" in text, text
+    assert u"nothing looks again on its own" in text, text
+    # ⚠ LOOKED: the stopped strip said *"stopped looking"* in its lead AND its line
+    assert text.count(u"stopped looking") == 1, text
+    assert u"not on jimaku yet" not in text and u"retrying" not in text, text
+    assert not window.findChildren(gui_app.CandidateCard), u"a file offered (fork 9)"
+    for word in (u"same provider", u"fits the episode", u"another provider"):
+        assert word not in text.lower(), word
+    again = buttons_called(window, u"Look again now")
+    assert len(again) == 2, [b.text() for b in window.findChildren(QPushButton)]
+    again[-1].click()
+    argv, = started
+    assert u"--retry-now" in argv and u"--force" not in argv, argv
+    assert [argv[i + 1] for i, a in enumerate(argv) if a == u"--only"] == [
+        os.path.abspath(stopped[u"video"])], argv
+    # ⭐ The footer: waiting counts the two still looking; the stopped one is a skip
+    window.render()
+    assert u"2 waiting" in [lab.text() for lab in window.tally_labels], (
+        [lab.text() for lab in window.tally_labels])
+
+
+def test_15_the_subtitles_tab_says_what_a_wait_on_this_road_waits_for(qapp):
+    u"""⭐ The mock's quiet line: *"— nothing from … on jimaku · looks once a day until 3
+    Oct, then stops"* -- and a stopped one, never *"waiting to retry"*. Its tip says the
+    week's rule and where the manual choice is."""
+    looking = [road_wait(n, skip=u"negative") for n in (11, 12, 13)]
+    window = make(rows=looking + [added(6)], running=False, watching=True,
+                  untimed=formats.UNTIMED_SAME)
+    window.show_tab(gui_app.TAB_SUBS)
+    text = _flat(window.panes[gui_app.TAB_SUBS])
+    stops = datetime.fromisoformat(looking[0][u"untimed_wait"][u"stops"])
+    assert (u"eps 11, 12, 13 — nothing from [shincaps] for this episode on jimaku · looks "
+            u"once a day until %s, then stops" % formats.untimed_day(stops)) in text, text
+    tips = [w.toolTip() for w in window.panes[gui_app.TAB_SUBS].findChildren(QWidget)
+            if w.toolTip()]
+    assert any(u"at most once a day, for a week" in u" ".join(t.split()) for t in tips), tips
+    done = [road_wait(n, skip=u"negative", next_in=None) for n in (11, 12)]
+    window = make(rows=done + [added(6)], running=False, watching=True,
+                  untimed=formats.UNTIMED_SAME)
+    window.show_tab(gui_app.TAB_SUBS)
+    text = _flat(window.panes[gui_app.TAB_SUBS])
+    assert u"stopped looking — nothing looks again on its own" in text, text
+    assert u"waiting to retry" not in text, text
+
+
+SEI15_TITLE = u"\u6b63\u53cd\u5bfe\u306a\u541b\u3068\u50d5"
+
+
+def placed_present(episode):
+    u"""A file placed NOT TIMED, as the NEXT run finds it: a PRESENT skip, with the mark."""
+    video = SEI15 % episode + u".mkv"
+    return skipped(episode, title=SEI15_TITLE, skip=u"present", outcome=u"SKIPPED",
+                   video=u"D:\\Anime\\Seihantai\\" + video, name=video,
+                   untimed=untimed_module.as_field(formats.TIER_EXACT, video,
+                                                   SEI15 % episode + u".ass"))
+
+
+def _tips(pane):
+    return [u" ".join(w.toolTip().split()) for w in pane.findChildren(QWidget) if w.toolTip()]
+
+
+def test_15z_from_the_second_run_on_a_placed_file_still_says_not_timed(qapp):
+    u"""🚨 15z's BLOCKER (D1) -- a placed file comes back PRESENT, with its mark: the window
+    said *"already had one"*, its hover *"already sitting beside the video"* -- and never
+    *not timed* again. ⭐ The quiet line says it, and how many; its hover says why."""
+    window = make(rows=[placed_present(n) for n in (1, 2, 3)], running=False)
+    window.show_tab(gui_app.TAB_SUBS)
+    text = _flat(window.panes[gui_app.TAB_SUBS])
+    assert u"eps 1, 2, 3 — already had one · not timed" in text, text
+    tips = _tips(window.panes[gui_app.TAB_SUBS])
+    assert any(u"hato placed all of them not timed" in t for t in tips), tips
+    mixed = make(rows=[placed_present(1), skipped(2, title=SEI15_TITLE, outcome=u"SKIPPED")],
+                 running=False)
+    mixed.show_tab(gui_app.TAB_SUBS)
+    assert u"already had one · 1 not timed" in _flat(mixed.panes[gui_app.TAB_SUBS])
+    # ⭐ and in a show with added episodes, on its skipped line
+    shown = make(rows=[placed(4), placed_present(1)], running=False)
+    shown.show_tab(gui_app.TAB_SUBS)
+    assert u"1 other episode skipped — nothing was requested for them · 1 not timed" in (
+        _flat(shown.panes[gui_app.TAB_SUBS]))
+
+
+def test_15z_a_schedule_is_said_only_while_something_keeps_it(qapp, tmp_path):
+    u"""🚨 15z's BLOCKER (D2) -- no tray and no daily run, and the strip said *"looks once a
+    day until 25 Sep"*: a promise nothing kept (8h's rule). ⭐ It says when it looks --
+    the next run -- and its ⓘ says who asks: the daily run, or nothing on its own."""
+    rows = [road_wait(n, video=_on_disk(tmp_path, u"ep%02d.mkv" % n)) for n in (11, 12)]
+    stops = datetime.fromisoformat(rows[0][u"untimed_wait"][u"stops"])
+    for over, words, tip in (
+            (dict(watching=False), u"looks again when hato next runs, until %s",
+             u"nothing asks on its own"),
+            (dict(watching=False, auto=True, schedule=u"03:00"),
+             u"looks once a day until %s, then stops", u"the daily run at 03:00 asks"),
+            (dict(watching=True), u"looks once a day until %s, then stops", None)):
+        window = remembering([], rows, untimed=formats.UNTIMED_SAME, **over)
+        window.state.watching = over[u"watching"]
+        window.render()
+        window.show_tab(gui_app.TAB_PICK)
+        text = _flat(window.panes[gui_app.TAB_PICK])
+        assert words % formats.untimed_day(stops) in text, (over, text)
+        tips = _tips(window.panes[gui_app.TAB_PICK])
+        if tip:
+            assert any(tip in t for t in tips), (over, tips)
+        else:
+            assert not any(u"is not in the tray" in t for t in tips), (over, tips)
+    # ⚠ D6 -- finding a show's entry is a request of its own
+    again = buttons_called(window, u"Look again now")[0]
+    said = u" ".join(again.toolTip().split())
+    assert u"a request or two per show" in said and u"One request" not in said, said
+
+
+def test_15z_skip_it_or_a_changed_choice_says_what_the_next_run_does(qapp, tmp_path):
+    u"""⭐ 15z (D4) -- under *Skip it* the Subtitles line still promised daily looks; with the
+    choice changed, Needs you said *stopped* and the next run looked."""
+    rows = [road_wait(n, skip=u"negative") for n in (11, 12)]
+    off = make(rows=rows + [added(6)], running=False, watching=True,
+               untimed=formats.UNTIMED_OFF)
+    off.show_tab(gui_app.TAB_SUBS)
+    text = _flat(off.panes[gui_app.TAB_SUBS])
+    assert u"— nothing from [shincaps] for this episode on jimaku · no longer looked for" in (
+        text), text
+    assert u"once a day" not in text, text
+    changed = make(rows=[road_wait(n, skip=u"negative", next_in=None) for n in (11, 12)],
+                   running=False, watching=True, untimed=formats.UNTIMED_ANY)
+    changed.show_tab(gui_app.TAB_SUBS)
+    text = _flat(changed.panes[gui_app.TAB_SUBS])
+    assert u"looks again on the next run" in text and u"stopped looking" not in text, text
+
+
+def test_15z_road_waits_beside_added_episodes_are_no_nothing_requested(qapp):
+    u"""⭐ 15z (D8) -- in a show with added episodes, its road waits became *"2 other
+    episodes skipped — nothing was requested for them"*: false, they asked jimaku. They
+    have their own line; and weekly episodes stopping on different days keep *until
+    when* -- the soonest."""
+    title = u"\u3068\u3093\u304c\u308a\u5e3d\u5b50\u306e\u30a2\u30c8\u30ea\u30a8"
+    waits = [road_wait(11, skip=u"negative"),
+             road_wait(12, skip=u"negative", stops_in=timedelta(days=5))]
+    window = make(rows=waits + [added(6, title=title)], running=False, watching=True,
+                  untimed=formats.UNTIMED_SAME)
+    window.show_tab(gui_app.TAB_SUBS)
+    text = _flat(window.panes[gui_app.TAB_SUBS])
+    assert u"nothing was requested" not in text, text
+    soonest = datetime.fromisoformat(waits[0][u"untimed_wait"][u"stops"])
+    assert (u"eps 11, 12 — nothing from [shincaps] for this episode on jimaku · each looks "
+            u"for a week — the first stops %s" % formats.untimed_day(soonest)) in text, text
+
+
+def test_15z_the_footer_counts_videos_not_spellings(qapp):
+    u"""⚠ 15z (D10, O3) -- two spellings of one video were *"1 added (2 not timed)"*.
+    ⚠ Two spellings EVERY platform folds (a `.` segment), never a change of case: POSIX
+    keeps case, so there the two would be two videos (read for travel, 2026-09-26)."""
+    one = placed(1)
+    one[u"video"] = os.path.join(os.sep, u"anime", u"seihantai", u"ep01.mkv")
+    other = dict(one, video=os.path.join(os.sep, u"anime", u"seihantai", u".", u"ep01.mkv"))
+    window = make(rows=[one, other], running=False)
+    window.render()
+    assert window.tally_labels[0].text() == u"1 added (1 not timed)", (
+        window.tally_labels[0].text())
