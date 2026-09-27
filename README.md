@@ -135,7 +135,7 @@ hato will not guess. If two candidates both look plausible, or none of them time
 cleanly, the episode goes to **Needs you** instead of being written badly.
 
 <p align="center">
-  <img src="gui-shots/03-needs-you.png" width="100%" alt="the Needs you tab, showing episodes hato could not decide on">
+  <img src="gui-shots/frozen-04-needs-you.png" width="100%" alt="the Needs you tab: an episode hato could not decide on, with the subtitles it found to choose from">
 </p>
 
 ---
