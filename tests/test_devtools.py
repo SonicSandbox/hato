@@ -1272,11 +1272,32 @@ def test_every_command_resolves_to_a_real_function():
         assert why.strip(), "%s has no one-line description" % name
 
 
+def _runbook():
+    u"""spec/RUNBOOK.md, wherever it is. -> Path, or the check SKIPS saying why.
+
+    ⚠ Since 2026-10-01 the working docs, spec/ included, live in TheForge and this
+    repository holds the code. So: $HATO_DOCS (absolute; `_mutants.mjs` hands it to
+    its scratch copies and worktrees) · beside the code (the publish clone and CI
+    carry spec/) · hato.config.json `docs.relative` (a dev machine)."""
+    named = os.environ.get("HATO_DOCS")
+    places = [Path(named)] if named else []
+    places.append(ROOT)
+    with io.open(str(ROOT / "hato.config.json"), encoding="utf-8") as handle:
+        rel = (json.load(handle).get("docs") or {}).get("relative")
+    if rel:
+        places.append((ROOT / rel).resolve())
+    for place in places:
+        if (place / "spec" / "RUNBOOK.md").is_file():
+            return place / "spec" / "RUNBOOK.md"
+    pytest.skip("spec/RUNBOOK.md is not in $HATO_DOCS, beside the code, or where "
+                "hato.config.json's docs.relative points: %s" % [str(p) for p in places])
+
+
 def test_the_runbook_block_invokes_exactly_these_commands():
     u"""⭐ The spec is the source of the command list, so a command the RUNBOOK
     calls and this package does not have is a red suite rather than a release
     that dies at step 1."""
-    text = (ROOT / "spec" / "RUNBOOK.md").read_bytes().decode("utf-8")
+    text = _runbook().read_bytes().decode("utf-8")
     invoked = set(re.findall(r"python -m hato\.dev ([a-z\-]+)", text))
     assert invoked, "the RUNBOOK invokes no hato.dev command at all"
     known = set(name for name, _, _, _ in dispatch.COMMANDS)

@@ -57,6 +57,10 @@ _ROUNDS = 5
 #: has the lock open -- a waiting run reads it on every poll (`release`).
 _UNLINK_TRIES = 40
 _UNLINK_PAUSE = 0.05
+#: ...and how long a CREATE Windows refuses is waited out: the lock a run just released is
+#: DELETE-PENDING while another handle still reads it, and a create at its name is ACCESS
+#: DENIED until that handle closes (`_create`). The same patience as the release's.
+_CREATE_TRIES = _UNLINK_TRIES
 
 #: A lock naming a process this user may not inspect is obeyed this long and no
 #: longer. ⚠ A hato run is the person's own process and can always be inspected,
@@ -306,17 +310,7 @@ class RunLock(object):
         flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
                  | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOINHERIT", 0))
         for _ in range(_ROUNDS):
-            try:
-                fd = os.open(str(self.path), flags, 0o644)
-            except FileExistsError:
-                fd = None
-            except OSError as exc:
-                # ⚠ EVERY OTHER REASON IS A SENTENCE, NOT A TRACEBACK. A folder
-                # sitting where the lock goes, a read-only root, an antivirus
-                # holding the handle -- all reached a person as a raw
-                # PermissionError through the scheduled path, whose log then read
-                # only "hato exited 1" (measured 2026-09-17).
-                raise LockUnusable(self.path, exc)
+            fd = self._create(flags)
             if fd is None:
                 # Outside the except block, so a LockHeld does not arrive wrapped in
                 # "during handling of FileExistsError" -- the message is the point.
@@ -334,6 +328,34 @@ class RunLock(object):
             return self
         raise LockHeld(self.path, detail="the run lock kept changing hands while this run "
                                          "tried to take it")
+
+    def _create(self, flags):
+        """The create that IS the test. -> an fd, or None: a lock is there.
+
+        ⚠ EVERY OTHER REASON IS A SENTENCE, NOT A TRACEBACK. A folder sitting where the
+        lock goes, a read-only root, an antivirus holding the handle -- all reached a
+        person as a raw PermissionError through the scheduled path, whose log then read
+        only "hato exited 1" (measured 2026-09-17).
+
+        🚨 BUT A REFUSAL CAN BE A LOCK BEING RELEASED (the Layer 15 pass's last full run,
+        2026-09-26): on Windows the lock another run just deleted while a waiter read it
+        is DELETE-PENDING, and a create at its name is ACCESS DENIED until the reader
+        lets go -- the run told to wait exited *"could not be created"* the moment the
+        other finished. Waited out briefly, as `release` waits out its refused delete; a
+        refusal that lasts is the sentence it always was.
+        """
+        for attempt in range(_CREATE_TRIES):
+            try:
+                return os.open(str(self.path), flags, 0o644)
+            except FileExistsError:
+                return None
+            except PermissionError as exc:
+                if attempt + 1 < _CREATE_TRIES and not self.path.is_dir():
+                    time.sleep(_UNLINK_PAUSE)
+                    continue
+                raise LockUnusable(self.path, exc)
+            except OSError as exc:
+                raise LockUnusable(self.path, exc)
 
     def _meet_existing_lock(self):
         """A lock is there. Raise LockHeld if its run is alive; take it over if not."""

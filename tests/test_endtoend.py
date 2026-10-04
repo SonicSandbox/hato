@@ -503,7 +503,10 @@ def test_colour_is_absent_when_stdout_is_not_a_tty(tmp_path, monkeypatch, capsys
 
 def test_colour_appears_on_a_real_terminal(tmp_path, monkeypatch):
     u"""...and the branch is not dead. ⚠ Without this the check above passes on
-    a renderer that can never colour anything."""
+    a renderer that can never colour anything. ⚠ `NO_COLOR` is cleared here:
+    Claude Code sets `NO_COLOR=1` in every agent's shell, and hato honours it,
+    so this check was red for every agent that ran the suite (found 2026-10-02)."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
     lab = normal(Lab(tmp_path), monkeypatch)
     fake = FakeTTY()
     monkeypatch.setattr(sys, "stdout", fake)

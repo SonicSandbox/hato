@@ -9,7 +9,12 @@
 
   "media": {
     "//": "TESTS ONLY. The ffmpeg the suites use to BUILD real videos in a temp dir (the tsubasa contract test, spec/07-test-plan.md). Resolved relative to this file. ⛔ Never read by shipping code -- a released hato must not know where this vault keeps its tools (RUNBOOK 0a: never hardcoded).",
-    "ffmpegRelative": "../media-kit/bin/ffmpeg.exe"
+    "ffmpegRelative": "../../Resources/tools/ffmpeg/ffmpeg.exe"
+  },
+
+  "docs": {
+    "//": "Where the WORKING DOCS live -- CONTEXT, HANDOFF, LEDGER, the reviews, spec/ (the RUNBOOK and its rulings), the mocks. Since 2026-10-01 this repository holds the code and the docs stay in TheForge; resolved relative to this file. Read by the check that compares the RUNBOOK's commands with the package, and handed to scratch copies by _mutants.mjs as $HATO_DOCS.",
+    "relative": "../../TheForge/Workshop/hato"
   },
 
   "keystore": {

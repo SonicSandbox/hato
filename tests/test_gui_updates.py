@@ -14,7 +14,8 @@ Two halves, as the rest of the window is tested:
     swapper, stops a real tray, or quits the suite.
 
 ⚠ WHAT THIS FILE CANNOT SEE: how it LOOKS (the shots in `%TEMP%\\hato-11\\shots`,
-LOOKED against the mock, 2026-09-24), and a real swap -- the swapper's own suite and
+LOOKED against the mock, 2026-09-24 -- that folder deleted 2026-09-26 when C: filled;
+`gui-mock/shots-update/` keeps the mock's), and a real swap -- the swapper's own suite and
 the smoke's rehearsal (11h).
 """
 import ast

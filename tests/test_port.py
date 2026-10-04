@@ -619,8 +619,17 @@ def test_the_media_helper_refuses_to_build_inside_the_vault():
 
 def test_the_media_helper_builds_outside_the_vault(real):
     u"""The same guard, from the other side: the fixture above really is
-    somewhere the vault does not reach."""
-    assert _media.VAULT.name == "TheForge"
+    somewhere the vault does not reach.
+
+    ⚠ The guard protects the Obsidian vault the project sits in, or the project
+    itself when no vault is above it -- hato's own repository since 2026-09-30.
+    This check asserted the vault's NAME, `TheForge`, which was true of one
+    layout only: from the new home it read `hato` and went red over a guard
+    that was working. What is asserted now is the walk: the nearest folder
+    holding `.obsidian`, else the project."""
+    above = [folder for folder in [_media.ROOT] + list(_media.ROOT.parents)
+             if (folder / ".obsidian").is_dir()]
+    assert _media.VAULT == (above[0] if above else _media.ROOT)
     with pytest.raises(ValueError):
         real.root.relative_to(_media.VAULT)
 

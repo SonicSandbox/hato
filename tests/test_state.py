@@ -1322,6 +1322,36 @@ def test_a_release_that_meets_a_READER_waits_it_out_and_still_removes_the_lock(t
     assert not path.exists(), "the release met a reader and left the lock behind"
 
 
+def test_a_create_refused_while_the_last_lock_is_being_released_is_waited_out(
+        tmp_path, monkeypatch):
+    """🚨 FOUND BY THE LAYER 15 PASS'S LAST FULL RUN (2026-09-26): on Windows the lock
+    a run has just deleted while a waiter read it is DELETE-PENDING, and a create at its
+    name is ACCESS DENIED until the reader lets go -- `test_endtoend`'s L1 check exited
+    *"could not be created"* once. ⭐ A refused create is waited out, briefly; one that
+    LASTS is still the sentence (a folder where the lock goes answers at once)."""
+    path = tmp_path / "hato.lock"
+    real, refusals = os.open, [2]
+
+    def denied(name, *args, **kwargs):
+        if str(name) == str(path) and refusals[0]:
+            refusals[0] -= 1
+            raise PermissionError(13, "Access is denied", str(name))
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(runlock.os, "open", denied)
+    lock = runlock.RunLock(path).acquire()
+    assert lock.held and refusals == [0], refusals
+    lock.release()
+    refusals[0] = 10 ** 6
+    with pytest.raises(runlock.LockUnusable) as err:
+        runlock.RunLock(path).acquire()
+    assert "could not be created" in str(err.value), err.value
+    monkeypatch.undo()
+    path.mkdir()
+    with pytest.raises(runlock.LockUnusable):
+        runlock.RunLock(path).acquire()
+
+
 def test_a_lock_left_by_a_run_that_exited_is_taken_over_with_a_note(tmp_path):
     path = tmp_path / "hato.lock"
     child = subprocess.Popen([sys.executable, "-c", "pass"])

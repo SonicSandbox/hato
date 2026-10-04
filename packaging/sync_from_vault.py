@@ -58,7 +58,6 @@ VAULT = os.environ.get("HATO_VAULT") or os.path.normpath(
 COPIED = [
     "hato",
     "tests",
-    "spec",
     # ⭐ THE SCREENSHOTS THE README EMBEDS. Without these the front page ships
     # four dead <img> tags -- and README.md IS copied, so the failure is
     # guaranteed rather than possible. `audit_dirs()` below now refuses a new
@@ -111,25 +110,9 @@ COPIED = [
 #: was told -- but "0 changed" after writing a new file reads as success.
 #: ⚠ A copy list is a list of things somebody remembered.
 NOT_PUBLISHED = {
-    "LEDGER.md":        "internal process history, not an artifact",
-    "LEDGER-HOT.md":    "internal process history, not an artifact",
-    "HANDOFF.md":       "written for the next agent in this vault",
-    "CONTEXT.md":       "vault routing; meaningless outside it",
-    "_mutants.mjs":     "imports ../app-kit, a vault-relative path -- it cannot run in a clone",
-    "ADVERSARY-2026-09-18.md":
-                        "an internal review register, same class as the ledgers",
-    "ADVERSARY-2026-09-22.md":
-                        "an internal review register, same class as the ledgers",
-    "ADVERSARY-2026-09-23.md":
-                        "an internal review register, same class as the ledgers",
-    "ADVERSARY-2026-09-24.md":
-                        "an internal review register, same class as the ledgers",
-    "ADVERSARY-2026-09-25.md":
-                        "an internal review register, same class as the ledgers",
-    "ADVERSARY-2026-09-26.md":
-                        "an internal review register, same class as the ledgers",
-    "REPORT-DRAFT-2026-09-23.md":
-                        "a session's working draft of its report to the owner; vault-only",
+    "_mutants.mjs":        "imports ../Workbench/app-kit, a dev-layout path -- it cannot run in a clone",
+    "CLAUDE.md":           "the agents' rules for the private dev layout; points at notes that are not published",
+    "hato.code-workspace": "an editor window file naming private folders",
 }
 
 #: ⛔ Top-level DIRECTORIES that are deliberately not published. Same shape and
