@@ -411,6 +411,12 @@ def enable(at, argv=None, now=None):
             u"system schedule `hato --quiet` with cron or a systemd timer.")
     if not _config.is_clock(at):
         raise ScheduleError(u"%r is not a time — use 24-hour, like 03:00." % (at,))
+    from hato import paths
+    holder = paths.held_by()
+    if holder:
+        # ⭐ LAYER 17 (H6) -- a held copy runs when its holder asks, never on a schedule
+        raise ScheduleError(u"this copy of hato is kept by %s, which runs it when it "
+                            u"needs it -- it has no daily run of its own." % holder)
     argv = list(argv or command_argv())
     # ⚠ A FRESH, UNIQUE file: nothing existing is truncated, and it is removed
     # whatever schtasks says. UTF-16 with its BOM, as Task Scheduler reads it.

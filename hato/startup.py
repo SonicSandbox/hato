@@ -219,6 +219,12 @@ def enable():
         raise StartupError(
             u"starting with the computer is a Windows feature; on this system "
             u"add hato to your desktop's own startup applications.")
+    from hato import paths
+    holder = paths.held_by()
+    if holder:
+        # ⭐ LAYER 17 (H6) -- a held copy never starts by itself (its tray would refuse)
+        raise StartupError(u"this copy of hato is kept by %s, which starts it when it "
+                           u"needs it -- it does not start with the computer." % holder)
     import winreg
     line = command()
     try:

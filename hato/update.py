@@ -292,6 +292,9 @@ TOO_OLD = u"too_old"          # this copy is older than the release's `min_from`
 #: ⭐ RUNBOOK 12e -- NONE's reason when GitHub refused an address that asked too often
 #: (60 an hour, unauthenticated): a WAIT, said as one, never "GitHub did not answer".
 RATE_LIMITED = u"rate_limited"
+#: ⭐ LAYER 17 (H6) -- NONE's reason for a copy another program holds (`paths.held_by`):
+#: that program moves its version, so this copy never asks GitHub at all.
+HELD = u"held"
 
 
 class FetchError(Exception):
@@ -415,6 +418,10 @@ def _decide(current, get=None, frozen=None, windows=None, install_dir=None, keys
     never about signatures it has no use for."""
     import os
     import sys
+    from hato import paths
+    if paths.held_by(install_dir):
+        # ⭐ LAYER 17 (H6) -- before the network: a held copy's version is its holder's
+        return Decision(NONE, reason=HELD)
     get = fetch if get is None else get
     frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
     windows = sys.platform.startswith("win") if windows is None else windows

@@ -2341,3 +2341,93 @@ def test_this_tray_says_its_runs_read_the_surasura_switch():
     u"""⭐ LAYER 16 -- the same rule again: a tray whose runs read `surasura_connect` says
     so. A 1.0.9 tray says `untimed` and would refuse a config.toml carrying it."""
     assert u"connect" in watch.CAPABILITIES
+
+
+# -- LAYER 17 (H6): a copy another program holds sits in no tray --------------------------------
+
+def test_17_a_held_copy_sits_in_no_tray_runs_no_schedule_and_never_updates_itself(monkeypatch):
+    u"""⭐ H6 -- Surasura's own copy: `hato-watch` (the tray, and the daily task's
+    `--scheduled` run) says once that it is kept by Surasura and exits 0 -- NOT a
+    failure -- before it reads a setting or starts a watcher; and the tray's updater
+    never takes it (`can_update_itself`)."""
+    from hato import paths
+    said = []
+    monkeypatch.setattr(watch, u"complain", lambda text, **k: said.append(text))
+    monkeypatch.setattr(watch, u"watching_pid",
+                        lambda: pytest.fail(u"a held copy went on to look for its tray"))
+    monkeypatch.setattr(watch, u"scheduled_run",
+                        lambda: pytest.fail(u"a held copy ran the daily run"))
+    monkeypatch.setenv(paths.HELD_ENV, u"surasura")
+    monkeypatch.setattr(watch.sys, u"frozen", True, raising=False)
+    monkeypatch.setattr(watch.sys, u"platform", u"win32")
+    assert watch.main([]) == 0
+    assert watch.main([watch.SCHEDULED_FLAG]) == 0
+    assert len(said) == 2 and all(u"kept by surasura" in s for s in said), said
+    assert watch.can_update_itself() is False
+    monkeypatch.delenv(paths.HELD_ENV)
+    assert watch.can_update_itself() is True               # the control: frozen, Windows
+
+
+def test_17_a_held_copy_never_asks_github_and_says_who_keeps_it(tmp_path):
+    u"""⭐ H6 -- Surasura fetches hato into its own tools folder and leaves `held-by.json`
+    beside it: Surasura moves that copy's version (its pin), so the copy NEVER asks
+    GitHub -- not even to tell. ⛔ The mark is read before the network: a held copy that
+    asked would update past its holder's pin the first time the tray ran. (Here, not in
+    test_update.py: that module needs the `update` extra, and the gate's copies lack it.)"""
+    import json as _json
+    from hato import paths, update
+    asked = []
+
+    def wire(url, limit):
+        asked.append(url)
+        return _json.dumps({u"tag_name": u"v1.0.2", u"assets": []}).encode("utf-8")
+
+    def check():
+        return update.check(u"1.0.2", get=wire, frozen=True, windows=True,
+                            install_dir=str(tmp_path))
+
+    (tmp_path / paths.HELD_FILE).write_text(u'{"held_by": "surasura"}', encoding="utf-8")
+    got = check()
+    assert (got.kind, got.reason) == (update.NONE, update.HELD), got
+    assert asked == [], u"a held copy asked GitHub: %r" % asked
+    assert paths.held_by(str(tmp_path)) == u"surasura"
+    # ⛔ an unreadable mark still holds -- it was put there on purpose
+    (tmp_path / paths.HELD_FILE).write_bytes(b"\xff not json")
+    assert paths.held_by(str(tmp_path)) == u"another program"
+    assert check().reason == update.HELD and asked == []
+    # the control: no mark, the same wire is asked
+    (tmp_path / paths.HELD_FILE).unlink()
+    assert paths.held_by(str(tmp_path)) is None
+    assert check().reason != update.HELD
+    assert asked, u"the control asked nothing: the arms above prove nothing"
+
+
+def test_17_the_update_command_of_a_held_copy_stages_and_swaps_nothing(monkeypatch, capsys):
+    u"""⭐ H6 -- `hato update` on a held copy: `--check` answers *kept by surasura* (one
+    JSON object, no network), `--auto` is silent, and `--stage` / `--apply` / `--rollback`
+    refuse -- nothing downloaded, nothing swapped."""
+    import argparse
+    import json as _json
+    from hato import paths, update
+    from hato.commands import update as cmd
+    monkeypatch.setenv(paths.HELD_ENV, u"surasura")
+    monkeypatch.setattr(update, u"fetch", lambda *a, **k: pytest.fail(u"a held copy fetched"))
+    monkeypatch.setattr(update, u"stage", lambda *a, **k: pytest.fail(u"a held copy staged"))
+    monkeypatch.setattr(watch, u"complain", lambda text, **k: None)
+    monkeypatch.setattr(cmd, u"refresh_relations", lambda now: u"skipped")
+
+    def args(**on):
+        base = dict(check=False, if_due=False, stage=False, auto=False, apply=False,
+                    rollback=False, json=True, progress=False)
+        base.update(on)
+        return argparse.Namespace(**base)
+
+    assert cmd.run(args(check=True), now=0) == cmd.EXIT_OK
+    said = _json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert (said[u"type"], said[u"kind"], said[u"reason"]) == (u"update", update.NONE, update.HELD)
+    assert cmd.run(args(auto=True), now=0) == cmd.EXIT_OK
+    assert capsys.readouterr().out == u""
+    for flag in (u"stage", u"apply", u"rollback"):
+        assert cmd.run(args(**{flag: True}), now=0) == cmd.EXIT_FAILED, flag
+        said = _json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert said[u"type"] == u"error" and u"Surasura keeps this copy" in said[u"reason"], said

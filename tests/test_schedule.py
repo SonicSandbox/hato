@@ -575,3 +575,16 @@ def test_the_REAL_task_scheduler_takes_the_task_and_KEEPS_the_battery_settings(m
 
 if __name__ == u"__main__":
     raise SystemExit(pytest.main([__file__, u"-q"]))
+
+
+def test_17_a_held_copy_has_no_daily_run_of_its_own(monkeypatch):
+    u"""⭐ LAYER 17 (H6) -- a copy Surasura holds runs when Surasura asks: Task Scheduler is
+    never asked to add a daily run for it, and the switch says why."""
+    from hato import paths
+    monkeypatch.setenv(paths.HELD_ENV, u"surasura")
+    monkeypatch.setattr(schedule, u"supported", lambda: True)
+    monkeypatch.setattr(schedule, u"_schtasks",
+                        lambda *a: pytest.fail(u"Task Scheduler was asked for a held copy"))
+    with pytest.raises(schedule.ScheduleError) as caught:
+        schedule.enable(u"03:00")
+    assert u"kept by surasura" in str(caught.value)

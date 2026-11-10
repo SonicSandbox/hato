@@ -2102,12 +2102,17 @@ def test_16z_A7_go_back_rewrites_hato_json_with_no_verbs_and_its_cli_kept(monkey
         with open(path, encoding="utf-8") as handle:
             return json.load(handle)
 
-    assert entry()["verbs"] == [u"pairings"] and entry()["version"] == u"1.1.0"
+    # ⭐ LAYER 17 -- 1.1.1 offers `find` too; a kept 1.1.0 rewrites its own entry (no
+    # `find`) the moment it starts again (`connect.refresh`), and runs the same batch
+    # command meanwhile -- so going back to 1.1.0 leaves the verbs as they are
+    verbs = list(connect.VERBS)
+    assert entry()["verbs"] == verbs and entry()["version"] == u"1.1.0"
     update.going_back_words(u"1.0.9", db_path=str(tmp_path / "none.db"))
-    assert entry()["verbs"] == [u"pairings"], u"asking what Go back would change wrote it"
+    assert entry()["verbs"] == verbs, u"asking what Go back would change wrote it"
     update.settings_for_going_back(u"1.1.0", db_path=str(tmp_path / "none.db"))
-    assert entry()["verbs"] == [u"pairings"], u"a version that has the verb lost it"
+    assert entry()["verbs"] == verbs, u"a version that has the verb lost it"
     update.settings_for_going_back(u"1.0.9", db_path=str(tmp_path / "none.db"))
     back = entry()
     assert back["verbs"] == [] and back["cli"] == cli, back
     assert back["version"] == u"1.0.9", u"hato.json names the version that runs now"
+

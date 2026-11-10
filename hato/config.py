@@ -139,6 +139,16 @@ SCHEMA = {
     # favourite's `.srt` still waits behind another group's `.ass`, and the timing
     # verdict decides who wins. Empty = 1.0.9's order.
     "favourite_groups": (list, [u"NanakoRaws"]),
+    # ⭐ RUNBOOK LAYER 17 (1.1.1) -- Sonic's SRC-7 (2026-10-16): *"an option for whether
+    # hato writes the subtitle beside the video, while still handing it to Surasura"*.
+    # True (the default, NEVER WRITTEN): tsubasa writes the finished file beside the
+    # video, as every hato has. False: it is written into hato's OWN folder
+    # (`keep.own_dir`), never into the media folder, and handed to Surasura from there
+    # -- a player then finds nothing beside the video, which is what was asked.
+    # ⚠ `out` set wins over it (an explicit place). Surasura's hato card writes it
+    # (`config --set write_beside_video=false --json`) and its subtitles made from the
+    # audio follow it (Surasura's `no_subs.BESIDE_KEY`).
+    "write_beside_video": (bool, True),
 }
 
 #: ⭐ LAYER 16 -- the three values `surasura_connect` takes.
@@ -164,19 +174,21 @@ NEWER_THAN_1_0_7 = ("extract_embedded",)
 NEWER_THAN_1_0_8 = ("untimed",)
 #: ⭐ And 1.1.0's (RUNBOOK LAYER 16) -- its own tuple, for the same reason.
 NEWER_THAN_1_0_9 = ("surasura_connect", "favourite_groups")
+#: ⭐ And 1.1.1's (RUNBOOK LAYER 17) -- its own tuple, for the same reason.
+NEWER_THAN_1_1_0 = ("write_beside_video",)
 #: ⭐ LAYER 16 (16k) -- the most names `favourite_groups` holds, and the longest one.
 #: A line a person types: bounds that say so, never a list nothing could read.
 FAVOURITES_MAX = 20
 FAVOURITE_MAX_CHARS = 64
 #: Every key written only once set away from its default.
 NEWER_KEYS = (NEWER_THAN_1_0_2 + NEWER_THAN_1_0_3 + NEWER_THAN_1_0_7 + NEWER_THAN_1_0_8
-              + NEWER_THAN_1_0_9)
+              + NEWER_THAN_1_0_9 + NEWER_THAN_1_1_0)
 #: ⭐ 14z (ADVERSARY 2026-09-25, C-1/C-2) -- which hato first refuses which keys,
 #: oldest first: `NEWER_THAN_x_y_z` names the keys a hato AT OR BELOW x.y.z has never
 #: heard of. ⛔ A key added here is a key *Go back* must be able to take away.
 NEWER_THAN = (((1, 0, 2), NEWER_THAN_1_0_2), ((1, 0, 3), NEWER_THAN_1_0_3),
               ((1, 0, 7), NEWER_THAN_1_0_7), ((1, 0, 8), NEWER_THAN_1_0_8),
-              ((1, 0, 9), NEWER_THAN_1_0_9))
+              ((1, 0, 9), NEWER_THAN_1_0_9), ((1, 1, 0), NEWER_THAN_1_1_0))
 
 #: ⚠ `schedule` is HH:MM, 24-hour. A free string here would be written happily
 #: and refused later by whatever registers the task -- somewhere the person is
@@ -333,7 +345,7 @@ class Config(object):
                  "extract_embedded",
                  "watch", "schedule", "surasura_dir", "prefer_format",
                  "format_fallback", "auto_update", "untimed", "surasura_connect",
-                 "favourite_groups",
+                 "favourite_groups", "write_beside_video",
                  "log_path", "log_keep",
                  "path", "path_source", "file_exists", "_set")
 
@@ -371,6 +383,7 @@ class Config(object):
             "untimed": self.untimed,
             "surasura_connect": self.surasura_connect,
             "favourite_groups": list(self.favourite_groups),
+            "write_beside_video": self.write_beside_video,
             "log": {"path": self.log_path, "path_resolved": str(self.log_path_resolved),
                     "keep": self.log_keep},
             "data_root": str(paths.data_root()),
@@ -507,6 +520,7 @@ def parse(text, path=None):
     cfg.surasura_connect = connect
     cfg.favourite_groups = check_groups(values["favourite_groups"],
                                         "%s: favourite_groups" % where)
+    cfg.write_beside_video = values["write_beside_video"]
     cfg.log_path = _absolute(log_values["path"], "log.path")
     cfg.log_keep = log_values["keep"]
     cfg._set = frozenset(set_names)
@@ -661,6 +675,7 @@ def _writable(cfg):
         "untimed": cfg.untimed,
         "surasura_connect": cfg.surasura_connect,
         "favourite_groups": list(cfg.favourite_groups),
+        "write_beside_video": cfg.write_beside_video,
     }
 
 
@@ -837,6 +852,10 @@ _GOING_BACK = {
     # ⭐ RUNBOOK LAYER 16 (16k) -- the key dropped: 1.0.9 tries files in its own order.
     "favourite_groups": ({}, u"“Favourite release groups” goes — %s tries files in its own "
                              u"order"),
+    # ⭐ RUNBOOK LAYER 17 -- the key dropped (on): 1.1.0 always writes beside the video.
+    # The files already in hato's own folder stay; 1.1.0 writes each video's again.
+    "write_beside_video": ({}, u"“Save subtitles beside the videos” comes back on — %s "
+                               u"always saves them there"),
 }
 
 

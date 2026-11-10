@@ -2309,3 +2309,222 @@ def test_16z_D4_one_run_one_log_block_when_stdout_breaks_after_the_log(
     assert sum(u"could not be shown" in line for line in err.split(u"\n")) == 1, err
     text = (lab.data / "hato.log").read_text(encoding="utf-8")
     assert text.count(u"=== hato ") == 1, text
+
+
+# -- LAYER 17 (1.1.1): Surasura's finder -- `find` (09-hato-layer.md §7) ------------------------
+
+def _lines(out):
+    return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+
+def _listed(tmp_path, videos):
+    listed = tmp_path / u"only.txt"
+    listed.write_text(u"\n".join(str(v) for v in videos) + u"\n", encoding="utf-8")
+    return listed
+
+
+def test_17_the_finders_batch_run_answers_one_video_line_per_listed_video(
+        tmp_path, monkeypatch, capsys):
+    u"""⭐ H1/H2 -- THE COMMAND SURASURA SENDS, word for word (`no_subs._hato_run`), and
+    the fields it reads: `type: video`, `video` (the path as listed, absolute), `outcome`,
+    `retry_after` (an ISO date-time with its zone) on a NOT_FOUND, the `run` object last.
+    ⚠ `--progress` lines ride in the same stream with `type: progress`: Surasura filters
+    by `type`, so a `progress` line must never carry `type: video`."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+    wanted = [lab.media / u"frieren S2 - 01.mkv", lab.media / u"frieren S2 - 04.mkv",
+              lab.media / u"frieren S2 - 24.mkv"]
+    code = cli.main([str(lab.media), "--only-list", str(_listed(tmp_path, wanted)), "--json",
+                     "--progress", "--wait", "--lang", "ja", "--subs-dir", str(lab.subs)])
+    out = capsys.readouterr().out
+    assert code == 0
+    objs = _lines(out)
+    videos = [o for o in objs if o.get(u"type") == u"video"]
+    assert objs[-1][u"type"] == u"run", objs[-1]
+    assert sorted(os.path.normcase(v[u"video"]) for v in videos) == sorted(
+        os.path.normcase(str(w)) for w in wanted), videos
+    assert all(os.path.isabs(v[u"video"]) for v in videos)
+    by = dict((os.path.basename(v[u"video"]), v) for v in videos)
+    assert by[u"frieren S2 - 01.mkv"][u"outcome"] == pipeline.SKIPPED      # present beside it
+    assert by[u"frieren S2 - 04.mkv"][u"outcome"] == pipeline.CONFIDENT
+    late = by[u"frieren S2 - 24.mkv"]
+    assert late[u"outcome"] == pipeline.NOT_FOUND, late
+    when = datetime.fromisoformat(late[u"retry_after"])
+    assert when.tzinfo is not None and when > NOW, late[u"retry_after"]
+    assert any(o.get(u"type") == u"progress" for o in objs), u"no progress line streamed"
+
+
+def test_17_a_listed_video_no_walk_reaches_is_left_out_and_said_never_failing_the_list(
+        tmp_path, monkeypatch, capsys):
+    u"""🚨 ONE NAME MUST NOT STOP THE OTHERS. A list of 200 holding one video deleted since
+    Surasura looked -- or one in a folder the person's config skips -- was refused WHOLE
+    (exit 2), so every video beside it failed, and Surasura asked again an hour later,
+    and failed again, for ever. Left out, and still ANSWERED: an ERROR row per name, so
+    every listed video has its `video` line (a run with none reads, to Surasura, as one
+    that failed whole -- and then no folder is asked for an hour). The rest run.
+    ⛔ And a list left with NOTHING is never run as *every video*: no key, no lock, no
+    download -- its rows, then the `run` object."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+    skipped = lab.media / u"Extras"
+    skipped.mkdir()
+    hidden = skipped / u"frieren S2 - 07.mkv"
+    hidden.write_bytes(b"\x1aE\xdf\xa3 an extra")
+    lab.config.write_text(u"skip_folders = [%s]\n" % json.dumps(str(skipped)), encoding="utf-8")
+    gone = lab.media / u"frieren S2 - 09.mkv"
+    good = lab.media / u"frieren S2 - 04.mkv"
+    code, out, err = lab.cli(capsys, "--json", "--only-list",
+                             str(_listed(tmp_path, [gone, hidden, good, gone])))
+    assert code == 0, err
+    objs = _lines(out)
+    rows = dict((o[u"name"], o) for o in objs if o[u"type"] == u"video")
+    assert sorted(rows) == sorted([gone.name, hidden.name, good.name]), objs
+    assert len([o for o in objs if o[u"type"] == u"video"]) == 3, u"a name listed twice, two rows"
+    assert rows[good.name][u"outcome"] == pipeline.CONFIDENT
+    assert rows[gone.name][u"outcome"] == pipeline.ERROR, rows[gone.name]
+    assert u"not a file any more" in rows[gone.name][u"reason"], rows[gone.name]
+    assert rows[hidden.name][u"outcome"] == pipeline.ERROR
+    assert u"skipped folder" in rows[hidden.name][u"reason"], rows[hidden.name]
+    assert os.path.normcase(rows[gone.name][u"video"]) == os.path.normcase(str(gone))
+
+    lab.downloads[:] = []
+    lab.client = None
+    code, out, err = lab.cli(capsys, "--json", "--only-list", str(_listed(tmp_path, [gone, hidden])))
+    assert code == 0, err
+    objs = _lines(out)
+    assert [o[u"type"] for o in objs] == [u"video", u"video", u"run"], objs
+    assert all(o[u"outcome"] == pipeline.ERROR for o in objs[:2]), objs
+    assert lab.client is None and lab.downloads == [], u"an empty list ran as every video"
+    # ⛔ the control: a person's typed `--only` still refuses, whole
+    code, out, err = lab.cli(capsys, "--only", str(gone))
+    assert code == 2 and u"not a file" in err, (code, err)
+
+
+def test_17_a_list_run_waiting_for_another_runs_lock_says_so_while_it_waits(
+        tmp_path, monkeypatch, capsys):
+    u"""🚨 A RUN WAITING FOR ANOTHER RUN IS NOT A HUNG RUN. Surasura's finder starts
+    `--wait` runs and stops one silent for 10 minutes: a list run queued behind the daily
+    run was killed and read as failed. ⭐ Under `--json --progress` a `progress` line goes
+    out the moment it starts waiting (and every minute after). ⛔ Without `--progress`,
+    nothing new on stdout: the stream's grammar is untouched."""
+    from hato.runlock import RunLock
+    lab = normal(Lab(tmp_path), monkeypatch)
+    monkeypatch.setattr(run_cmd, u"LOCK_WAIT_SECONDS", 0.4)
+    monkeypatch.setattr(run_cmd, u"LOCK_POLL_SECONDS", 0.1)
+    holder = RunLock()
+    holder.acquire()
+    try:
+        video = lab.media / u"frieren S2 - 04.mkv"
+        code, out, err = lab.cli(capsys, "--json", "--progress", "--wait", "--only", str(video))
+        assert code == 0, err
+        objs = _lines(out)
+        waits = [o for o in objs if o[u"type"] == u"progress" and o.get(u"phase") == u"waiting"]
+        assert len(waits) == 1 and objs.index(waits[0]) == 0, objs
+        assert objs[-1][u"type"] == u"busy", objs
+        code, out, err = lab.cli(capsys, "--json", "--wait", "--only", str(video))
+        assert [o[u"type"] for o in _lines(out)] == [u"busy"], out
+    finally:
+        holder.release()
+
+
+def test_17_with_write_beside_video_off_the_subtitle_goes_to_hatos_own_folder_only(
+        tmp_path, monkeypatch, capsys):
+    u"""⭐ H5 (SRC-7) -- `write_beside_video = false`: tsubasa writes the finished file into
+    hato's OWN folder (`keep.own_dir`), never beside the video, and the run says where.
+    The next run finds it there (present, nothing fetched again); and a subtitle already
+    BESIDE a video still counts -- switching the setting off never fetches the library
+    again."""
+    from hato import keep
+    lab = normal(Lab(tmp_path), monkeypatch)
+    lab.config.write_text(u"write_beside_video = false\n", encoding="utf-8")
+    before = sorted(os.listdir(str(lab.media)))
+    video = lab.media / u"frieren S2 - 04.mkv"
+    code, out, err = lab.cli(capsys, "--json", "--only", str(video))
+    assert code == 0, err
+    objs = _lines(out)
+    row = [o for o in objs if o[u"type"] == u"video"][0]
+    assert row[u"outcome"] == pipeline.CONFIDENT, row
+    assert sorted(os.listdir(str(lab.media))) == before, u"something was written beside the video"
+    own = keep.own_dir(str(video), lab.data / u"subtitles")
+    assert os.path.dirname(row[u"output_path"]) == str(own), (row[u"output_path"], own)
+    assert os.path.isfile(row[u"output_path"])
+    assert any(u"not beside the videos" in n for n in objs[-1][u"notes"]), objs[-1][u"notes"]
+
+    fetched = len(lab.downloads)
+    code, out, err = lab.cli(capsys, "--json", "--only", str(video))
+    row = [o for o in _lines(out) if o[u"type"] == u"video"][0]
+    assert (row[u"outcome"], row[u"skip"]) == (pipeline.SKIPPED, pipeline.PRESENT), row
+    assert len(lab.downloads) == fetched, u"fetched again for a video whose file is in hato's folder"
+
+    beside = lab.media / u"frieren S2 - 01.mkv"                    # `normal` put 01's beside it
+    code, out, err = lab.cli(capsys, "--json", "--only", str(beside))
+    row = [o for o in _lines(out) if o[u"type"] == u"video"][0]
+    assert (row[u"outcome"], row[u"skip"]) == (pipeline.SKIPPED, pipeline.PRESENT), row
+
+
+def test_17_two_library_folders_never_share_one_own_folder_file(tmp_path):
+    u"""🚨 Surasura asks about ONE library folder a run. `--out`'s mirror below a root
+    would put `D:/Anime/Show/01.mkv` and `E:/Anime/Show/01.mkv` on one file across two
+    runs -- the in-run clash check cannot see across runs -- and the second video would
+    read the first's subtitle as its own. One folder per VIDEO FOLDER, by its whole path."""
+    from hato import keep
+    a = tmp_path / u"A" / u"Anime" / u"Show" / u"01.mkv"
+    b = tmp_path / u"B" / u"Anime" / u"Show" / u"01.mkv"
+    base = tmp_path / u"own"
+    assert keep.own_dir(str(a), base) != keep.own_dir(str(b), base)
+    assert keep.own_dir(str(a), base).parent == base
+    assert keep.own_dir(str(a), base).name.startswith(u"Show-")
+    if os.name == "nt":                         # one folder in any case, as Windows reads it
+        assert keep.own_dir(str(a).upper(), base) == keep.own_dir(str(a), base)
+    assert keep.target_dir(str(a), str(tmp_path / u"A"), None, beside=False) == keep.own_dir(str(a))
+    assert keep.target_dir(str(a), str(tmp_path / u"A"), None) == a.parent
+    assert keep.target_dir(str(a), str(tmp_path / u"A"), str(tmp_path / u"out"), beside=False) == \
+        tmp_path / u"out" / u"Anime" / u"Show", u"`out` named by a person wins"
+
+
+def test_17_a_copy_made_from_the_audio_beside_the_video_is_not_its_subtitle(
+        tmp_path, monkeypatch, capsys):
+    u"""⭐ H4 -- Surasura writes `<video>.ja.from-audio.srt` beside a video it made a
+    subtitle for from the audio (its Q4). hato must keep looking for a REAL one for that
+    video, and never touch the made file: tsubasa reads its stem as `<video>.ja.from-audio`,
+    not the video's name, so it is no sidecar of the video."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+    video = lab.media / u"frieren S2 - 04.mkv"
+    made = lab.media / u"frieren S2 - 04.ja.from-audio.srt"
+    made.write_bytes(u"1\n00:00:01,000 --> 00:00:02,000\nフリーレン\n".encode("utf-8"))
+    body = made.read_bytes()
+    code, out, err = lab.cli(capsys, "--json", "--only", str(video))
+    assert code == 0, err
+    row = [o for o in _lines(out) if o[u"type"] == u"video"][0]
+    assert row[u"outcome"] == pipeline.CONFIDENT, row
+    assert os.path.basename(row[u"output_path"]) == u"frieren S2 - 04.ja.ass", row  # .ass first
+    assert made.read_bytes() == body
+
+
+def test_17_a_listed_run_hands_its_subtitle_to_surasura_like_any_run(
+        tmp_path, monkeypatch, capsys):
+    u"""⭐ H3 -- `--only-list` goes through the ONE funnel (`_keep_result`): a found
+    subtitle is dropped into Surasura's folder (and registered when its entry offers
+    `register`) exactly as a whole run's is. With `write_beside_video` off the copy
+    comes from hato's own folder."""
+    tools = tmp_path / u"houseki-tools"
+    tools.mkdir()
+    monkeypatch.setenv(u"HOUSEKI_TOOLS_DIR", str(tools))
+    cli_file = tmp_path / u"surasura-cli.cmd"
+    cli_file.write_text(u"@echo off\r\n", encoding="utf-8")
+    drop = tmp_path / u"surasura" / u"data" / u"ja" / u"Hato"
+    drop.mkdir(parents=True)
+    (tools / u"surasura.json").write_text(json.dumps({
+        u"schema": 1, u"tool": u"surasura", u"name": u"Surasura", u"version": u"3.0.0",
+        u"cli": str(cli_file), u"app": None, u"contract": 1, u"verbs": [u"status"],
+        u"drop_folders": {u"ja": str(drop)}, u"updated": u"2026-11-10T00:00:00Z"}),
+        encoding="utf-8")
+    lab = normal(Lab(tmp_path), monkeypatch)
+    lab.config.write_text(u"write_beside_video = false\n", encoding="utf-8")
+    video = lab.media / u"frieren S2 - 04.mkv"
+    code, out, err = lab.cli(capsys, "--json", "--only-list", str(_listed(tmp_path, [video])))
+    assert code == 0, err
+    row = [o for o in _lines(out) if o[u"type"] == u"video"][0]
+    assert row[u"outcome"] == pipeline.CONFIDENT, row
+    copies = [os.path.join(d, f) for d, _s, fs in os.walk(str(drop)) for f in fs]
+    assert len(copies) == 1, copies
+    with open(copies[0], "rb") as a, open(row[u"output_path"], "rb") as b:
+        assert a.read() == b.read()
