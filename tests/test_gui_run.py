@@ -436,6 +436,33 @@ def test_exit_1_is_a_run_that_STOPPED_and_a_pick_is_exit_0(monkeypatch):
     assert cut.said == u"the run stopped early: jimaku rejected the key (401)", cut.said
 
 
+def _ran(code, *lines):
+    return gui_run.Run(code, [], {}, list(lines), u"\n".join(lines))
+
+
+def test_the_footer_says_the_crash_not_whatever_came_first(monkeypatch):
+    u"""🚨 2026-10-04 hunt (bug 4): `said` was the FIRST stderr line, so any earlier line
+    hid the crash -- seen with a dev-only `SyntaxWarning` -- and a crash before hato's
+    own `except` showed only `Traceback (most recent call last):`. ⭐ hato's own stop line
+    first; else the traceback's LAST line, which names the error; else the first line."""
+    stopped = _ran(1, u"/x/tokens.py:12: SyntaxWarning: invalid escape sequence '\\d'",
+                   u"  _SCENE = re.compile(r\"...\")",
+                   u"hato: the run stopped on an unexpected AttributeError: "
+                   u"'NoneType' object has no attribute 'strip'",
+                   u"Traceback (most recent call last):",
+                   u"  File \"hato/tokens.py\", line 344, in release_group",
+                   u"AttributeError: 'NoneType' object has no attribute 'strip'")
+    assert stopped.said == (u"the run stopped on an unexpected AttributeError: "
+                            u"'NoneType' object has no attribute 'strip'"), stopped.said
+    raw = _ran(1, u"Traceback (most recent call last):",
+               u"  File \"hato/__main__.py\", line 3, in <module>",
+               u"    from hato import cli",
+               u"ImportError: DLL load failed while importing _sqlite3")
+    assert raw.said == u"ImportError: DLL load failed while importing _sqlite3", raw.said
+    plain = _ran(2, u"hato: --only names D:\\gone.mkv, which is not a file.", u"hato: and more")
+    assert plain.said == u"--only names D:\\gone.mkv, which is not a file.", plain.said
+
+
 def test_exit_2_is_the_one_that_means_it_could_not_run(monkeypatch):
     done, _ = drive(monkeypatch, fake_cli(code=2, stderr=["hato: no folder"]))
     assert done.could_not_run is True
@@ -977,3 +1004,135 @@ def test_15_the_stop_day_reads_the_same_everywhere_and_in_any_locale():
         assert formats.untimed_day(moment) == u"3 Oct", formats.untimed_day(moment)
     finally:
         locale.setlocale(locale.LC_TIME, before)
+
+
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 16 (16g) -- the SURASURA card's words (`connect_words`)
+# ---------------------------------------------------------------------------
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _surasura                                                  # noqa: E402
+
+
+def _status(tmp_path, monkeypatch, setting=u"auto", outcomes=(), **fields):
+    u"""`connect.status` over what is ON DISK: surasura.json as Surasura writes it, rows
+    from the real producer (`_surasura.seed`). ⛔ Never a Status typed here."""
+    from hato import connect, paths, state
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / u"data"))
+    if outcomes:
+        _surasura.install(tmp_path, monkeypatch, register=True)
+        paths.data_root().mkdir(parents=True, exist_ok=True)
+        with state.StateDB(paths.state_db_path()) as db:
+            _surasura.seed(db, tmp_path, list(outcomes))
+    _surasura.install(tmp_path, monkeypatch, **fields)
+    return connect.status(setting)
+
+
+def test_16g_each_state_has_the_mocks_words(tmp_path, monkeypatch):
+    u"""The mock's five wordings, by the effective state -- and the lead's tone: green for
+    found, amber for what wants a look, none for not installed or off."""
+    from hato import connect
+    monkeypatch.setenv("HOUSEKI_TOOLS_DIR", str(tmp_path / u"empty"))
+    absent = gui_run.connect_words(connect.status(u"auto"))
+    assert absent[u"rest"] == gui_run.CONNECT_ABSENT and absent[u"tone"] is None
+    assert gui_run.connect_words(None) == absent, u"nothing read is not installed"
+    cards = gui_run.connect_words(_status(tmp_path, monkeypatch, register=True))
+    assert (cards[u"tone"], cards[u"lead"], cards[u"rest"]) == (
+        u"ok", u"✓ Surasura 2.9.0.6 found.", gui_run.CONNECT_CARDS), cards
+    assert cards[u"path"] == str(tmp_path / u"Surasura" / u"data" / u"ja" / u"HighPriority"
+                                 / u"Hato")
+    nocards = gui_run.connect_words(_status(tmp_path, monkeypatch, register=False))
+    assert nocards[u"rest"] == gui_run.CONNECT_NO_CARDS and nocards[u"path"], nocards
+    offline = gui_run.connect_words(_status(tmp_path, monkeypatch, drop_folders={}))
+    assert (offline[u"tone"], offline[u"lead"], offline[u"path"]) == (
+        u"look", gui_run.CONNECT_OFFLINE[0], None), offline
+    new = gui_run.connect_words(_status(tmp_path, monkeypatch, contract=2))
+    assert (new[u"tone"], new[u"lead"]) == (u"look", gui_run.CONNECT_TOO_NEW[0]), new
+    off = gui_run.connect_words(_status(tmp_path, monkeypatch, u"off", register=True))
+    assert off[u"rest"] == gui_run.CONNECT_OFF and off[u"tone"] is None and not off[u"path"]
+
+
+def test_16g_a_library_out_of_reach_is_the_offline_words_with_no_folder(tmp_path,
+                                                                        monkeypatch):
+    u"""Edge 3: surasura.json names the folder, but its parent (`…\\HighPriority`) is not
+    there -- a NAS asleep. The drop waits (`connect.library_there`), so the card says
+    offline, never *found* over a folder hato cannot copy into."""
+    said = gui_run.connect_words(_status(tmp_path, monkeypatch, register=True,
+                                         library=False))
+    assert (said[u"tone"], said[u"lead"], said[u"path"]) == (
+        u"look", gui_run.CONNECT_OFFLINE[0], None), said
+
+
+def test_16g_a_version_surasura_does_not_name_is_left_out_not_invented(tmp_path,
+                                                                        monkeypatch):
+    u"""`version` is a string, shown, never compared (16.1): absent or not a string, the
+    lead says *found* without one; a long one is cut, never a line of its own."""
+    for version, lead in ((None, u"✓ Surasura found."), (3, u"✓ Surasura found."),
+                          (u"3.0.0", u"✓ Surasura 3.0.0 found."),
+                          (u"3.0.0-dev+" + u"x" * 60, u"✓ Surasura 3.0.0-dev+" + u"x" * 14
+                           + u" found.")):
+        said = gui_run.connect_words(_status(tmp_path, monkeypatch, register=True,
+                                             version=version))
+        assert said[u"lead"] == lead, (version, said[u"lead"])
+
+
+def test_16g_what_waits_is_counted_by_its_latest_row_and_only_while_live(tmp_path,
+                                                                         monkeypatch):
+    u"""*"decisions need a surface"*: drops waiting, retries, stops, `bad-data` and the
+    drops that gave up are COUNTED -- the latest row per video decides (a video retried
+    and then registered waits for nothing). ⛔ Switched off, nothing is tried again
+    (edge 13): no count is shown."""
+    said = gui_run.connect_words(_status(
+        tmp_path, monkeypatch, outcomes=(u"drop-waiting", u"drop-waiting", u"retry",
+                                         u"stopped", u"bad-data", u"expired",
+                                         u"registered", u"dropped"), register=True))
+    assert said[u"waiting"] == (u"Waiting: 2 for the library · 1 for the next run · "
+                                u"1 until Surasura changes"), said
+    assert said[u"stuck"] == (u"Not handed over: 1 Surasura couldn't read (tried again "
+                              u"when the file changes) · 1 waited 14 days for the "
+                              u"library and stopped"), said
+    off = gui_run.connect_words(_status(tmp_path, monkeypatch, u"off", register=True))
+    assert off[u"waiting"] == off[u"stuck"] == u"", off
+    # Surasura uninstalled, its file left behind (edge 2): absent, nothing counted
+    gone = gui_run.connect_words(_status(tmp_path, monkeypatch, register=True,
+                                         cli=tmp_path / u"uninstalled.cmd"))
+    assert gone[u"rest"] == gui_run.CONNECT_ABSENT and gone[u"waiting"] == u"", gone
+
+
+def test_16g_a_video_handed_over_after_a_retry_waits_for_nothing(tmp_path, monkeypatch):
+    u"""The LATEST row decides: a retry that a later run registered is not counted twice,
+    nor as waiting (the table is append-only: both rows are there)."""
+    from hato import connect, paths, state
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / u"data"))
+    _surasura.install(tmp_path, monkeypatch, register=True)
+    paths.data_root().mkdir(parents=True, exist_ok=True)
+    with state.StateDB(paths.state_db_path()) as db:
+        _surasura.seed(db, tmp_path, [u"retry"])
+        answer = _surasura.ANSWERS[u"registered"]
+        connect.Handoff(db, u"auto", call=lambda argv, data, timeout: (
+            answer[0], json.dumps(answer[1]))).retry()
+        assert [p.state for p in db.pairings(u"ja")] == [u"registered"]
+    said = gui_run.connect_words(connect.status(u"auto"))
+    assert said[u"waiting"] == u"", said
+    assert connect.status(u"auto").counts[u"registered"] == 1
+
+
+def test_16z_A6_with_cards_off_a_retry_is_never_promised_for_the_next_run(tmp_path,
+                                                                         monkeypatch):
+    u"""⚠ 16z (Z-A6) -- with *Make cards for me* off in Surasura (drops only), the card said
+    *"1 for the next run"* -- a retry no run makes (`Handoff.retry` registers only while
+    Surasura offers `register`). ⭐ It waits for cards to be on again, and says so."""
+    from hato import connect, state
+    said = gui_run.connect_words(_status(tmp_path, monkeypatch, outcomes=(u"retry",),
+                                         register=False))
+    assert said[u"rest"] == gui_run.CONNECT_NO_CARDS, said
+    assert u"next run" not in said[u"waiting"], said
+    assert said[u"waiting"] == u"Waiting: 1 until cards are on in Surasura", said
+    calls = []
+    with state.StateDB(tmp_path / u"data" / u"state.db") as db:
+        connect.Handoff(db, u"auto", call=lambda a, d, t: calls.append(a)).retry()
+    assert calls == [], u"the words' promise: nothing is tried while cards are off"
+    (tmp_path / u"on").mkdir()
+    cards = gui_run.connect_words(_status(tmp_path / u"on", monkeypatch, outcomes=(u"retry",),
+                                          register=True))
+    assert cards[u"waiting"] == u"Waiting: 1 for the next run", cards

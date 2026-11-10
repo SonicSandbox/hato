@@ -126,6 +126,43 @@ def test_a_language_tag_alone_never_makes_a_release():
     assert tokens.release_group(a) != tokens.release_group(b)
 
 
+@pytest.mark.parametrize("name", [
+    u"【推しの子】.S01E09.第9話.B小町.WEBRip.Amazon.ja-jp[sdh].srt",   # entry 715, the catalog
+    u"［G］Show 01.ass",                                               # (constructed)
+])
+def test_a_name_opening_with_a_full_width_bracket_has_a_group(name):
+    u"""🚨 2026-10-04, released 1.0.9 -- EVERY RUN STOPPED on a show whose entry held one
+    of these: 15z (B13) widened `_LEADING_BRACKET` to 【】 and ［］, and this reader still
+    read only its first group -- None for them -- so `.strip()` raised `AttributeError:
+    'NoneType' object has no attribute 'strip'` (a Windows tester's footer, word for
+    word). 506 catalog names on 33 entries open this way (out/2026-10-04-nonetype-bug-hunt.md)."""
+    group = tokens.release_group(name)
+    assert isinstance(group, str) and group.strip(), repr(group)
+
+
+def test_a_full_width_bracket_is_a_title_not_a_release_so_amazon_and_netflix_stay_apart():
+    u"""⛔ THE PLAUSIBLE WRONG FIX, which every other check here passes: reading 【…】 as the
+    group (`bracketed_group`'s reading). In jimaku names it is the TITLE (`【推しの子】`),
+    a label or a date -- read as the group, entry 5935's Amazon and Netflix files became
+    ONE release `推しの子`, and `episodes._part_key` never pools two releases. The real
+    names of entry 5935 (the catalog); the expectation is read off the distributor token,
+    not off tokens.py."""
+    names = [u"【推しの子】.S02E24.願い.WEBRip.Netflix.ja[cc].srt",
+             u"【推しの子】.S02E18.太陽.WEBRip.Netflix.ja[cc].srt",
+             u"【推しの子】.S02E19.トリガー.WEBRip.Netflix.ja[cc].srt",
+             u"【推しの子】_.S02E07.第18話.太陽.WEBRip.Amazon.ja-jp[sdh].srt",
+             u"【推しの子】_.S02E13.第24話.願い.WEBRip.Amazon.ja-jp[sdh].srt",
+             u"【推しの子】_.S02E08.第19話.トリガー.WEBRip.Amazon.ja-jp[sdh].srt"]
+    by_distributor, by_group = {}, {}
+    for n in names:
+        by_distributor.setdefault(n.split(u".WEBRip.")[1].split(u".")[0], set()).add(n)
+        by_group.setdefault(tokens.release_group(n), set()).add(n)
+    assert len(by_distributor) == 2, by_distributor
+    assert sorted(map(sorted, by_group.values())) == sorted(map(sorted, by_distributor.values())), (
+        sorted(by_group))
+    assert u"推しの子" not in by_group, sorted(by_group)
+
+
 # ---------------------------------------------------------------------------
 # episode_span
 # ---------------------------------------------------------------------------

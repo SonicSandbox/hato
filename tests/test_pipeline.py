@@ -40,6 +40,7 @@ from hato.cache import Cache
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _media                                                      # noqa: E402
+import _surasura                                                   # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -491,6 +492,10 @@ def test_a_refused_candidate_escalates_to_the_next_one(tmp_path):
     u"""⚠ Rank, then escalate. Ranking picks who goes first; the timing verdict
     decides who wins. Downloads are unmetered, so escalation costs bandwidth."""
     lab = Lab(tmp_path, names=episodes_up_to(1))
+    # ⚠ 16i (the Frieren fix v2, Q1): Haruhana's `- 29 [JPN].ass` became a known number
+    # and its [JPN] tag ranked it over NanakoRaws' untagged file. ⭐ 16k: NanakoRaws is
+    # the default favourite group (fork 3: after the format, BEFORE the language), so
+    # it is first again -- through the person's setting, not the tag.
     lab.decide = lambda name: (dict(outcome=port.REFUSED, reason=u"18% match",
                                     match_rate=0.18) if u"NanakoRaws" in name else {})
     report = lab.run()
@@ -1082,7 +1087,10 @@ def test_only_keeps_the_run_to_the_named_video(tmp_path):
     lab = Lab(tmp_path, names=episodes_up_to(3))
     report = lab.run(only=[lab.media / u"frieren S2 - 02.mkv"])
     assert [r.name for r in report.results] == [u"frieren S2 - 02.mkv"]
-    assert all(u"S2 - 02" in name for name in lab.downloads)
+    # 16i (Q1, ruled 2026-10-12): a file the names STATE as S2 - 02 -- Haruhana's absolute `- 30` --
+    # may go first; every download is still episode 2 of season 2, by either numbering.
+    assert lab.downloads and all(u"S2 - 02" in name or u"Frieren - 30 " in name
+                                 for name in lab.downloads), lab.downloads
 
 
 def test_one_video_is_offered_what_the_whole_folder_would_offer_it(tmp_path):
@@ -1188,6 +1196,108 @@ def test_a_show_that_fails_does_not_end_the_run(tmp_path):
     bad = lab.by_name(report)[u"Kamen Rider Decade - 01.mkv"]
     assert bad.outcome == pipeline.ERROR
     assert report.stopped is None
+
+
+#: Two shows the recorded answers both serve: tsubasa reads `frieren - 28` with no
+#: season, so it is a show of its own -- and it is looked at FIRST.
+TWO_SHOWS = [u"frieren - 28.mkv", u"frieren - 29.mkv"] + episodes_up_to(2)
+
+
+def _crash_on(monkeypatch, name, exc):
+    u"""The candidate loop raises `exc` for the video called `name` -- a fault in hato,
+    the shape 1.0.9's NoneType had (raised out of the alignment, inside `_show`)."""
+    real = pipeline._Run._candidates
+
+    def candidates(self, show, alignment, video, root, seen_groups):
+        if os.path.basename(str(video.path)) == name:
+            raise exc
+        return real(self, show, alignment, video, root, seen_groups)
+
+    monkeypatch.setattr(pipeline._Run, "_candidates", candidates)
+
+
+def test_one_show_that_crashes_is_its_own_error_rows_and_the_rest_still_run(tmp_path, monkeypatch):
+    u"""🚨 2026-10-04 hunt (bug 2): ONE show's crash ended the whole run, and the window
+    showed zero rows -- even for shows already done, and every later run stopped at the
+    same show. That is what made 1.0.9's bracket bug "hato doesn't work". ⭐ Ruled by
+    Sonic: that show's videos with NO ROW YET are ERROR rows (⛔ never two rows for one
+    video -- `frieren - 28`'s subtitle is already there), the shows after it run, the
+    run does not stop, and the traceback is kept for hato.log."""
+    lab = Lab(tmp_path, names=TWO_SHOWS)
+    lab.client = ListForAnyEntry(lab.real)
+    (lab.media / u"frieren - 28.ja.srt").write_text(u"1\n00:00:01,000 --> 00:00:02,000\nx\n",
+                                                   encoding="utf-8")
+    _crash_on(monkeypatch, u"frieren - 29.mkv",
+              AttributeError(u"'NoneType' object has no attribute 'strip'"))
+
+    report = lab.run()
+
+    assert report.stopped is None, report.stopped
+    got = sorted((r.name, r.outcome) for r in report.results)
+    assert got == [(u"frieren - 28.mkv", pipeline.SKIPPED), (u"frieren - 29.mkv", pipeline.ERROR),
+                   (u"frieren S2 - 01.mkv", pipeline.CONFIDENT),
+                   (u"frieren S2 - 02.mkv", pipeline.CONFIDENT)], got
+    error = lab.by_name(report)[u"frieren - 29.mkv"]
+    assert u"AttributeError" in error.reason and u"hato.log" in error.reason, error.reason
+    assert len(report.crashes) == 1, report.crashes
+    assert u"Traceback (most recent call last)" in report.crashes[0], report.crashes[0]
+    assert u"in candidates" in report.crashes[0], report.crashes[0]
+
+
+def test_a_show_that_crashed_is_looked_at_again_by_the_next_run(tmp_path, monkeypatch):
+    u"""⛔ NO REFUSAL, NO NEGATIVE recorded for a crash: it says nothing about the video
+    or its subtitles. The next run -- the same day, the fault gone -- fetches it."""
+    lab = Lab(tmp_path, names=TWO_SHOWS)
+    lab.client = ListForAnyEntry(lab.real)
+    with monkeypatch.context() as patched:
+        _crash_on(patched, u"frieren - 29.mkv", AttributeError(u"a fault in hato"))
+        first = lab.run()
+    assert lab.by_name(first)[u"frieren - 29.mkv"].outcome == pipeline.ERROR
+
+    again = lab.run()
+
+    assert lab.by_name(again)[u"frieren - 29.mkv"].outcome == pipeline.CONFIDENT, [
+        (r.name, r.outcome, r.reason) for r in again.results]
+
+
+def test_a_look_again_that_crashes_errors_only_the_video_it_was_asked_about(tmp_path,
+                                                                            monkeypatch):
+    u"""⭐ `only` (the window's *Look again now*) asks about ONE video; its siblings stay
+    in the show for the alignment. ⛔ A crash must not hand the window ERROR rows for
+    the siblings -- a look-again REPLACES the rows it sends."""
+    lab = Lab(tmp_path, names=TWO_SHOWS)
+    lab.client = ListForAnyEntry(lab.real)
+    _crash_on(monkeypatch, u"frieren - 29.mkv", AttributeError(u"a fault in hato"))
+
+    report = lab.run(only=[lab.media / u"frieren - 29.mkv"])
+
+    assert [(r.name, r.outcome) for r in report.results] == [
+        (u"frieren - 29.mkv", pipeline.ERROR)], [(r.name, r.outcome) for r in report.results]
+
+
+@pytest.mark.parametrize("raised,stops", [
+    (pipeline._Stop(u"jimaku rejected the key (401)"), u"report"),
+    (client_module.KeyRejected(u"jimaku rejected the key (401)", status=401), u"raises"),
+    (client_module.RateLimited(u"jimaku asked hato to wait too long"), u"raises"),
+    (pipeline.ConfigProblem(u"no subs_dir"), u"raises"),
+], ids=["stop", "401", "rate-limit", "config"])
+def test_the_per_show_guard_never_swallows_what_stops_the_whole_run(tmp_path, monkeypatch,
+                                                                     raised, stops):
+    u"""🚨 `_Stop` is a plain `Exception`, so a bare `except Exception` around a show
+    would swallow the 401 and the rate-limit stop -- and LEDGER-HOT says never retry
+    past a 401: a rejected request still spends quota. Those, and a ConfigProblem, still
+    end the run exactly as before the guard."""
+    lab = Lab(tmp_path, names=TWO_SHOWS)
+    lab.client = ListForAnyEntry(lab.real)
+    _crash_on(monkeypatch, u"frieren - 28.mkv", raised)
+
+    if stops == u"report":
+        report = lab.run()
+        assert report.stopped == str(raised), report.stopped
+        assert report.results == [] and report.crashes == [], report.results
+    else:
+        with pytest.raises(type(raised)):
+            lab.run()
 
 
 def test_the_live_action_retry_is_what_finds_a_tokusatsu_show(tmp_path):
@@ -1542,53 +1652,66 @@ def test_a_progress_callback_that_raises_cannot_change_what_the_run_does(tmp_pat
     assert broken.stopped is None
 
 
-def test_the_surasura_copy_follows_a_real_run(tmp_path):
-    u"""RUNBOOK 7h -- the SEAM, and the half a unit test cannot see.
+def test_the_surasura_copy_follows_a_real_run(tmp_path, monkeypatch):
+    u"""RUNBOOK 7h, LAYER 16 -- the SEAM, and the half a unit test cannot see.
 
-    ⭐ There are TWO success paths in this pipeline (a fresh download and a
-    re-sync from a kept original), so the copy lives in `_keep_result`, the one
-    funnel every outcome passes through. Copying in either path alone is the
-    seam defect this project keeps paying for -- and it would look completely
-    correct from inside whichever one was chosen.
+    ⭐ There are FOUR success paths in this pipeline (a fresh download, a re-sync,
+    14c, Layer 15), so the hand-off lives in `_keep_result`, the one funnel every
+    outcome passes through. ⭐ 1.1.0: into `drop_folders["ja"]`, ONE sub-folder per
+    show, and a `dropped` pairing per file (`timed` -- tsubasa timed these).
     """
-    drop = tmp_path / "Downloads"
+    drop = _surasura.install(tmp_path, monkeypatch)
     lab = Lab(tmp_path, names=episodes_up_to(2))
     lab.decide = lambda name: {}
 
-    report = lab.run(surasura_dir=str(drop))
+    report = lab.run()
 
     written = [r for r in report.results if r.wrote]
     assert written, u"the fixture wrote nothing, so this proves nothing"
-    landed = sorted(p.name for p in (drop / u"Hato").iterdir())
-    assert landed == sorted(os.path.basename(r.output_path) for r in written)
+    landed = _surasura.dropped(drop)
+    assert sorted(p.split(u"/")[-1] for p in landed) == sorted(
+        os.path.basename(r.output_path) for r in written)
+    assert len(set(p.split(u"/")[0] for p in landed)) == 1 and all(
+        p.count(u"/") == 1 for p in landed), u"not one per-series folder: %s" % landed
     # ⛔ A COPY. The file beside the video is the one a player loads.
     assert all(os.path.isfile(r.output_path) for r in written)
+    rows = lab.db.pairings(u"ja")
+    assert [(p.state, p.record[u"verdict"]) for p in rows] == [(u"dropped", u"timed")] * len(written)
 
 
-def test_a_video_that_already_had_a_subtitle_is_not_copied(tmp_path):
+def test_a_video_that_already_had_a_subtitle_is_not_copied(tmp_path, monkeypatch):
     u"""⛔ *"each successful run's subtitles"* -- not the whole library.
 
     A PRESENT row carries an `output_path` too, so a copy keyed on that alone
     would ship every already-subtitled episode on every run, for ever. The
     guard is `result.skip`.
     """
-    drop = tmp_path / "Downloads"
+    drop = _surasura.install(tmp_path, monkeypatch)
     lab = Lab(tmp_path, names=[u"frieren S2 - 01.mkv"])
     (lab.media / u"frieren S2 - 01.ja.srt").write_text(u"1\n", encoding="utf-8")
 
-    report = lab.run(surasura_dir=str(drop))
+    report = lab.run()
 
     assert report.results[0].skip == pipeline.PRESENT
-    assert not (drop / u"Hato").exists(), (
+    assert not drop.exists() and lab.db.pairings() == [], (
         u"an already-subtitled episode was copied, so a settled library would "
         u"be re-shipped on every run")
 
 
-def test_the_integration_writes_nothing_when_no_folder_is_chosen(tmp_path):
+def test_the_integration_writes_nothing_when_surasura_is_not_there(tmp_path, monkeypatch):
+    u"""⭐ Sonic, 2026-10-12: *"All of this functionality only goes if there is the
+    surasura connect stuff."* No surasura.json -> no copy, no pairing row, and a
+    1.0.x `surasura_dir` is read and never used. And switched off, nothing either."""
+    monkeypatch.setenv("HOUSEKI_TOOLS_DIR", str(tmp_path / u"no-tools"))
     lab = Lab(tmp_path, names=episodes_up_to(1))
     lab.decide = lambda name: {}
-    lab.run()
-    assert not (tmp_path / u"Hato").exists()
+    assert [r for r in lab.run().results if r.wrote], u"the fixture wrote nothing"
+    assert lab.db.pairings() == [] and not (tmp_path / u"Hato").exists()
+    drop = _surasura.install(tmp_path, monkeypatch)
+    other = Lab(tmp_path / u"second", names=episodes_up_to(1))
+    other.decide = lambda name: {}
+    assert [r for r in other.run(surasura_connect=u"off").results if r.wrote]
+    assert other.db.pairings() == [] and not drop.exists(), u"switched off, still handed over"
 
 
 def test_a_video_inside_a_skipped_folder_is_never_looked_at(tmp_path):
@@ -1922,6 +2045,91 @@ class ListsOnlyForTheRealEntry(ListForAnyEntry):
     def files(self, entry_id):
         self.entries.append(entry_id)
         return self._inner.files(ENTRY) if entry_id == ENTRY else []
+
+
+#: A real catalog name (entry 715), in the wire's shape: the capture's own fields.
+FULL_WIDTH = u"【推しの子】.S01E09.第9話.B小町.WEBRip.Amazon.ja-jp[sdh].srt"
+
+
+class OneFullWidthNameOnTheEntry(ListForAnyEntry):
+    u"""DERIVED: the capture's files, plus ONE name opening with 【 -- the shape 506
+    catalog files on 33 entries have (Oshi no Ko, Doraemon 2005, Crayon Shin-chan)."""
+
+    def files(self, entry_id):
+        self.entries.append(entry_id)
+        real = self._inner.files(ENTRY)
+        odd = dict(real[0], name=FULL_WIDTH,
+                   url=u"https://jimaku.cc/entry/%d/download/%s" % (ENTRY, FULL_WIDTH))
+        return real + [odd]
+
+
+def test_a_full_width_bracket_anywhere_on_the_entry_gives_rows_not_a_stop(tmp_path):
+    u"""🚨 2026-10-04 -- released 1.0.9 STOPPED EVERY RUN that met such an entry: the
+    alignment reads every file name on it through `tokens.release_group`, which raised
+    `AttributeError: 'NoneType' object has no attribute 'strip'` out of `pipeline.run`.
+    The window showed that line and ZERO rows -- a Windows tester's report, confirmed by
+    Sonic. ⭐ The folder's own videos are fetched as if the odd file were not there."""
+    lab = Lab(tmp_path, names=episodes_up_to(2))
+    lab.client = OneFullWidthNameOnTheEntry(lab.real)
+
+    report = lab.run()
+
+    assert report.stopped is None, report.stopped
+    assert [r.outcome for r in report.results] == [pipeline.CONFIDENT] * 2, [
+        (r.name, r.outcome, r.reason) for r in report.results]
+
+
+class FoundOnlyThroughKitsu(object):
+    u"""DERIVED, from recordings only: jimaku's title searches find nothing (the recorded
+    empty answer), and `anilist_id=` answers with the recorded `query=frieren` body -- so
+    the show resolves THROUGH KITSU (`kitsu__search_typo`), LOW CONFIDENCE, its runners-up
+    Kitsu's. Every entry's file list is EMPTY, so `_escalate` reaches for them."""
+
+    def __init__(self):
+        api = FIXTURES / "api"
+        self._found = json.loads((api / "search__query_frieren.json").read_text(encoding="utf-8"))
+        self._nothing = json.loads((api / "search__live_action_anime_default.json")
+                                   .read_text(encoding="utf-8"))
+        self.metered = 0
+        self.entries = []
+
+    def search(self, query=None, *, anime=True, anilist_id=None):
+        self.metered += 1
+        return list(self._found if anilist_id is not None else self._nothing)
+
+    def files(self, entry_id):
+        self.metered += 1
+        self.entries.append(entry_id)
+        return []
+
+    def download(self, item):
+        raise AssertionError(u"nothing is on offer, so nothing is downloaded")
+
+
+def test_a_kitsu_id_is_never_asked_of_jimaku_as_an_entry(tmp_path):
+    u"""🚨 2026-10-04 hunt (bug 1): when jimaku's search missed and Kitsu found the show,
+    the runners-up kept were KITSU's candidates -- ids like `'49240'`, strings, so
+    `c.id != resolved.entry_id` was always true and Kitsu's own top pick was tried
+    first. `_escalate` then asked jimaku for entry 49240's files: a METERED call for an
+    unrelated show (or a 404), and if its files fitted, `Resolved(...)` raised
+    `ValueError: entry_id must be jimaku's positive integer id` -- zero rows.
+    ⭐ Only jimaku's own entries (an int id) are ever tried."""
+    from hato.kitsu import KitsuClient
+
+    lab = Lab(tmp_path, names=[u"sousou no friern - 01.mkv", u"sousou no friern - 02.mkv"])
+    jimaku = FoundOnlyThroughKitsu()
+    report = pipeline.run(
+        lab.settings(), client=jimaku, db=lab.db, resolutions=lab.resolutions,
+        kitsu=KitsuClient(client_module.RecordedSession(FIXTURES / "kitsu"),
+                          sleep=lambda seconds: None),
+        cache=lab.cache, downloader=lab.download, engine=lab.engine, reader=lab.reader,
+        extractor=lab.extractor)
+
+    show, = report.shows
+    assert show.resolved is not None and show.resolved.source == u"kitsu", show.reason
+    assert show.resolved.low_confidence, show.reason      # ⚠ else `_escalate` never looks
+    assert [type(e) for e in jimaku.entries] == [int], jimaku.entries
+    assert all(type(c.id) is int for c in show.alternates), show.alternates
 
 
 def test_an_entry_that_holds_nothing_escalates_to_the_next_one_the_search_scored(tmp_path):
@@ -2471,13 +2679,17 @@ def test_a_wait_for_anything_else_is_not_ended_by_the_format_setting(tmp_path):
 def test_with_the_fallback_off_only_the_preferred_kind_is_ever_tried(tmp_path):
     u"""The whole list, both kinds, every candidate refused: with the fallback off
     only `.ass` files were downloaded; ON -- the control -- the `.srt` ones follow
-    them, in 1.0.2's order. And with `.srt` preferred it is `.srt` only."""
+    them, in 1.0.2's order. And with `.srt` preferred it is `.srt` only.
+
+    ⚠ 16i (Q1, ruled 2026-10-12): the entry's names now STATE eight `.ass` files as S2 - 01 (a
+    cap of 5 filled with right `.ass` and never reached `.srt`), so the cap is
+    the whole list -- the control arm must REACH the other kind to show it follows."""
     for fallback, prefer, allowed in ((False, u"ass", (u".ass",)),
                                       (True, u"ass", (u".ass", u".srt")),
                                       (False, u"srt", (u".srt",))):
         lab = Lab(tmp_path / (u"%s-%s" % (prefer, fallback)), names=episodes_up_to(1))
         refuse_everything(lab)
-        lab.run(candidates=5, prefer_format=prefer, format_fallback=fallback)
+        lab.run(candidates=50, prefer_format=prefer, format_fallback=fallback)
         kinds = [os.path.splitext(n)[1] for n in lab.downloads]
         assert kinds and set(kinds) == set(allowed), (prefer, fallback, lab.downloads)
         assert kinds[0] == allowed[0], (prefer, fallback, lab.downloads)
@@ -2499,6 +2711,35 @@ def test_the_plan_never_counts_the_other_format_as_not_on_jimaku(tmp_path):
     lab = Lab(tmp_path / u"missing", names=[u"frieren S2 - 24.mkv"])
     plan = plan_of(lab.run(format_fallback=False, dry_run=True))
     assert u"1 not on jimaku" in plan and u"other format" not in plan, plan
+
+
+def test_the_favourite_groups_reach_the_run_from_config_toml(tmp_path):
+    u"""⭐ 16k -- the road a real run takes: `config.toml` -> `Settings.from_config`, the
+    default NanakoRaws when the key is unwritten, and an empty list kept empty."""
+    root = str(tmp_path).replace(u"\\", u"/")
+    s = pipeline.Settings.from_config(config.parse(
+        u"folders = ['%s']\nfavourite_groups = ['Haruhana']\n" % root))
+    assert s.favourite_groups == (u"Haruhana",)
+    s = pipeline.Settings.from_config(config.parse(u"folders = ['%s']\n" % root))
+    assert s.favourite_groups == (u"NanakoRaws",) == pipeline.Settings([root]).favourite_groups
+    s = pipeline.Settings.from_config(config.parse(
+        u"folders = ['%s']\nfavourite_groups = []\n" % root))
+    assert s.favourite_groups == ()
+
+
+def test_the_run_tries_the_favourite_first_and_none_is_1_0_9s_order(tmp_path):
+    u"""⭐ 16k end to end through the Lab: episode 1 with every candidate refused -- the
+    first download is NanakoRaws' with the default, Haruhana's with Haruhana named,
+    and with none the stated `[JPN]` file 16i put first."""
+    firsts = {}
+    for fav in ((u"NanakoRaws",), (u"Haruhana",), ()):
+        lab = Lab(tmp_path / (u"-".join(fav) or u"none"), names=episodes_up_to(1))
+        refuse_everything(lab)
+        lab.run(candidates=1, favourite_groups=fav)
+        firsts[fav] = lab.downloads[0]
+    assert firsts[(u"NanakoRaws",)].startswith(u"[NanakoRaws]"), firsts
+    assert firsts[(u"Haruhana",)].startswith(u"[Haruhana]"), firsts
+    assert firsts[()].startswith(u"[Haruhana]") and u"[JPN]" in firsts[()], firsts
 
 
 def test_the_format_settings_reach_the_run_from_config_toml(tmp_path):
@@ -2725,7 +2966,9 @@ def test_a_wait_in_two_formats_names_both_and_either_ends_it(tmp_path):
     first, = lab.run(format_fallback=False).results
     assert first.outcome == pipeline.NOT_FOUND, first
     assert formats.only_as(first.reason) == (u"srt", u"vtt"), first.reason
-    assert u"(5 files)" in first.reason, first.reason
+    # 16i: 5 -> 4. The fifth was `S02E06.第34話` offered BY POSITION for S2 - 01 --
+    # a wrong episode, which both numbers read now place where it belongs.
+    assert u"(4 files)" in first.reason, first.reason
     lab.now[0] += timedelta(hours=1)
     taken, = lab.run(prefer_format=u"srt", format_fallback=False).results
     assert taken.outcome == pipeline.CONFIDENT, (taken.skip, taken.reason)
@@ -2887,19 +3130,27 @@ def test_saving_takes_the_japanese_track_out_and_writes_it_beside_the_video(tmp_
     assert len(lab.extracted) == 1, u"the second run took it out again"
 
 
-def test_saving_copies_the_file_to_surasura_as_every_written_subtitle_is(tmp_path):
+def test_saving_copies_the_file_to_surasura_as_every_written_subtitle_is(tmp_path,
+                                                                         monkeypatch):
     u"""⭐ Ruled with the choice: *"copied to surasura"* -- the reason anybody asks for
-    a file at all. ⛔ Through the one funnel every written subtitle passes."""
+    a file at all. ⛔ Through the one funnel every written subtitle passes. ⭐ LAYER 16:
+    `extracted`, never `timed` (hato did not time it), in the VIDEO'S folder's name,
+    its source the track, and no jimaku entry."""
+    drop = _surasura.install(tmp_path, monkeypatch)
     lab = Lab(tmp_path, names=episodes_up_to(1))
     _save(lab, u"frieren S2 - 01.mkv", [Track(lang=u"ja", codec=u"S_TEXT/ASS")])
-    surasura = tmp_path / u"surasura"
 
-    one, = lab.run(extract_embedded=True, surasura_dir=surasura).results
+    one, = lab.run(extract_embedded=True).results
 
     assert one.wrote, one.reason
-    copied = surasura / keep.SURASURA_FOLDER / u"frieren S2 - 01.ja.ass"
-    assert copied.is_file(), u"the saved subtitle never reached surasura"
+    copied = drop / lab.media.name / u"frieren S2 - 01.ja.ass"
+    assert copied.is_file(), u"the saved subtitle never reached surasura: %s" % (
+        _surasura.dropped(drop),)
     assert copied.read_bytes() == Path(one.output_path).read_bytes()
+    rec = lab.db.pairings(u"ja")[0].record
+    assert (rec[u"verdict"], rec[u"timing"], rec[u"jimaku_entry_id"], rec[u"show"]) == (
+        u"extracted", None, None, None)
+    assert rec[u"subtitle_source"][u"provider"] == u"video-track"
 
 
 def test_a_video_it_cannot_be_taken_out_of_is_downloaded_for_and_says_why(tmp_path):
@@ -3667,9 +3918,12 @@ def test_15_any_provider_places_another_providers_file_and_says_so(tmp_path):
 
 def test_15_the_providers_own_file_goes_before_rank_s_first_choice(tmp_path):
     u"""⭐ The TIER is ahead of rank's key: under `any_provider` the provider's own file is
-    still the one taken, though rank alone would try another first."""
+    still the one taken, though rank alone would try another first.
+    ⚠ 16k: NanakoRaws is the default favourite group, so with the default rank alone would
+    try NanakoRaws first TOO and this check could no longer fail for its own reason --
+    favourites off, rank's own order is the one the tier must beat."""
     lab = road(tmp_path)
-    one, = lab.run(untimed=u"any_provider").results
+    one, = lab.run(untimed=u"any_provider", favourite_groups=()).results
     assert one.untimed[u"tier"] == u"exact", one.untimed
     assert lab.downloads[0].startswith(u"[NanakoRaws]"), lab.downloads
 
@@ -3834,13 +4088,18 @@ def test_15_a_two_episode_name_is_refused_as_today(tmp_path):
     assert lab.spent == 0
 
 
-def test_15_a_placed_file_is_copied_to_surasura(tmp_path):
-    u"""Fork 8: surasura receives every subtitle hato writes -- this one too."""
+def test_15_a_placed_file_is_copied_to_surasura(tmp_path, monkeypatch):
+    u"""Fork 8: surasura receives every subtitle hato writes -- this one too. ⭐ LAYER
+    16: `untimed` with its tier, and no `timing` -- Surasura checks it itself."""
+    drop = _surasura.install(tmp_path, monkeypatch)
     lab = road(tmp_path)
-    shelf = lab.root / u"surasura"
-    one, = lab.run(untimed=u"same_provider", surasura_dir=shelf).results
-    copy = shelf / keep.SURASURA_FOLDER / os.path.basename(one.output_path)
-    assert copy.read_bytes() == JA_ASS
+    one, = lab.run(untimed=u"same_provider").results
+    copy, = _surasura.dropped(drop)
+    assert copy.endswith(u"/" + os.path.basename(one.output_path))
+    assert (drop / copy).read_bytes() == JA_ASS
+    rec = lab.db.pairings(u"ja")[0].record
+    assert (rec[u"verdict"], rec[u"untimed_tier"], rec[u"timing"]) == (
+        u"untimed", one.untimed[u"tier"], None)
 
 
 def test_15_a_write_that_fails_is_an_error_with_no_wait(tmp_path):
@@ -4271,3 +4530,138 @@ def test_15c_the_flag_chooses_for_one_run_and_the_file_stands_otherwise(tmp_path
                                                  subs_dir=str(tmp_path / u"subs"),
                                                  untimed=given)
         assert settings.untimed == want, (given, settings.untimed)
+
+
+
+
+def test_15_when_the_right_file_fails_the_next_is_never_another_episode(tmp_path):
+    u"""🚨 WITNESS B, END TO END (the Frieren finding, 2026-09-27; re-measured 2026-10-12).
+    `any_provider`, `.srt` preferred, three videos named on through the season (S02E31-33,
+    entry 11446 confidently theirs), no track. Netflix's own S02E31 is #1 and its
+    download FAILS -- so the road takes the next. That was Amazon's `S02E06.第34話`, a
+    `range` fit at +3 by length alone: episode 34 placed for 31, *"another provider"*."""
+    names = [u"Sousou.no.Frieren.S02E%02d.1080p.NF.WEB-DL.AAC2.0.H.264.mkv" % n
+             for n in (31, 32, 33)]
+    lab = Lab(tmp_path, names=names)
+    for name in names:
+        lab.tracks[name] = Answer(tracks=())
+    video = tsubasa.scan(videos=str(lab.media)).videos[0]
+    lab.resolutions.put(
+        resolution.cache_key(video.title, video.season, tokens_module.year(video.name)),
+        resolution.Resolved(ENTRY, u"Sousou no Frieren 2nd Season", False, 0.95, False,
+                            resolution.SOURCE_JIMAKU))
+
+    def download(item):
+        lab.downloads.append(item["name"])
+        if u".Netflix." in item["name"]:
+            raise client_module.DownloadError(u"HTTP 503", status=503)
+        return ja_body(item)
+
+    lab.download = download
+    # v2: the capture with the dual names undone -- a release that really SWITCHES numbering,
+    # where only pass 3 keeps the wrong episode out (the real capture is v2's own witness)
+    import re as _re
+    listing = lab.client.files
+    lab.client.files = lambda entry_id: [
+        dict(f, name=_re.sub(u"[.]S[0-9]{2}E[0-9]{2}[.](?=第)", u".", f["name"])) for f in listing(entry_id)]
+    report = lab.run(untimed=u"any_provider", prefer_format=u"srt", format_fallback=True)
+    assert [n for n in lab.downloads if u".Netflix." in n], (
+        u"the control: the right file was never tried, so its failure proved nothing")
+    for row in report.results:
+        n = int(row.name.split(u"S02E")[1][:2])
+        assert row.outcome == pipeline.CONFIDENT, (row.name, row.outcome, row.reason)
+        assert u"第" not in row.jimaku_filename, (row.name, row.jimaku_filename)
+        assert (u"- %02d " % n) in row.jimaku_filename or (u"[%02d]" % n) in row.jimaku_filename, (
+            row.name, row.jimaku_filename)
+
+
+def test_15_when_the_right_file_fails_timing_tries_the_right_episode_next(tmp_path):
+    u"""⭐ WITNESS B ON THE TIMED ROAD (16o: MFR-02 survived the untimed one). 16n's fragment
+    rule (F-9) keeps the slid `第34話` part off the untimed road whether or not pass 3 demotes
+    it (coverage < 1), so the check above no longer sees pass 3. Timing still tries every
+    fit, in `rank`'s order -- and pass 3's `guess` is what puts the slid part after every
+    known number. The same folder with an English track: Netflix's S02E31 fails, and the
+    next file DOWNLOADED and timed is the right episode, never `第34話` (which the stub
+    engine, measuring nothing, would lock). Without pass 3 it is a `range` fit, tried #2."""
+    names = [u"Sousou.no.Frieren.S02E%02d.1080p.NF.WEB-DL.AAC2.0.H.264.mkv" % n
+             for n in (31, 32, 33)]
+    lab = Lab(tmp_path, names=names)              # the default track: English text -- timed
+    video = tsubasa.scan(videos=str(lab.media)).videos[0]
+    lab.resolutions.put(
+        resolution.cache_key(video.title, video.season, tokens_module.year(video.name)),
+        resolution.Resolved(ENTRY, u"Sousou no Frieren 2nd Season", False, 0.95, False,
+                            resolution.SOURCE_JIMAKU))
+
+    def download(item):
+        lab.downloads.append(item["name"])
+        if u".Netflix." in item["name"]:
+            raise client_module.DownloadError(u"HTTP 503", status=503)
+        return ja_body(item)
+
+    lab.download = download
+    import re as _re
+    listing = lab.client.files
+    lab.client.files = lambda entry_id: [
+        dict(f, name=_re.sub(u"[.]S[0-9]{2}E[0-9]{2}[.](?=第)", u".", f["name"])) for f in listing(entry_id)]
+    report = lab.run(untimed=u"any_provider", prefer_format=u"srt", format_fallback=True)
+    assert [n for n in lab.downloads if u".Netflix." in n], (
+        u"the control: the right file was never tried, so its failure proved nothing")
+    assert not [n for n in lab.downloads if u"第" in n], lab.downloads
+    for row in report.results:
+        n = int(row.name.split(u"S02E")[1][:2])
+        assert row.outcome == pipeline.CONFIDENT, (row.name, row.outcome, row.reason)
+        assert (u"- %02d " % n) in row.jimaku_filename or (u"[%02d]" % n) in row.jimaku_filename, (
+            row.name, row.jimaku_filename)
+
+
+
+def test_15_the_names_and_the_list_place_the_right_episode_where_length_placed_the_wrong(
+        tmp_path):
+    u"""⭐ v2 WITNESS, END TO END (2026-10-11). The Amazon release ALONE on the entry, three
+    videos named on through the season (`S02E31-33`, a season tag on the absolute number,
+    entry 11446 confidently theirs, AniList 182255), no track, `any_provider`.
+    main: `S02E06.第34話` placed for S02E31 (`range` +3 by length). v1: nothing placed.
+    v2: anime-relations reads 31 as the entry's 3 -> `S02E03` placed for S02E31."""
+    names = [u"Sousou.no.Frieren.S02E%02d.1080p.NF.WEB-DL.AAC2.0.H.264.mkv" % n
+             for n in (31, 32, 33)]
+    lab = Lab(tmp_path, names=names)
+    for name in names:
+        lab.tracks[name] = Answer(tracks=())
+    video = tsubasa.scan(videos=str(lab.media)).videos[0]
+    lab.resolutions.put(
+        resolution.cache_key(video.title, video.season, tokens_module.year(video.name)),
+        resolution.Resolved(ENTRY, u"Sousou no Frieren 2nd Season", False, 0.95, False,
+                            resolution.SOURCE_JIMAKU, 182255))
+    listing = lab.client.files
+    lab.client.files = lambda entry_id: [f for f in listing(entry_id) if u".Amazon." in f["name"]]
+    lab.download = lambda item: (lab.downloads.append(item["name"]), ja_body(item))[1]
+    report = lab.run(untimed=u"any_provider", prefer_format=u"srt", format_fallback=True)
+    for row in report.results:
+        n = int(row.name.split(u"S02E")[1][:2])
+        assert row.outcome == pipeline.CONFIDENT, (row.name, row.outcome, row.reason)
+        assert row.jimaku_filename.startswith(u"葬送のフリーレン.S02E%02d." % (n - 28)), (
+            row.name, row.jimaku_filename)
+
+
+def test_16z_D3_a_dropped_file_note_reaches_every_show_that_uses_the_entrys_list(tmp_path):
+    u"""Z-D3: the list is cached per ENTRY, but the note saying a file was left out of it was
+    drained by the first show alone -- a second show on the same entry used the same
+    shortened list and never said so. The notes now ride with the cached list."""
+    lab = Lab(tmp_path, names=[u"frieren S2 - 01.mkv", u"Kamen Rider Decade - 01.mkv"])
+    for video in tsubasa.scan(videos=str(lab.media)).videos:
+        lab.resolutions.put(
+            resolution.cache_key(video.title, video.season, tokens_module.year(video.name)),
+            resolution.Resolved(ENTRY, u"Sousou no Frieren 2nd Season", False, 0.95, False,
+                                resolution.SOURCE_JIMAKU, 182255))
+    listing = lab.client.files
+    note = u"Entry %d: one file on its list was left out and the others were used -- a stand-in"
+
+    def files(entry_id):                      # as the real client says a dropped file
+        lab.client.notes.append(note % entry_id)
+        return listing(entry_id)
+
+    lab.client.files = files
+    report = lab.run()
+    assert len(report.shows) == 2 and all(s.resolved for s in report.shows), report.shows
+    said = [s.title for s in report.shows if note % ENTRY in s.notes]
+    assert len(said) == 2, [(s.title, [n[:60] for n in s.notes]) for s in report.shows]

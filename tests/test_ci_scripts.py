@@ -562,14 +562,49 @@ def test_check_docs_emits_ascii_and_an_annotation_under_actions(tmp_path):
 # outside_checkout.py -- pitfall P6, and the parent walk
 # ---------------------------------------------------------------------------
 
+def _place_tomli(site):
+    """Below Python 3.11, copy the runner's own `tomli` into `site`, the way
+    `pip install hato` would install it.
+
+    🚨 `--system-site-packages` WAS SUPPOSED TO DO THIS, AND ONLY DOES WHEN THE
+    RUNNER'S PYTHON IS NOT ITSELF A VENV. A venv made from a venv's interpreter
+    inherits the BASE interpreter's site-packages, never the parent venv's.
+    Measured 2026-10-04 on the server: the runner ran from `.venv` (python 3.10,
+    tomli 2.4.1 in it), `/usr/bin/python3` had no tomli, and the fake install
+    failed `config_loads` with "No module named 'tomli'". On CI (setup-python
+    installs into the base interpreter) and on the laptop (3.11: `tomllib` is
+    stdlib) it never showed up. pyproject.toml declares
+    `tomli>=1.1; python_version < '3.11'`, so a real install carries it: the
+    packaging was right and the fixture was wrong.
+    """
+    if sys.version_info >= (3, 11):
+        return
+    try:
+        import tomli
+    except ImportError:
+        raise AssertionError(
+            "Python %d.%d needs tomli to import hato.config, and the runner's "
+            "own interpreter (%s) has none to copy into the fake install. "
+            "Install the dev environment: requirements-dev.txt."
+            % (sys.version_info[0], sys.version_info[1], sys.executable))
+    source = Path(tomli.__file__)
+    if source.name == "__init__.py":
+        shutil.copytree(str(source.parent), str(site / "tomli"),
+                        ignore=shutil.ignore_patterns("__pycache__"))
+    else:
+        shutil.copy2(str(source), str(site / source.name))
+
+
 def _fake_install(tmp_path_factory):
-    """A venv whose site-packages holds a COPY of `hato`, and nothing else.
+    """A venv whose site-packages holds a COPY of `hato` (plus `tomli` below
+    Python 3.11, which hato's pyproject.toml declares), and nothing else.
 
     ⭐ This is the only way to get an all-green run of the guard on this machine:
     there is no `pip install hato` here (no `pyproject.toml` yet -- a sibling
     builder is writing it), so the package is placed the way an install places
-    it and imported with NO `PYTHONPATH`. ⛔ `--system-site-packages` so `tomli`
-    is importable on Python 3.10, where `tomllib` does not exist.
+    it and imported with NO `PYTHONPATH`. ⛔ `tomli` is COPIED in by
+    `_place_tomli`: `--system-site-packages` alone misses it whenever the
+    runner's Python is itself a venv (see there).
     """
     base = tmp_path_factory.mktemp("install")
     venv = base / "venv"
@@ -586,6 +621,7 @@ def _fake_install(tmp_path_factory):
         pytest.skip("no site-packages in the venv at %s" % venv)
     shutil.copytree(str(ROOT / "hato"), str(sites[0] / "hato"),
                     ignore=shutil.ignore_patterns("__pycache__", "dev"))
+    _place_tomli(sites[0])
     python = venv / "Scripts" / "python.exe"
     if not python.exists():
         python = venv / "bin" / "python"
@@ -596,6 +632,27 @@ def _fake_install(tmp_path_factory):
     outside = base / "outside"
     outside.mkdir()
     return python, outside
+
+
+def test_the_fake_install_imports_hato_config_on_its_own(fake_install):
+    """⭐ THE FIXTURE'S PRECONDITION, ASSERTED OUT LOUD. Every claim below runs
+    in the fake install; if it cannot even `import hato.config`, they fail on
+    the fixture rather than on what they test. This is the check that names a
+    missing `tomli` -- run from a venv on Python 3.10, that is exactly what
+    `--system-site-packages` alone left out (`_place_tomli`)."""
+    python, outside = fake_install
+    base = dict(os.environ)
+    for name in SCRUB:
+        base.pop(name, None)
+    proc = subprocess.run([str(python), "-c", "import hato.config"],
+                          cwd=str(outside), env=base, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, timeout=120)
+    assert proc.returncode == 0, (
+        "the fake install cannot import hato.config by itself (Python %d.%d, "
+        "runner %s), so every outside-the-checkout claim is testing the "
+        "fixture:\n%s" % (sys.version_info[0], sys.version_info[1],
+                          sys.executable,
+                          proc.stdout.decode("utf-8", "replace")[-800:]))
 
 
 @pytest.fixture(scope="module")

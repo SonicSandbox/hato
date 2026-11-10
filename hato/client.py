@@ -479,6 +479,10 @@ class JimakuClient(object):
         self.last_rate_headers = {}
         #: [(seconds, why)] -- every wait this client made.
         self.waits = []
+        #: ⭐ 16l P4 -- [str] the files `files()` LEFT OUT of a list, one note each,
+        #: naming the file. Drained (read and cleared) by whoever can say it --
+        #: the pipeline, into the show's notes.
+        self.notes = []
         self._remaining = None
         self._reset_at = None
         self._last_metered_at = None
@@ -521,7 +525,14 @@ class JimakuClient(object):
         return _json_list(resp, what)
 
     def files(self, entry_id):
-        """-> every file on the entry, as jimaku lists it. ⛔ No `episode=`, ever."""
+        """-> every file on the entry, as jimaku lists it, in its order -- less any
+        file the name or url guard refuses. ⛔ No `episode=`, ever.
+
+        🚨 2026-10-04 hunt (#8): one bad file raised for the WHOLE list, so every
+        video of the show became an ERROR. Now a refused file is LEFT OUT and said
+        in `self.notes`; only a list in which EVERY file is refused still raises
+        (the first file's refusal, as before). ⛔ A dropped file is never returned,
+        so it can never be downloaded -- the url guard stays a guard."""
         entry_id = _plain_id("entry_id", entry_id)
         what = "GET /api/entries/%d/files" % entry_id
         resp = self._api("/entries/%d/files" % entry_id, None, what)
@@ -533,10 +544,21 @@ class JimakuClient(object):
                               % (resp.status_code, what, _server_says(resp)),
                               status=resp.status_code)
         listed = _json_list(resp, what)
+        kept, refused = [], []
         for item in listed:
-            _file_name(item)            # ⛔ BOTH halves, or a nameless file rides through
-            _file_url(item, entry_id)
-        return listed
+            try:
+                _file_name(item)        # ⛔ BOTH halves, or a nameless file rides through
+                _file_url(item, entry_id)
+            except BadFile as exc:
+                refused.append(exc)
+            else:
+                kept.append(item)
+        if refused and not kept:
+            raise refused[0]
+        for exc in refused:
+            self.notes.append("Entry %d: one file on its list was left out and the others "
+                              "were used -- %s" % (entry_id, exc))
+        return kept
 
     def download(self, file):
         """-> the file's bytes, exactly as served. Unmetered, and sent with NO key."""

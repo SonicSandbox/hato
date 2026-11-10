@@ -2,7 +2,7 @@
 """Explain the order one episode's candidates would be tried in, and why.
 
     hato rank --explain <entry-id> <episode> --files FILE.json [--folder DIR]
-                        [--movie] [--allow-ai] [--seen RELEASE ...]
+                        [--movie] [--allow-ai] [--seen RELEASE ...] [--anilist ID]
 
 Every candidate with its key -- format, language, fit, version, size, release --
 and the reason for its place against the ones either side; then every file the
@@ -25,7 +25,7 @@ import os
 import sys
 
 from hato.commands.align import (EXIT_FAILED, EXIT_OK, EXIT_USAGE, LIVE_NOT_WIRED,
-                                 InputError, load_files, scan_videos)
+                                 InputError, add_anilist, bridge_of, load_files, scan_videos)
 
 
 class _Episode(object):
@@ -49,6 +49,7 @@ def register(parser):
     parser.add_argument("--files", metavar="FILE.json",
                         help="a recorded file list for the entry (required until RUNBOOK 2c)")
     parser.add_argument("--folder", help="align against this folder's videos first")
+    add_anilist(parser)
     parser.add_argument("--movie", action="store_true",
                         help="the entry is a movie (flags.movie): every file is a candidate")
     parser.add_argument("--allow-ai", action="store_true",
@@ -76,8 +77,9 @@ def run(args):
     try:
         files = load_files(args.files, args.entry_id)
         videos = scan_videos(args.folder) if args.folder else [_Episode(args.episode)]
+        bridge, said = bridge_of(args)
         with Cache().workdir("rank") as work:
-            alignment = episodes.align(files, videos, workdir=work, movie=args.movie)
+            alignment = episodes.align(files, videos, workdir=work, movie=args.movie, bridge=bridge)
     except (InputError, paths.PathError) as exc:
         sys.stderr.write(u"hato rank: %s\n" % exc)
         return EXIT_FAILED
@@ -88,7 +90,7 @@ def run(args):
         return EXIT_FAILED
     where = os.path.abspath(args.folder) if args.folder else (
         u"no folder -- only files whose own number reads %s are candidates" % args.episode)
-    print(u"hato rank · entry %d · episode %s · %s" % (args.entry_id, args.episode, where))
+    print(u"hato rank · entry %d · episode %s · %s · %s" % (args.entry_id, args.episode, where, said))
     for video in chosen:
         path = str(video.path)
         print(u"")

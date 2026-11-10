@@ -108,6 +108,11 @@ def _show(args):
     row("format_fallback", "true" if cfg.format_fallback else "false")
     row("watch", "true" if cfg.watch else "false")
     row("schedule", cfg.schedule)
+    # ⭐ LAYER 16 -- `auto`: Surasura gets new subtitles when it is installed.
+    row("surasura_connect", cfg.surasura_connect)
+    # ⭐ LAYER 16 (16k) -- release groups tried first; empty is 1.0.9's order
+    row("favourite_groups", u", ".join(cfg.favourite_groups) or u"(none: hato's own order)")
+    # ⚠ 1.0.x's folder: still read, never used by 1.1.0 (Go back finds it)
     row("surasura_dir", cfg.surasura_dir or "(off)")
     row("auto_update", "true" if cfg.auto_update else "false")
     row("log.path", str(cfg.log_path_resolved), "log.path")

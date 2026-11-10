@@ -149,7 +149,15 @@ HOOKSPATH = [TSUBASA_HOOKS] if TSUBASA_HOOKS else []
 # front door, not a library), so this is declared here and
 # `smoke_standalone.py` counts the files in the bundle rather than trusting
 # it.
-HATO_DATA = collect_data_files("hato", includes=["data/*.png", "data/*.ico"])
+# 🚨 16m -- AND THE ANIME-RELATIONS LIST (`data/anime-relations.txt`, LAYER 16).
+# pyproject's package-data has carried `data/*.txt` since 16i, so the WHEEL had it
+# and every suite was green -- but this line was the icons only, and a frozen
+# `relations.load()` finds no file and reads NO RULES, silently: Haruhana's
+# absolute numbers stop being placed and nothing says why. ⭐ The globs here must
+# cover every `data/` glob pyproject ships (`test_packaging.py`, 16m), and the
+# smoke asks the BUILT `hato-cli align --anilist 182255` for the +28 it states.
+HATO_DATA = collect_data_files("hato", includes=["data/*.png", "data/*.ico",
+                                                 "data/*.txt"])
 
 # ===========================================================================
 # 🚨 D8 -- TSUBASA'S THIRD OPINION ON A NAME SHIPPED WITHOUT ITS DATA

@@ -797,25 +797,244 @@ def test_the_surasura_card_is_last_and_carries_its_mark(qapp):
     assert marks, u"the integration card shows no mark"
 
 
-def test_choosing_a_surasura_folder_saves_it_and_turning_it_off_clears_it(qapp):
-    u"""⛔ Empty means off, and the same key carries both -- so there is no
-    second setting that could disagree about whether it is on."""
-    window = make()
-    sent = []
-    window.spawn = lambda argv, **kw: sent.append(argv) or None
+# ===========================================================================
+# ⭐ LAYER 16 (16g) -- the SURASURA card: one switch (fork 2), its status line
+# ===========================================================================
 
-    window.state.surasura_dir = u""
-    window.clear_surasura()
-    assert any(u"surasura_dir=" in u" ".join(a) for a in sent)
-    assert window.state.surasura_dir == u""
+sys.path.insert(0, HERE)
+import _surasura                                                  # noqa: E402
+
+#: The mock's words for each state (`gui-mock/mock-connect.html`), as the card shows them.
+CONNECT_SAID = {
+    u"cards": u"✓ Surasura 2.9.0.6 found. " + gui_run.CONNECT_CARDS,
+    u"nocards": u"✓ Surasura 2.9.0.6 found. " + gui_run.CONNECT_NO_CARDS,
+    u"none": gui_run.CONNECT_ABSENT,
+    u"offline": u" ".join(gui_run.CONNECT_OFFLINE),
+    u"unreachable": u" ".join(gui_run.CONNECT_OFFLINE),
+    u"new": u" ".join(gui_run.CONNECT_TOO_NEW),
+}
 
 
-def test_surasura_is_a_real_setting_the_schema_knows(qapp):
-    u"""⚠ The window writes `surasura_dir`; a key the schema refuses is
-    silently never saved. The general guard covers this too -- this names it,
-    because it is the newest one."""
-    from hato import config as config_module
-    assert u"surasura_dir" in config_module.SCHEMA
+def _connect_window(tmp_path, monkeypatch, shape, outcomes=(), setting=u"auto", **over):
+    u"""A window whose SURASURA card is drawn from what is ON DISK, in the wire's shape:
+    surasura.json as Surasura 3.0 writes it (`_surasura.install`), pairing rows written
+    by the real producer (`connect.Handoff`, `_surasura.seed`), read through the
+    window's own reader (`refresh_surasura`). ⛔ Never a Status typed here.
+    `shape`: none · cards · nocards · offline (no folder for ja) · unreachable (the
+    library's parent missing) · new (a newer contract)."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / u"data"))
+    tools = tmp_path / u"houseki-tools"
+    tools.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOUSEKI_TOOLS_DIR", str(tools))
+    monkeypatch.delenv("HATO_TOOLS_CLI", raising=False)
+    if outcomes:
+        from hato import paths, state
+        _surasura.install(tmp_path, monkeypatch, register=True)
+        paths.data_root().mkdir(parents=True, exist_ok=True)
+        with state.StateDB(paths.state_db_path()) as db:
+            _surasura.seed(db, tmp_path, list(outcomes))
+    if shape == u"none":
+        if (tools / u"surasura.json").exists():
+            (tools / u"surasura.json").unlink()
+    elif shape == u"unreachable":
+        import shutil
+        _surasura.install(tmp_path, monkeypatch, register=True)
+        shutil.rmtree(str(tmp_path / u"Surasura"))
+    else:
+        fields = {u"cards": dict(register=True), u"nocards": dict(register=False),
+                  u"offline": dict(register=True, drop_folders={}),
+                  u"new": dict(register=True, contract=2)}[shape]
+        _surasura.install(tmp_path, monkeypatch, **fields)
+    window = make(running=False, surasura_connect=setting, **over)
+    window.refresh_surasura(render=False)
+    window.show_tab(gui_app.TAB_SET)
+    return window
+
+
+def _said(widget):
+    u"""What a person READS in `widget`: `_flat`, with a rich-text label's markup gone
+    (the status line colours its lead inline)."""
+    from PyQt6.QtGui import QTextDocument
+    out = []
+    for text in gui_app.texts(widget):
+        if u"<" in text:
+            doc = QTextDocument()
+            doc.setHtml(text)
+            text = doc.toPlainText()
+        out.append(text)
+    return u" ".join(u" ".join(out).split())
+
+
+def _surasura_card(window):
+    for lab in window.panes[gui_app.TAB_SET].findChildren(QLabel):
+        if lab.objectName() == u"cardtitle" and lab.text() == u"SURASURA":
+            card = lab
+            while card is not None and card.objectName() != u"card":
+                card = card.parentWidget()
+            return card
+    raise AssertionError(u"Settings has no SURASURA card")
+
+
+@pytest.mark.parametrize(u"shape", sorted(CONNECT_SAID))
+def test_16g_the_card_says_each_state_in_the_mocks_words(qapp, tmp_path, monkeypatch, shape):
+    u"""⭐ RUNBOOK 16g: the card's status line from `connect.state()` -- the mock's five
+    wordings (and an unreachable library is the offline one, edge 3). The switch is ON
+    (automatic) in every one; the drop folder is shown only where hato copies into it;
+    ⛔ the 1.0.x picker is gone -- no folder to choose, in any state."""
+    window = _connect_window(tmp_path, monkeypatch, shape)
+    card = _surasura_card(window)
+    said = _said(card)
+    assert CONNECT_SAID[shape] in said, (shape, said)
+    assert _kept(window, u"surasura.connect").isChecked(), u"automatic drew the switch OFF"
+    drop = str(tmp_path / u"Surasura" / u"data" / u"ja" / u"HighPriority" / u"Hato")
+    shown = [e.text() for e in card.findChildren(gui_app.Elide)]
+    assert (drop in shown) is (shape in (u"cards", u"nocards")), (shape, shown)
+    for gone in (u"Choose a folder", u"Change folder", u"Send a copy", u"no folder chosen"):
+        assert gone not in said, (shape, gone)
+    assert not [b for b in card.findChildren(QPushButton) if b.isVisibleTo(window)], (
+        u"%s: the card carries a button with no tray to restart" % shape)
+
+
+def test_16g_switched_off_the_card_says_off_whatever_surasura_says(qapp, tmp_path,
+                                                                    monkeypatch):
+    u"""OFF is OFF in every state of Surasura: the switch drawn off, the off words, no
+    folder, and no count of what waits -- nothing is tried again while it is off
+    (edge 13), so a count would promise what nothing will do."""
+    for shape in (u"cards", u"none", u"offline"):
+        window = _connect_window(tmp_path, monkeypatch, shape, setting=u"off",
+                                 outcomes=(u"retry",) if shape == u"cards" else ())
+        card = _surasura_card(window)
+        said = _said(card)
+        assert gui_run.CONNECT_OFF in said and u"found" not in said, (shape, said)
+        assert not _kept(window, u"surasura.connect").isChecked(), shape
+        assert u"Waiting" not in said and not card.findChildren(gui_app.Elide), (shape, said)
+
+
+def test_16g_what_waits_is_counted_on_the_card_and_nothing_is_a_dialog(qapp, tmp_path,
+                                                                        monkeypatch):
+    u"""*"decisions need a surface"* (RUNBOOK 16.1, LEDGER-HOT's invisible misses): a drop
+    waiting, a stop, a `bad-data` show on the status line WITH THEIR COUNT -- the latest
+    row per video decides -- and nothing opens a dialog. Rows from the real producer."""
+    from PyQt6.QtWidgets import QDialog, QMessageBox
+    window = _connect_window(
+        tmp_path, monkeypatch, u"cards",
+        outcomes=(u"registered", u"registered", u"retry", u"retry", u"stopped",
+                  u"bad-data", u"drop-waiting", u"expired", u"dropped"))
+    said = _said(_surasura_card(window))
+    assert (u"Waiting: 1 for the library · 2 for the next run · 1 until Surasura "
+            u"changes") in said, said
+    assert (u"Not handed over: 1 Surasura couldn't read (tried again when the file "
+            u"changes) · 1 waited 14 days for the library and stopped") in said, said
+    assert not [w for w in QApplication.topLevelWidgets()
+                if isinstance(w, (QDialog, QMessageBox)) and w.isVisible()]
+    # ⚠ And amber, the worth-a-look hue: a count in the hint's grey reads as an aside
+    counted = [l for l in _surasura_card(window).findChildren(QLabel)
+               if l.text().startswith((u"Waiting:", u"Not handed over:"))]
+    assert len(counted) == 2 and all(l.property(u"warn") == u"true" for l in counted), (
+        [(l.text(), l.property(u"warn")) for l in counted])
+    # ⭐ Every one delivered: nothing waits, and nothing is said
+    window = _connect_window(tmp_path / u"b", monkeypatch, u"cards",
+                             outcomes=(u"registered", u"skipped", u"dropped"))
+    said = _said(_surasura_card(window))
+    assert u"Waiting" not in said and u"Not handed over" not in said, said
+
+
+def test_16g_the_switch_writes_off_and_switched_on_the_key_goes_from_the_file(
+        qapp, tmp_path, monkeypatch):
+    u"""⭐ Fork 2 (ruled 2026-10-29): ON is automatic -- NOTHING written; OFF writes
+    `surasura_connect = "off"`. ⭐ What the file holds is asserted, not the argv alone:
+    each `hato config` the click sends is RUN, into a config.toml of the test's own --
+    so the key an older hato refuses is in the file only while OFF (Go back's rule).
+    And the card says what the switch did at once."""
+    import subprocess
+    from hato import config
+    window = _connect_window(tmp_path, monkeypatch, u"cards")
+    toml = tmp_path / u"config.toml"
+    toml.write_text(u'folders = ["D:\\\\Anime"]\n', encoding="utf-8")
+    env = dict(os.environ, HATO_CONFIG=str(toml), PYTHONUTF8=u"1")
+
+    def press_and_write():
+        _kept(window, u"surasura.connect").click()
+        argv = window.spawned[-1]
+        done = subprocess.run(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              stdin=subprocess.DEVNULL, timeout=120)
+        assert done.returncode == 0, done.stderr.decode("utf-8", "replace")[-300:]
+        return config.load(str(toml)), u" ".join(argv)
+
+    cfg, argv = press_and_write()
+    assert u"surasura_connect=off" in argv, argv
+    assert cfg.surasura_connect == u"off" and cfg.origin(u"surasura_connect") == u"config.toml"
+    assert window.state.surasura_connect == u"off"
+    assert gui_run.CONNECT_OFF in _said(_surasura_card(window))
+    assert not _kept(window, u"surasura.connect").isChecked()
+    cfg, argv = press_and_write()
+    assert u"surasura_connect=auto" in argv, argv
+    assert cfg.surasura_connect == u"auto" and cfg.origin(u"surasura_connect") == u"default", (
+        u"switched back on, the key stayed in the file: %r" % toml.read_text(encoding="utf-8"))
+    assert u"surasura_connect" not in toml.read_text(encoding="utf-8")
+    assert CONNECT_SAID[u"cards"] in _said(_surasura_card(window))
+    assert cfg.folders == (u"D:\\Anime",), u"a switch's write lost another setting"
+
+
+def test_16g_a_written_on_reads_as_on_and_the_switch_turns_it_off(qapp, tmp_path,
+                                                                  monkeypatch):
+    u"""`on` stays valid in the file (a hand-written setting, fork 2): the switch shows
+    it ON, and a press writes `off` -- never the `on` back."""
+    window = _connect_window(tmp_path, monkeypatch, u"nocards", setting=u"on")
+    assert _kept(window, u"surasura.connect").isChecked()
+    assert CONNECT_SAID[u"nocards"] in _said(_surasura_card(window))
+    _kept(window, u"surasura.connect").click()
+    assert u"surasura_connect=off" in u" ".join(window.spawned[-1]), window.spawned[-1]
+
+
+def test_16g_an_older_tray_is_told_under_the_switch_and_restarting_takes_it_away(
+        qapp, tmp_path, monkeypatch):
+    u"""🚨 `LEDGER-HOT.md`: a 1.0.9 tray's runs REFUSE a config.toml carrying
+    `surasura_connect`. Said under the switch whenever the key is in the file -- OFF,
+    a written `on`, or a hand-written `auto` -- never at automatic with the file clean."""
+    for setting, in_file, said in ((u"off", False, True), (u"on", True, True),
+                                   (u"auto", True, True), (u"auto", False, False)):
+        window = _connect_window(tmp_path, monkeypatch, u"cards", setting=setting,
+                                 tray_reads_connect=False, connect_key_in_file=in_file)
+        text = _said(_surasura_card(window))
+        assert (u"cannot read this setting" in text) is said, (setting, in_file, text)
+    window = _connect_window(tmp_path, monkeypatch, u"cards", setting=u"off",
+                             tray_reads_connect=False)
+    monkeypatch.setattr(window, u"stop_watcher", lambda: None)
+    monkeypatch.setattr(window, u"start_watcher", lambda: None)
+    _kept(window, u"surasura.restart_tray").click()
+    assert window.state.tray_reads_connect is True
+    assert u"cannot read this setting" not in _said(_surasura_card(window))
+
+
+def test_16g_the_window_asks_the_tray_for_the_connect_token(monkeypatch):
+    u"""The reader of the pid file's token: a 1.0.9 tray says `untimed` and not
+    `connect`; this build's says both; no tray at all reads as able."""
+    from hato import watch
+    for caps, reads in ((frozenset([u"retries", u"formats", u"updates", u"extract",
+                                    u"untimed"]), False),
+                        (frozenset(watch.CAPABILITIES), True), (None, True)):
+        monkeypatch.setattr(watch, u"watching_capabilities", lambda c=caps: c)
+        assert gui_app.HatoWindow.tray_reads_connect() is reads, caps
+
+
+def test_16g_the_card_follows_surasura_without_a_reopen(qapp, tmp_path, monkeypatch):
+    u"""RUNBOOK 16.1: read *once per window refresh*. Surasura installed while the window
+    is open -- its surasura.json appears -- moves the card at the next look, and a look
+    with nothing moved reads nothing (a `stat`, never the file and the store)."""
+    window = _connect_window(tmp_path, monkeypatch, u"none")
+    assert gui_run.CONNECT_ABSENT in _said(_surasura_card(window))
+    reads = []
+    real = gui_app.HatoWindow.refresh_surasura
+    monkeypatch.setattr(gui_app.HatoWindow, u"refresh_surasura",
+                        lambda self, render=True: reads.append(1) or real(self, render))
+    window.follow_other_runs(every_ms=60000)
+    window._others_timer.timeout.emit()
+    assert reads == [], u"a look with nothing moved read surasura.json and the store"
+    _surasura.install(tmp_path, monkeypatch, register=True)
+    window._others_timer.timeout.emit()
+    assert reads == [1], reads
+    assert CONNECT_SAID[u"cards"] in _said(_surasura_card(window))
 
 
 def test_the_key_dialog_is_hatos_own_and_hides_what_is_typed(qapp):
@@ -3353,6 +3572,33 @@ def test_exit_two_says_it_could_not_run_and_what_hato_said(qapp):
     window._drain()
     assert window.state.live == u"could not run — --only names D:\\gone.mkv, which is not a file.", (
         window.state.live)
+
+
+def test_a_run_that_stopped_leaves_what_it_said_in_the_log(qapp):
+    u"""🚨 2026-10-04 hunt (bug 3) -- the window kept the child's stderr in `Run.stderr`
+    and wrote it nowhere, so a crash outside hato's own `except` (or a frozen child's
+    raw traceback) reached the tester as one footer line and nothing to send. ⭐ Exit 1
+    puts the child's own words in hato.log, through the window's one writer; ⛔ a clean
+    run, and an exit 1 that said nothing (Windows' terminate is 1), write nothing."""
+    window = make()
+    written = []
+    window._error_net = gui_app.ErrorNet(say=written.append)
+    window.state.running = True
+    window._runner = _FinishedRunner(gui_run.EXIT_CLEAN, notes=[u"hato: a note"])
+    window._drain()
+    window.state.running = True
+    window._runner = _FinishedRunner(gui_run.EXIT_STOPPED)
+    window._drain()
+    assert written == [], written
+    lines = [u"Traceback (most recent call last):",
+             u"  File \"hato/pipeline.py\", line 638, in go",
+             u"AttributeError: 'NoneType' object has no attribute 'strip'"]
+    window.state.running = True
+    window._runner = _FinishedRunner(gui_run.EXIT_STOPPED, notes=lines)
+    window._drain()
+    assert len(written) == 1 and u"\n".join(lines) in written[0], written
+    assert u"exited 1" in written[0], written[0]
+    assert u"'NoneType' object has no attribute 'strip'" in window.state.live, window.state.live
 
 
 class _FinishedRunner(object):
@@ -6333,7 +6579,8 @@ def test_a_space_on_a_settings_control_keeps_the_keyboard_there_and_tab_moves_on
         monkeypatch.setattr(gui_app.HatoWindow, name,
                             lambda self, *a, _n=name, **k: called.append(_n))
     for name in (u"format.embedded:fetch", u"format.prefer:srt", u"format.fallback",
-                 u"folders.recurse", u"format.embedded:save"):
+                 u"folders.recurse", u"format.embedded:save",
+                 u"surasura.connect"):                                # LAYER 16 (16g)
         window = make(running=False, auto=True)
         window.show()
         window.activateWindow()
@@ -6381,11 +6628,12 @@ def test_every_settings_control_the_keyboard_reaches_keeps_a_name_of_its_own(qap
     building its controls is seen too."""
     from hato.gui import updating
     reached = set()
-    for what, fields in [(u"both notes, surasura on", None)] + _update_shapes():
+    for what, fields in [(u"every note, surasura off", None)] + _update_shapes():
         window = make(running=False, old_tray=True, prefer_format=u"srt",
-                      surasura_dir=u"D:\\surasura", tray_reads_updates=False,
+                      surasura_connect=u"off", tray_reads_updates=False,   # LAYER 16
                       update_key_in_file=True, extract_embedded=True,
-                      untimed=formats.UNTIMED_ANY)                   # LAYER 15
+                      untimed=formats.UNTIMED_ANY,                   # LAYER 15
+                      favourite_groups=(u"Haruhana",), favourites_key_in_file=True)  # 16k
         if fields is not None:
             shape = updating.Updates(current=u"1.0.4", frozen=fields.pop(u"frozen"))
             shape.now = 1000000.0
@@ -6413,10 +6661,11 @@ def test_every_settings_control_the_keyboard_reaches_keeps_a_name_of_its_own(qap
     # ⚠ 14z (B-1) -- only the CHOSEN radio of a choice is a Tab stop (every shape here
     # saves), so *leave* and *fetch* are reached by the arrow keys -- named below.
     wanted = {u"when.daily", u"when.restart_tray", u"format.restart_tray",
-              u"surasura.choose",
+              u"surasura.connect", u"surasura.restart_tray",                # LAYER 16
               u"updates.auto", u"updates.restart_tray", u"blacklist.sweep",
               u"format.embedded:save", u"format.embedded.restart_tray",   # 14c
-              u"format.untimed:any_provider", u"format.untimed.restart_tray"}   # LAYER 15
+              u"format.untimed:any_provider", u"format.untimed.restart_tray",   # LAYER 15
+              u"favourites", u"favourites.restart_tray"}                        # 16k
     assert wanted <= reached, u"the shapes never built %s" % sorted(wanted - reached)
     window = make(running=False)
     window.show_tab(gui_app.TAB_SET)
@@ -7359,3 +7608,198 @@ def test_15z_the_footer_counts_videos_not_spellings(qapp):
     window.render()
     assert window.tally_labels[0].text() == u"1 added (1 not timed)", (
         window.tally_labels[0].text())
+
+
+# ===========================================================================
+# ⭐ LAYER 16 (16k) -- favourite release groups: ONE line under the format (fork 3 A)
+# ===========================================================================
+
+def _favourites(window):
+    found = [f for f in window.panes[gui_app.TAB_SET].findChildren(QLineEdit)
+             if f.objectName() == u"favourites"]
+    assert len(found) == 1, u"the favourites line was built %d times" % len(found)
+    return found[0]
+
+
+def _sets(window):
+    return [argv[argv.index(u"--set") + 1] for argv in window.spawned if u"config" in argv]
+
+
+def test_16k_the_favourites_line_shows_nanakoraws_and_writes_what_is_typed(qapp):
+    u"""The default reads NanakoRaws; typing a line and finishing it writes it through
+    `hato config --set`, as every setting; the same words again write nothing; emptied
+    writes the empty list (hato's own order) -- and the rebuilt line shows each."""
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    field = _favourites(window)
+    assert field.text() == u"NanakoRaws"
+    assert gui_app.FAVOURITES_HINT in _flat(window.panes[gui_app.TAB_SET])
+    for typed, written, shown in ((u" Haruhana ,NanakoRaws", u"favourite_groups=Haruhana, NanakoRaws",
+                                   u"Haruhana, NanakoRaws"),
+                                  (u"Haruhana, NanakoRaws", None, u"Haruhana, NanakoRaws"),
+                                  (u"", u"favourite_groups=", u"")):
+        before = list(_sets(window))
+        field = _favourites(window)
+        field.setText(typed)
+        field.editingFinished.emit()
+        after = _sets(window)[len(before):]
+        assert after == ([written] if written else []), (typed, after)
+        assert _favourites(window).text() == shown, (typed, _favourites(window).text())
+
+
+def test_16k_a_line_nothing_could_match_is_refused_in_words_and_put_back(qapp):
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    field = _favourites(window)
+    field.setText(u"[], -")
+    field.editingFinished.emit()
+    assert _sets(window) == [], u"a refused line was written"
+    assert _favourites(window).text() == u"NanakoRaws"
+    flat = _flat(window.panes[gui_app.TAB_SET])
+    assert u"no letters or digits" in flat and u"favourite_groups:" not in flat, flat
+
+
+def test_16n_F8_unchanged_words_after_a_refusal_write_nothing_and_the_refusal_stays(qapp):
+    u"""R8: after a refusal, the next focus-out (the words put back, unchanged) wrote the
+    same value again and cleared the refusal's words."""
+    window = make(running=False)
+    window.show_tab(gui_app.TAB_SET)
+    field = _favourites(window)
+    field.setText(u"[], -")
+    field.editingFinished.emit()
+    _favourites(window).editingFinished.emit()               # focus leaves, nothing typed
+    assert _sets(window) == [], u"unchanged words were written"
+    assert u"no letters or digits" in _flat(window.panes[gui_app.TAB_SET]), u"the refusal went"
+
+
+def test_16k_an_older_tray_is_told_it_cannot_read_the_favourites(qapp):
+    u"""1.0.9 refuses `favourite_groups` (`config.NEWER_THAN_1_0_9`). Two arms: the key in
+    the file -> said under the line, with the fix; not in the file -> nothing."""
+    window = make(running=False, old_tray=True, favourites_key_in_file=True,
+                  favourite_groups=(u"Haruhana",))
+    window.show_tab(gui_app.TAB_SET)
+    names = [w.property(gui_app.KEEP) for w in window.panes[gui_app.TAB_SET].findChildren(QWidget)]
+    assert u"favourites.restart_tray" in names
+    window = make(running=False, old_tray=True)
+    window.show_tab(gui_app.TAB_SET)
+    names = [w.property(gui_app.KEEP) for w in window.panes[gui_app.TAB_SET].findChildren(QWidget)]
+    assert u"favourites.restart_tray" not in names
+
+
+def test_16k_the_favourites_tip_says_it_only_orders_the_tries():
+    tip = u" ".join(gui_app.FAVOURITES_TIP.split())
+    for words in (u"tried first", u"a favourite's .srt waits behind another group's .ass",
+                  u"the timing check still decides", u"Empty: hato's own order"):
+        assert words in tip, (words, tip)
+
+
+def test_16z_C5_the_favourites_tip_never_promises_a_timing_check_on_the_untimed_road():
+    u"""Z-C5: the tip said *"the timing check still decides"* outright -- for a video with
+    no subtitles inside it (Layer 15's untimed road) nothing times the file at all."""
+    tip = u" ".join(gui_app.FAVOURITES_TIP.split())
+    assert u"no subtitles inside it" in tip and u"not timed" in tip, tip
+    assert u"and the timing check still decides" not in tip, u"the timing check said without its road"
+
+
+# ===========================================================================
+# P1 (16l) -- the frozen window has NO stderr (console=False): its bare writes
+# must go through `complain`, and a raising `done` must not stop the poll
+# ===========================================================================
+
+def test_16l_p1_a_config_refusal_with_no_stderr_does_not_raise_and_reaches_the_log(
+        qapp, tmp_path, monkeypatch):
+    u"""P1 rule 2. Double-clicked, `hato.exe` has `sys.stderr` None. The start-up
+    refusal in `settings_from_disk` must not raise, and the words must land in
+    hato.log through `complain` -- the log is the channel with no stream."""
+    bad = tmp_path / "config.toml"
+    bad.write_text(u"candidates = 0\n", encoding="utf-8")
+    monkeypatch.setenv("HATO_CONFIG", str(bad))
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path))      # never the real log
+    monkeypatch.setattr(sys, "stderr", None)
+
+    try:
+        fresh = gui_app.settings_from_disk()
+    except Exception as exc:                             # noqa: BLE001
+        pytest.fail(u"RULE 2 BROKEN: settings_from_disk raised %r with sys.stderr "
+                    u"None; its refusal write must go through hato.watch.complain, "
+                    u"which copes with a None stream" % (exc,))
+    assert fresh.config_error and u"at least 1" in fresh.config_error
+
+    log = tmp_path / u"hato.log"
+    assert log.is_file(), u"RULE 2 BROKEN: with no stderr the refusal reached no log"
+    assert u"at least 1" in log.read_text(encoding="utf-8"), (
+        u"RULE 2 BROKEN: the config refusal is not in hato.log")
+
+
+def test_16l_p1_a_done_that_raises_runs_once_and_the_reader_behind_it_is_served(
+        qapp, tmp_path, monkeypatch):
+    u"""P1 rule 3. With no stderr, a `done` that raises inside `_poll_reads` must
+    not escape the poll: `_reading` is still reassigned, so the raising `done`
+    is never called again and the reader finishing in the same poll is served."""
+    window = make()
+    monkeypatch.setattr(sys, "stderr", None)
+    calls = {u"first": 0, u"second": 0}
+
+    class Reader(object):
+        def __init__(self, label):
+            self.label = label
+
+        def drain(self):
+            return []
+
+        def finished(self):
+            return u"answer from " + self.label          # ready on the first poll
+
+    def first_done(finished, events):
+        calls[u"first"] += 1
+        raise ValueError(u"the answer is no good")
+
+    def second_done(finished, events):
+        calls[u"second"] += 1
+
+    window._reading = [(Reader(u"a"), first_done, [], None),
+                       (Reader(u"b"), second_done, [], None)]
+    for poll in range(3):
+        try:
+            window._poll_reads()
+        except Exception as exc:                         # noqa: BLE001
+            pytest.fail(u"RULE 3 BROKEN: poll %d let %r out of _poll_reads with "
+                        u"sys.stderr None, so _reading was never reassigned: the "
+                        u"raising done is called again and the reader behind it is "
+                        u"not served" % (poll + 1, exc))
+
+    assert calls == {u"first": 1, u"second": 1}, (
+        u"RULE 3 BROKEN: each done must run exactly once across the polls, got %r"
+        % (calls,))
+    assert window._reading == []
+
+
+def test_16z_D5_a_failing_progress_callback_is_complained_of_once_per_reader(
+        qapp, monkeypatch):
+    u"""Z-D5: `_complain` wrote one `=== hato window` block per failed PROGRESS event --
+    thousands in a download, and `_trim` counted each block as a run, pushing the real
+    runs out of hato.log. Once per reader; a second reader still gets its own word."""
+    window = make()
+    said = []
+    monkeypatch.setattr(gui_app, "_complain", said.append)
+
+    class Reader(object):
+        def __init__(self, polls):
+            self.polls = polls
+
+        def drain(self):
+            return [{u"event": u"progress"}] * 40
+
+        def finished(self):
+            self.polls -= 1
+            return u"done" if self.polls <= 0 else None
+
+    def each(event):
+        raise ValueError(u"the progress cannot be drawn")
+
+    window._reading = [(Reader(3), lambda finished, events: None, [], each),
+                       (Reader(3), lambda finished, events: None, [], each)]
+    for _poll in range(4):
+        window._poll_reads()
+    assert window._reading == []
+    assert len(said) == 2 and all(u"progress" in s for s in said), (len(said), said[:3])

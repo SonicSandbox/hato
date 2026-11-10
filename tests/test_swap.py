@@ -432,7 +432,8 @@ user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LP
 # WS_POPUP | WS_VISIBLE, a tool window, far off screen: visible to Windows, seen by nobody
 hwnd = user32.CreateWindowExW(0x80, "STATIC", sys.argv[1], 0x80000000 | 0x10000000,
                               -12000, -12000, 40, 40, None, None, None, None)
-print("ready" if hwnd else "no window", flush=True)
+# its OWN pid: from a venv's python.exe, Popen().pid is the LAUNCHER's
+print(("ready %d" % __import__("os").getpid()) if hwnd else "no window", flush=True)
 time.sleep(60)
 '''
 
@@ -450,9 +451,11 @@ def test_only_a_window_titled_hato_is_the_new_window(tmp_path):
         proc = subprocess.Popen([sys.executable, str(script), title],
                                 stdout=subprocess.PIPE)
         try:
-            assert proc.stdout.readline().strip() == b"ready", u"no window was made"
-            assert ops.window_visible(proc.pid), u"the control: it IS a visible window"
-            assert ops.window_visible(proc.pid, swap.WINDOW_TITLE) is want, title
+            said = proc.stdout.readline().split()
+            assert said[:1] == [b"ready"], u"no window was made"
+            pid = int(said[1])
+            assert ops.window_visible(pid), u"the control: it IS a visible window"
+            assert ops.window_visible(pid, swap.WINDOW_TITLE) is want, title
         finally:
             proc.terminate()
             proc.wait(10)

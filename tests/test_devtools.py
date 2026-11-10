@@ -733,6 +733,26 @@ def test_a_planted_key_inside_an_sdist_tarball_is_found(tmp_path):
     assert "leak.txt" in got.saw, got.saw
 
 
+def test_a_planted_key_in_a_gzipped_file_that_is_not_a_tarball_is_found(tmp_path):
+    u"""⭐ 2026-10-31, the first scan of the STANDALONE zip: tsubasa's `aliases.tsv.gz` is a
+    gzipped TABLE, not a tar, and the scan refused the whole artifact. A gzipped file is
+    un-gzipped and scanned -- a planted key inside it is found, and a clean one passes."""
+    import gzip as _gzip
+    for body, leaks in ((u"alias\tname\n%s\tx\n" % FAKE_KEY, True), (u"alias\tname\n", False)):
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as zf:
+            zf.writestr("hato/_internal/tsubasa/data/aliases.tsv.gz",
+                        _gzip.compress(body.encode("utf-8")))
+        d = tmp_path / (u"leak" if leaks else u"clean") / "dist"
+        d.mkdir(parents=True)
+        (d / "hato-1.0.9-windows-x64.zip").write_bytes(inner.getvalue())
+        got = by_name(scan.scan_secrets(d, NEEDLES, FAKE_HINT))[u"key_bytes_absent"]
+        if leaks:
+            assert got.state != claims.OK and "aliases.tsv.gz" in got.saw, got.saw
+        else:
+            assert got.state == claims.OK, got.saw
+
+
 def test_a_planted_key_inside_a_wheel_inside_an_sdist_is_found(tmp_path):
     inner = io.BytesIO()
     with zipfile.ZipFile(inner, "w") as zf:
@@ -847,12 +867,59 @@ def test_a_private_key_block_is_found_whatever_kind_it_is(tmp_path, header):
     assert u"notes.txt" in got.saw, got.saw
 
 
+def test_a_tls_librarys_marker_strings_are_not_a_private_key_block(tmp_path):
+    u"""⭐ 2026-10-31, the standalone zip: Qt6Network.dll holds the PEM markers its parser
+    recognises, NUL-terminated, with no key after them -- 16 false "blocks". Two arms: the
+    markers alone pass; the same marker with a body after a line break is still a key."""
+    markers = b"".join(b"-----BEGIN %s-----\x00" % k for k in
+                       (b"RSA PRIVATE KEY", b"DSA PRIVATE KEY", b"EC PRIVATE KEY", b"PRIVATE KEY"))
+    (tmp_path / u"lib").mkdir()
+    d = dist_with(tmp_path / u"lib", "Qt6Network.dll", b"\x00Enc\x00" + markers + b"\x00tail")
+    got = by_name(scan.scan_secrets(d, NEEDLES, FAKE_HINT))
+    assert got[u"no_private_key_block"].state == claims.OK, got[u"no_private_key_block"].saw
+    body = b"-----BEGIN PRIVATE KEY-----\r\nMC4CAQAwBQYDK2VwBCIEIFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE=\r\n"
+    (tmp_path / u"key").mkdir()
+    d = dist_with(tmp_path / u"key", "k.pem", markers + body)
+    red(scan.scan_secrets(d, NEEDLES, FAKE_HINT), "no_private_key_block")
+    enc = (b"-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00FF\n\n"
+           b"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=\n-----END RSA PRIVATE KEY-----\n")
+    (tmp_path / u"enc").mkdir()
+    d = dist_with(tmp_path / u"enc", "e.pem", enc)
+    red(scan.scan_secrets(d, NEEDLES, FAKE_HINT), "no_private_key_block")
+
+
 def test_a_public_key_is_not_a_private_key_block(tmp_path):
     u"""The control: a PUBLIC key -- which hato ships on purpose -- is not flagged."""
     d = dist_with(tmp_path, "public.txt",
                   u"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAFAKE=\n-----END PUBLIC KEY-----\n")
     got = by_name(scan.scan_secrets(d, NEEDLES, FAKE_HINT))
     assert got["no_private_key_block"].state == claims.OK, got["no_private_key_block"].saw
+
+
+#: 16z Z-D2: a key body as it is really leaked (three base64 lines of a PKCS#8 key's shape).
+D2_BODY = [u"MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj",
+           u"MzEfYyjiWA4R4/M2bS1GB4t7NXp98C3SC6dVMvDuictGeurT8jNbvJZHtCSuYEvu",
+           u"NMoSfm76oqFvAp8Gy0iz5sxjZmSnXyCdPEovGhLa0VzMaQ8s+CLOyS56YyCFGeJZ"]
+D2_PEM = (u"-----BEGIN PRIVATE KEY-----\n" + u"\n".join(D2_BODY)
+          + u"\n-----END PRIVATE KEY-----\n")
+
+
+@pytest.mark.parametrize("name, text", [
+    (u"service-account.json", json.dumps({"type": "service_account", "private_key_id": "0f3e",
+                                          "private_key": D2_PEM})),
+    (u"config.yaml", u"signing:\n  key: |\n" + u"".join(u"    %s\n" % l for l in D2_PEM.splitlines())),
+    (u"keys.py", u'KEY = (\n    "-----BEGIN PRIVATE KEY-----\\n"\n'
+     + u"".join(u'    "%s\\n"\n' % l for l in D2_BODY) + u'    "-----END PRIVATE KEY-----\\n"\n)\n'),
+    (u"one_line.pem", u"-----BEGIN PRIVATE KEY----- " + u" ".join(D2_BODY) + u" -----END PRIVATE KEY-----"),
+])
+def test_16z_D2_a_private_key_is_found_in_the_forms_it_really_leaks_in(tmp_path, name, text):
+    u"""Z-D2 (HIGH): the block rule wanted a real line break after the marker, so a key in a
+    service-account JSON (`\\n` escapes), an indented YAML block, a string literal or a PEM
+    on one line passed both secret checks. Qt's NUL-terminated marker table still passes
+    (`test_a_tls_librarys_marker_strings_are_not_a_private_key_block`)."""
+    d = dist_with(tmp_path, name, text)
+    got = red(scan.scan_secrets(d, NEEDLES, FAKE_HINT), "no_private_key_block")
+    assert name in got.saw, got.saw
 
 
 def test_no_key_resolved_is_a_loud_skip_and_never_a_tick(tmp_path):
@@ -978,6 +1045,28 @@ def test_a_subtitle_extension_is_rejected_even_when_the_file_is_empty(tmp_path, 
     d = dist_with(tmp_path, "episode 01" + ext, b"")
     got = red(scan.scan_content(d), "no_subtitle_extension")
     assert ext in got.saw, got.saw
+
+
+def test_16z_D6_a_gzipped_subtitle_keeps_its_name_so_the_extension_claim_sees_it(tmp_path):
+    u"""Z-D6: a gunzipped member was labelled `…!(gunzipped)`, so a stripped `.srt.gz` --
+    no cue timings left for a detector -- passed every content claim."""
+    import gzip as _gzip
+    d = dist_with(tmp_path, "episode01.ja.srt.gz",
+                  _gzip.compress(b"stripped body, no cue timings\n" * 50))
+    got = red(scan.scan_content(d), "no_subtitle_extension")
+    assert u"episode01.ja.srt.gz!episode01.ja.srt" in got.saw, got.saw
+
+
+def test_16z_D7_a_corrupt_deflate_stream_is_a_fault_not_a_crash(tmp_path):
+    u"""Z-D7: a gzip whose deflate stream is corrupt raised `zlib.error` out of the scan --
+    still no pass, but an uncaught traceback instead of the one-line Fault every other
+    unreadable archive gives."""
+    import gzip as _gzip
+    good = _gzip.compress(b"x" * 5000)
+    d = dist_with(tmp_path, "a.gz", good[:10] + b"\xff" * 20 + good[30:])
+    with pytest.raises(claims.Fault) as err:
+        list(scan.artifacts(d))
+    assert u"a.gz" in str(err.value), str(err.value)
 
 
 def test_the_subtitle_extension_list_is_the_one_archives_extracts():

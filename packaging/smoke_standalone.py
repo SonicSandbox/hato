@@ -47,6 +47,11 @@ guard out here.
                                                 and its SPLASH seen on screen,
                                                 composed, and gone as the new
                                                 window came
+  12. ⭐ LAYER 16 (16m): the bundled         -- each silent when missing: no
+      anime-relations list is READ, the         rules is a run that places less
+      `pairings` verb answers, a run hands      and exits 0; and Go back must
+      a kept file to a stub Surasura, and       take both new keys away
+      Go back drops the two new keys
 """
 from __future__ import print_function
 
@@ -264,6 +269,286 @@ def _taken_out(cli, env, store):
           u"placer %s · tsubasa %s" % (placer.get(u"state"), engine.get(u"text")))
 
 
+#: ⭐ 16m -- Frieren season 2, AniList 182255: the bundled list's rule is
+#: `52991|46474|154587:29-38 -> 59978|49240|182255:1-10!`, so a release numbered
+#: on from season 1 (Haruhana's 29, 30 ...) is season 2's 1, 2 ... at +28.
+_FRIEREN_S2_ANILIST = 182255
+_FRIEREN_SHIFT = 28
+
+
+def _own_store(env, where):
+    u"""`env` with its OWN store, config and tools folder under `where` (made).
+    ⛔ As `child_env`: nothing the row runs may touch another row's store -- or the
+    person's, or Surasura's real tools folder."""
+    here = dict(env)
+    os.makedirs(os.path.join(where, u"store"))
+    here["HATO_CACHE"] = os.path.join(where, u"store")
+    here["HATO_CONFIG"] = os.path.join(where, u"config.toml")
+    here["HOUSEKI_TOOLS_DIR"] = os.path.join(where, u"houseki-tools")
+    return here
+
+
+def _ndjson(text):
+    u"""stdout's JSON lines, in order; anything else dropped. -> [dict]"""
+    out = []
+    for line in (text or u"").splitlines():
+        try:
+            found = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(found, dict):
+            out.append(found)
+    return out
+
+
+def _relations(cli, env, store, root):
+    u"""⭐ 16m (LAYER 16, 16i/16j) -- THE BUILT BYTES READ THE BUNDLED ANIME-RELATIONS
+    LIST. 🚨 Its absence is SILENT: `relations.load()` with no file is a list of no
+    rules, so Haruhana's absolute numbers simply stop being placed and every run exits
+    0. The 1.1.0 spec first shipped without `data/*.txt` -- the wheel had it, every
+    suite was green. So: the file is in the bundle, byte for byte the source's, and the
+    frozen `hato-cli align --explain --anilist 182255` over three S2 videos and
+    Haruhana's files SAYS the list stated +28 -- and without `--anilist` does not (the
+    two arms differ only by the flag). ⚠ A fresh HATO_CACHE and HATO_NO_NETWORK: no
+    cached copy to stand in for the bundled one, and no fetch of a newer one."""
+    bundled = os.path.join(root, u"hato", u"data", u"anime-relations.txt")
+    source = os.path.join(_ROOT, u"hato", u"data", u"anime-relations.txt")
+    same = False
+    if os.path.isfile(bundled) and os.path.isfile(source):
+        with open(bundled, "rb") as a, open(source, "rb") as b:
+            same = a.read() == b.read()
+    check(u"bundled: hato/data/anime-relations.txt", same,
+          u"%d bytes, the source's own" % os.path.getsize(bundled) if same
+          else u"differs from the source's" if os.path.isfile(bundled)
+          else u"MISSING -- see hato.spec, HATO_DATA (16m)")
+    where = os.path.join(store, u"relations")
+    here = _own_store(env, where)
+    videos = os.path.join(where, u"videos")
+    os.makedirs(videos)
+    for number in (5, 6, 7):
+        with open(os.path.join(videos, u"[SubsPlease] Sousou no Frieren S2 - %02d (1080p) "
+                                        u"[ABCD1234].mkv" % number), "wb"):
+            pass
+    # ⚠ The bundle carries no tests/fixtures: the row writes the list it needs, read
+    # from the repository's recorded entry 11446 (Haruhana's files only, as 16i's check).
+    with open(os.path.join(_ROOT, u"tests", u"fixtures", u"api", u"entries_11446_files.json"),
+              encoding="utf-8") as handle:
+        haruhana = [f for f in json.load(handle) if f[u"name"].startswith(u"[Haruhana]")]
+    listed = os.path.join(where, u"haruhana.json")
+    with open(listed, "w", encoding="utf-8") as handle:
+        json.dump(haruhana, handle, ensure_ascii=False)
+    base = [cli, u"align", u"--explain", videos, u"11446", u"--files", listed]
+    code, out, err = run(base + [u"--anilist", str(_FRIEREN_S2_ANILIST)], here, timeout=180)
+    head = (out or u"").strip().splitlines()[0] if (out or u"").strip() else u""
+    stated = u"anime-relations states offset +%d" % _FRIEREN_SHIFT
+    check(u"relations: the frozen align reads the bundled list",
+          code == 0 and len(haruhana) > 0 and u"AniList %d" % _FRIEREN_S2_ANILIST in head
+          and u"29-38 are its own 1-10" in head and stated in out,
+          u"%d Haruhana file(s) · %s" % (len(haruhana), u"says \"%s\"" % stated
+                                         if code == 0 and stated in out
+                                         else u"exit %d :: %s" % (code, (head or err or out)[-200:])))
+    code, out, err = run(base, here, timeout=180)
+    check(u"relations: without --anilist nothing is stated (the control)",
+          code == 0 and u"anime-relations not asked" in out and u"states offset" not in out,
+          u"exit %d%s" % (code, u"" if code == 0 else u" :: " + (err or out)[-160:]))
+
+
+def _pairings(cli, env, store):
+    u"""⭐ 16m (LAYER 16, P12/P19) -- `hato-cli pairings --json`, the verb Surasura
+    calls, through the FROZEN bytes over a store the row seeds itself: the `pairings`
+    and `meta` tables in `hato/state.py`'s own words (`_PAIRINGS_SCHEMA`, read from the
+    source -- data, as `cli.COMMANDS` is -- never a second copy here), one REGISTERED
+    pairing and one drop still WAITING (no `library_path`: Surasura cannot find it, so
+    it is not a line). NDJSON, ASCII on the wire (a frozen child's stdout encoding is
+    not ours to trust), the result line last."""
+    import sqlite3
+    from hato.state import _PAIRINGS_SCHEMA
+    where = os.path.join(store, u"pairings")
+    here = _own_store(env, where)
+    title = u"葬送のフリーレン"
+
+    def record(key, library):
+        return {"schema": 1, "content_key": key, "producer": "hato",
+                "producer_version": "1.1.0", "language": "ja",
+                "video_path": u"D:\\Anime\\Frieren\\%s.mkv" % key, "video_size": 1024,
+                "subtitle_path": u"D:\\Anime\\Frieren\\%s.ja.srt" % key,
+                "library_path": library, "subtitle_sha256": "0" * 64,
+                "verdict": "timed", "untimed_tier": None, "picked_by": "hato",
+                "timing": None, "show": {"title": title, "season": 2, "episode": 5,
+                                         "movie": False},
+                "jimaku_entry_id": 11446, "anilist_id": _FRIEREN_S2_ANILIST,
+                "tmdb_id": None, "subtitle_source": {"provider": "jimaku",
+                                                     "file_name": u"%s.ja.srt" % key},
+                "paired_at": "2026-10-30T09:00:00Z"}
+
+    canonical = lambda rec: json.dumps(rec, ensure_ascii=False, sort_keys=True,  # noqa: E731
+                                       separators=(",", ":"))
+    conn = sqlite3.connect(os.path.join(here["HATO_CACHE"], u"state.db"))
+    try:
+        for statement in _PAIRINGS_SCHEMA:
+            conn.execute(statement)
+        rows = (
+            (u"v1-16m-registered", canonical(record(u"v1-16m-registered",
+                                                    u"E:\\Surasura\\data\\ja\\HighPriority"
+                                                    u"\\Hato\\Frieren\\05.ja.srt")),
+             u"registered", 7, u"2026-10-30T09:00:01Z", u"new"),
+            (u"v1-16m-waiting", canonical(record(u"v1-16m-waiting", None)),
+             u"drop-waiting", None, None, None),
+        )
+        for key, rec, state, file_id, at, last in rows:
+            conn.execute("INSERT INTO pairings (content_key, language, record, state, "
+                         "file_id, registered_at, last_code, gate, written_at) "
+                         "VALUES (?, 'ja', ?, ?, ?, ?, ?, NULL, '2026-10-30T09:00:01Z')",
+                         (key, rec, state, file_id, at, last))
+        conn.execute("INSERT INTO meta (key, value) VALUES ('complete_since', "
+                     "'2026-10-30T08:00:00Z')")
+        conn.commit()
+    finally:
+        conn.close()
+    proc_code, raw, err = None, b"", u""
+    try:
+        proc = subprocess.Popen([cli, u"pairings", u"--json"], env=here,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        raw, rawerr = proc.communicate(timeout=120)
+        proc_code, err = proc.returncode, (rawerr or b"").decode("utf-8", "replace")
+    except Exception as exc:                              # noqa: BLE001 -- a check reports
+        err = u"%s" % exc
+    ascii_only = all(byte < 128 for byte in bytearray(raw or b""))
+    said = _ndjson((raw or b"").decode("utf-8", "replace"))
+    lines = [s for s in said if s.get(u"type") == u"pairing"]
+    last = said[-1] if said else {}
+    one = lines[0] if len(lines) == 1 else {}
+    check(u"pairings: the frozen verb answers Surasura",
+          proc_code == 0 and ascii_only and len(lines) == 1
+          and one.get(u"content_key") == u"v1-16m-registered"
+          and one.get(u"registered") == {u"file_id": 7, u"at": u"2026-10-30T09:00:01Z"}
+          and (one.get(u"show") or {}).get(u"title") == title
+          and last.get(u"type") == u"result" and last.get(u"ok") is True
+          and last.get(u"count") == 1 and last.get(u"complete_since") == u"2026-10-30T08:00:00Z",
+          u"%d pairing line(s), the waiting drop left out · %s" % (len(lines), json.dumps(last))
+          if proc_code == 0 else u"exit %s :: %s" % (proc_code, (err or u"")[-200:]))
+    code, out, err = run([cli, u"pairings", u"--json", u"--lang", u"ja",
+                          u"--since", u"2026-10-31T00:00:00Z"], here, timeout=120)
+    after = _ndjson(out)
+    check(u"pairings: --since leaves out what came before",
+          code == 0 and after and after[-1].get(u"count") == 0
+          and not [s for s in after if s.get(u"type") == u"pairing"],
+          u"exit %d · %s" % (code, json.dumps(after[-1]) if after else (err or out)[-160:]))
+
+
+#: ⭐ 16m -- the stand-in `surasura-cli`'s answer (hato-shapes-v2.md §4, as
+#: tests/_surasura.py ANSWERS["registered"]). ⚠ `ok: true` is what hato reads as
+#: success (`connect.Handoff._register`): without it the answer is a retry.
+_SURASURA_SAYS = {"type": "result", "contract": 1, "ok": True, "file_id": 1,
+                  "landed": "arrivals", "pairing": "new"}
+
+
+def _handoff(bundle, cli, env, store):
+    u"""⭐ 16m (LAYER 16, 16d/16e) -- A FROZEN RUN HANDS ONE KEPT FILE TO SURASURA.
+
+    A temp tools folder holding a `surasura.json` (Surasura 3.0's shape: `register`
+    offered, a drop folder whose PARENT exists) that names a STUB `surasura-cli.cmd`
+    -- this interpreter running a script the row writes, which keeps its argv and
+    stdin and answers `_SURASURA_SAYS`, exit 0. The kept file is the video's own track
+    taken out (14z's road: no request, no key spent), so the record must say
+    `extracted`, never `timed`. Then: the stub was handed the record on STDIN (⛔ never
+    argv), the copy sits in the drop folder in a sub-folder of its own and is the
+    subtitle's bytes, the frozen hato advertised ITSELF in `hato.json`, and the frozen
+    `pairings` reads back the file id Surasura gave.
+
+    ⛔ Every check of the hand-off in `tests/` imports hato from SOURCE, where
+    `connect.advertised()` takes its other branch."""
+    if not IS_WINDOWS:
+        return
+    if os.path.join(_ROOT, u"tests") not in sys.path:
+        sys.path.insert(0, os.path.join(_ROOT, u"tests"))
+    import _media                                      # the suite's real-video builder
+    where = os.path.join(store, u"connect")
+    here = _own_store(env, where)
+    tools = here["HOUSEKI_TOOLS_DIR"]
+    os.makedirs(tools)
+    priority = os.path.join(where, u"Surasura", u"data", u"ja", u"HighPriority")
+    os.makedirs(priority)                  # ⚠ the library is THERE: its parent exists
+    drop = os.path.join(priority, u"Hato")
+    heard = os.path.join(where, u"surasura-heard.json")
+    script = os.path.join(where, u"surasura_stub.py")
+    with open(script, "w", encoding="utf-8") as handle:
+        handle.write(u"import json, sys\n"
+                     u"data = sys.stdin.buffer.read()\n"
+                     u"with open(%r, 'w', encoding='utf-8') as fh:\n"
+                     u"    json.dump({'argv': sys.argv[1:], 'stdin': data.decode('utf-8', "
+                     u"'replace')}, fh)\n"
+                     u"sys.stdout.write(%r + '\\n')\n" % (heard, json.dumps(_SURASURA_SAYS)))
+    stub = os.path.join(where, u"surasura-cli.cmd")
+    with open(stub, "wb") as handle:
+        handle.write((u'@echo off\r\n"%s" -I "%s" %%*\r\n' % (sys.executable, script))
+                     .encode("mbcs"))
+    with open(os.path.join(tools, u"surasura.json"), "w", encoding="utf-8") as handle:
+        json.dump({"schema": 1, "tool": "surasura", "name": "Surasura", "version": "2.9.0.6",
+                   "cli": stub, "app": None, "contract": 1, "verbs": ["status", "register"],
+                   "drop_folders": {"ja": drop}, "updated": "2026-10-29T22:00:00Z"},
+                  handle, ensure_ascii=False)
+    media = os.path.join(where, u"media-root")
+    os.makedirs(media)
+    built = _media.build(media, stem=u"frieren S2 - 02", count=12)
+    folder = os.path.dirname(str(built.video))
+    wrote = os.path.join(folder, u"frieren S2 - 02.ja.srt")
+    code, out, err = run([cli, u"config", u"--set", u"skip_embedded=true",
+                          u"--set", u"extract_embedded=true", u"--json"], here)
+    if not check(u"handoff: the choice is written", code == 0,
+                 u"exit %d%s" % (code, u"" if code == 0 else u" :: " + (err or out)[-160:])):
+        return
+    code, out, err = run([cli, folder, u"--json"], here, timeout=180)
+    check(u"handoff: the frozen run keeps a file", code == 0 and os.path.isfile(wrote),
+          u"exit %d%s" % (code, u"" if code == 0 and os.path.isfile(wrote)
+                          else u" :: " + (err or out)[-200:]))
+    said = {}
+    try:
+        with open(heard, encoding="utf-8") as handle:
+            said = json.load(handle)
+        rec = json.loads(said.get(u"stdin") or u"null") or {}
+    except (OSError, ValueError):
+        rec = {}
+    argv = said.get(u"argv") or []
+    check(u"handoff: surasura-cli is handed the record on stdin",
+          argv[:6] == [u"register", u"--lang", u"ja", u"--pairing", u"-", u"--wait"]
+          and rec.get(u"verdict") == u"extracted" and rec.get(u"language") == u"ja"
+          and (rec.get(u"subtitle_source") or {}).get(u"provider") == u"video-track"
+          and len(argv) == 7,                # ⛔ nothing of the record on the command line
+          u"argv %s · verdict %s · from %s" % (argv, rec.get(u"verdict"),
+                                              (rec.get(u"subtitle_source") or {}).get(u"provider"))
+          if said else u"the stub heard nothing :: " + (err or out)[-200:])
+    copy = rec.get(u"library_path") or u""
+    same = False
+    if os.path.isfile(copy) and os.path.isfile(wrote):
+        with open(copy, "rb") as a, open(wrote, "rb") as b:
+            same = a.read() == b.read()
+    check(u"handoff: the copy is in Surasura's folder, a sub-folder per show",
+          same and os.path.normcase(os.path.dirname(os.path.dirname(copy)))
+          == os.path.normcase(drop),
+          u"%s" % (os.path.relpath(copy, drop) if copy else u"no library_path"))
+    entry = {}
+    try:
+        with open(os.path.join(tools, u"hato.json"), encoding="utf-8") as handle:
+            entry = json.load(handle)
+    except (OSError, ValueError):
+        pass
+    check(u"handoff: the frozen hato names itself in hato.json",
+          os.path.normcase(entry.get(u"cli") or u"") == os.path.normcase(os.path.abspath(cli))
+          and entry.get(u"verbs") == [u"pairings"],
+          u"cli %s · verbs %s" % (entry.get(u"cli"), entry.get(u"verbs")))
+    code, out, err = run([cli, u"pairings", u"--json"], here, timeout=120)
+    back = _ndjson(out)
+    lines = [s for s in back if s.get(u"type") == u"pairing"]
+    check(u"handoff: the frozen pairings reads back Surasura's file id",
+          code == 0 and len(lines) == 1 and lines[0].get(u"content_key") == rec.get(u"content_key")
+          and (lines[0].get(u"registered") or {}).get(u"file_id") == 1
+          and back[-1].get(u"type") == u"result" and back[-1].get(u"ok") is True
+          and back[-1].get(u"count") == 1,
+          u"exit %d · %d line(s) · %s" % (code, len(lines),
+                                          json.dumps(back[-1]) if back else (err or out)[-160:]))
+
+
 def _log_blocks(path):
     u"""-> how many RUN blocks the log holds. ⚠ A run's header is `=== hato
     <timestamp> ===`; the watcher's own complaints are `=== hato watcher ...`,
@@ -339,6 +624,16 @@ def child_env(store):
     # (`paths.py`), so this makes the run behave like a stranger's wherever
     # the bundle happens to live.
     env["HATO_KEYFILE"] = os.path.join(store, "absent-key.txt")
+    # 🚨 16m -- AND SURASURA'S TOOLS FOLDER, which no child pinned before LAYER 16.
+    # `connect.tools_dir()` falls through to the REAL `%LOCALAPPDATA%\Houseki\tools`:
+    # on a machine with Surasura installed every frozen run here -- 5d's kept track
+    # first -- would have rewritten the person's `hato.json` to name a temp bundle, and
+    # dropped a file into their library and REGISTERED it. ⭐ An empty folder of the
+    # store's own: Surasura is absent unless a row puts it there. ⛔ And never the
+    # developer's `HATO_TOOLS_CLI` (the frozen bytes ignore it; a row's source import
+    # must too).
+    env["HOUSEKI_TOOLS_DIR"] = os.path.join(store, "houseki-tools")
+    env.pop("HATO_TOOLS_CLI", None)
     return env
 
 
@@ -603,6 +898,12 @@ def _drive(bundle, cli, gui, watch, env, store):
 
     # -- 5d · ⭐ 14z (C-5) -- A TRACK TAKEN OUT, BY THE FROZEN BYTES --------
     _taken_out(cli, keyed, store)
+
+    # -- 5e · ⭐ LAYER 16 (16m) -- THE LIST, THE VERB SURASURA CALLS, THE HAND-OFF
+    # Each in a store, config and tools folder of its own (`_own_store`).
+    _relations(cli, keyed, store, root)
+    _pairings(cli, keyed, store)
+    _handoff(bundle, cli, keyed, store)
 
     # -- 6 · the WINDOW is visible, not merely alive ----------------------
     window_mb = _window(gui, env)
@@ -1159,9 +1460,27 @@ def _going_back(install, root, was, store, swap):
     if u"untimed" in _config.unknown_to(was):
         choose = [u"--set", u"untimed=same_provider"]
         took, becomes = (lambda cfg: cfg.untimed == u"same_provider"), u"becomes “Skip it”"
-    else:
+    elif u"extract_embedded" in _config.unknown_to(was):
         choose = [u"--set", u"skip_embedded=true", u"--set", u"extract_embedded=true"]
         took, becomes = (lambda cfg: cfg.extract_embedded is True), u"Leave them there"
+    else:
+        # ⚠ 16z (2026-11-01, the first rehearsal against the RELEASED 1.0.9): 1.0.9 knows both keys
+        # above, so Go back rightly changed nothing for `extract_embedded` and this arm waited for
+        # words that never come -- the 2026-09-26 trap again (the arm must ask `unknown_to`, never
+        # assume a key). Against 1.0.9 the keys it never heard of are LAYER 16's, chosen below.
+        choose, took, becomes = [], (lambda cfg: True), u"goes —"
+    # ⭐ 16m -- LAYER 16's two keys, SAVED: `surasura_connect = "off"` (the only value
+    # ever written) and `favourite_groups = ["Haruhana"]` (away from its default, so
+    # it IS written). Every released hato refuses both (`NEWER_THAN_1_0_9`), so Go back
+    # must take both away -- or the kept tray refuses config.toml and the new version
+    # is put back, exactly as 1.0.7 did with `extract_embedded`.
+    connect_keys = [k for k in (u"surasura_connect", u"favourite_groups")
+                    if k in _config.unknown_to(was)]
+    if connect_keys:
+        choose += [u"--set", u"surasura_connect=off", u"--set", u"favourite_groups=Haruhana"]
+        chose = took
+        took = (lambda cfg: chose(cfg) and cfg.surasura_connect == u"off"
+                and list(cfg.favourite_groups) == [u"Haruhana"])
     code, out, err = run([cli, u"config"] + choose + [u"--json"], here)
     with open(os.path.join(store, u"config.toml"), encoding="utf-8") as handle:
         saved = handle.read()
@@ -1187,6 +1506,13 @@ def _going_back(install, root, was, store, swap):
     check(u"rehearsal: going back says what it changes",
           code == 0 and any(becomes in c for c in applying.get(u"changed") or ()),
           u"exit %d · %s" % (code, applying.get(u"changed") or (err or out)[-200:]))
+    if connect_keys:
+        # the words are `config._GOING_BACK`'s, as Settings names the two choices
+        check(u"rehearsal: going back says both Layer 16 settings go",
+              all(any(words in c for c in applying.get(u"changed") or ())
+                  for words in (u"Hand new subtitles to Surasura",
+                                u"Favourite release groups")),
+              u"%s" % (applying.get(u"changed") or u"nothing said"))
     done, waited = {}, 0.0
     while waited < 240.0:
         try:
@@ -1207,6 +1533,21 @@ def _going_back(install, root, was, store, swap):
     code, out, err = run([cli, u"config", u"--show"], here)
     check(u"rehearsal: the kept version reads its settings after Go back", code == 0,
           u"exit %d%s" % (code, u"" if code == 0 else u" :: " + (err or out)[-200:]))
+    if connect_keys:
+        # ⚠ READ AS TEXT, and that is the point: the kept version's parser is the judge,
+        # and a key it never heard of is refused wherever it sits -- at any value.
+        try:
+            with open(os.path.join(store, u"config.toml"), encoding="utf-8") as handle:
+                kept = handle.read()
+        except OSError as exc:
+            kept = None
+            why = u"%s" % exc
+        left = sorted(set(re.findall(r"(?m)^\s*(surasura_connect|favourite_groups)\s*=",
+                                     kept or u"")))
+        check(u"rehearsal: the kept version's config.toml carries neither Layer 16 key",
+              kept is not None and not left,
+              u"neither key (%d lines)" % len(kept.splitlines()) if kept is not None and not left
+              else u"still there: %s" % u", ".join(left) if kept is not None else why)
 
 
 def _rehearsal(bundle, cli):

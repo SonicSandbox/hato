@@ -63,7 +63,9 @@ import importlib
 import io
 import os
 import re
+import runpy
 import sys
+import types
 
 import pytest
 from packaging.requirements import Requirement
@@ -632,8 +634,9 @@ def test_the_engine_is_tsubasa_sync_and_never_the_unrelated_tsubasa():
     u"""`tsubasa` on PyPI is an unrelated AI-personas framework. Declared as
     written in the spec's first draft, hato would have installed somebody
     else's package and failed on its first `import tsubasa` -- or worse, not
-    failed. The floor is 0.1.10: the first release that places a subtitle beside a
-    video untimed (LAYER 15); 0.1.9 the first that takes a subtitle track out of a
+    failed. The floor is 0.1.11: the first release reading BOTH numbers of a name
+    like `S02E06.第34話` (LAYER 16, the Frieren fix v2); 0.1.10 the first that places
+    a subtitle beside a video untimed (LAYER 15); 0.1.9 the first that takes a subtitle track out of a
     video and writes it (RUNBOOK 14c); 0.1.8 the first reading `.jp.` as Japanese,
     which the present-check relies on (RUNBOOK 9c)."""
     cfg = _pyproject()
@@ -645,12 +648,20 @@ def test_the_engine_is_tsubasa_sync_and_never_the_unrelated_tsubasa():
         % (len(engine), [str(r) for r, _ in reqs]))
     req = engine[0]
 
-    # 🚨 THE FLOOR IS 0.1.10 (LAYER 15, 2026-09-26), A CAPABILITY AGAIN: the first
-    # release that places a subtitle beside a video untimed (`place_subtitle`),
-    # which the untimed road has nothing under without. ⚠ The reasons the older
-    # floors mattered are kept below, so raising it did not delete them.
-    assert req.specifier.contains(u"0.1.10", prereleases=True), (
-        u"the engine requirement is %r, which does not admit 0.1.10" % str(req))
+    # 🚨 THE FLOOR IS 0.1.11 (LAYER 16, 16i), A CAPABILITY AGAIN: the first release
+    # whose `Item.dual_numbering` reads `S02E06.第34話` as season 2 episode 6 AND 34,
+    # the names' bridge the Frieren fix v2 places a re-numbered release by. Below it
+    # hato still runs (names.py reads it with getattr) but places as 1.0.9 did.
+    # ⚠ The reasons the older floors mattered are kept below, so raising it did not
+    # delete them.
+    assert req.specifier.contains(u"0.1.11", prereleases=True), (
+        u"the engine requirement is %r, which does not admit 0.1.11" % str(req))
+    assert not req.specifier.contains(u"0.1.10", prereleases=True), (
+        u"the engine requirement is %r, which still admits 0.1.10 -- it reads one number "
+        u"of `S02E06.第34話`, so a release's own names never state where its season "
+        u"starts and Frieren S2 31-33 waits or takes the wrong file (LAYER 16)" % str(req))
+    # ⭐ 0.1.10 (LAYER 15, 2026-09-26): the first release that places a subtitle beside a
+    # video untimed (`place_subtitle`), which the untimed road has nothing under without.
     assert not req.specifier.contains(u"0.1.9", prereleases=True), (
         u"the engine requirement is %r, which still admits 0.1.9 -- it cannot place a "
         u"subtitle it cannot time, so the untimed road would place nothing (LAYER 15)"
@@ -1441,6 +1452,102 @@ def test_the_swapper_carries_the_splashs_picture_of_hato():
     assert marks, u"the control: hato/data holds no marks for the pattern to find"
 
 
+def _spec_includes(name):
+    u"""The `includes=[...]` globs of the `collect_data_files('hato', ...)` assigned to
+    `name` in the spec. -> [str]"""
+    call = _call_assigned(name)
+    keywords = dict((k.arg, k.value) for k in call.keywords)
+    assert ast.unparse(call.func) == u"collect_data_files" and \
+        ast.literal_eval(call.args[0]) == u"hato", ast.unparse(call)
+    return list(ast.literal_eval(keywords[u"includes"]))
+
+
+def test_16m_the_frozen_build_carries_every_data_glob_the_wheel_carries():
+    u"""🚨 16m -- the wheel and the freeze ship the SAME `hato/data`. pyproject's
+    package-data gained `data/*.txt` (the anime-relations list, LAYER 16) and the
+    spec's `HATO_DATA` stayed icons-only: every suite green, and a frozen hato read
+    NO relations -- `relations.load()` finds no file and answers no rules, silently.
+    ⭐ Derived from pyproject, never a second list: each `data/` glob it ships must be
+    one the spec collects, and every file in `hato/data` must be matched by one."""
+    shipped = [g for g in _package_data_globs(_pyproject()).get(u"hato", ())
+               if g.startswith(u"data/")]
+    assert u"data/*.txt" in shipped, u"the control: pyproject ships the relations list"
+    frozen = _spec_includes(u"HATO_DATA")
+    assert set(shipped) <= set(frozen), (
+        u"pyproject ships %s and the spec's HATO_DATA collects only %s -- the frozen "
+        u"build goes out without %s" % (shipped, frozen, sorted(set(shipped) - set(frozen))))
+    data = os.path.join(PKG, u"data")
+    loose = sorted(n for n in os.listdir(data)
+                   if not any(fnmatch.fnmatch(u"data/" + n, g) for g in frozen))
+    assert not loose, u"in hato/data and in no HATO_DATA glob: %s" % loose
+    assert os.path.isfile(os.path.join(data, u"anime-relations.txt")), \
+        u"the control: the list the glob is for is there"
+
+
+def _smoke():
+    u"""`packaging/smoke_standalone.py`, loaded fresh (its `_results` empty)."""
+    import importlib.util
+    loader = importlib.util.spec_from_file_location(
+        u"hato_smoke_standalone_16m", os.path.join(PACKAGING_DIR, u"smoke_standalone.py"))
+    module = importlib.util.module_from_spec(loader)
+    loader.loader.exec_module(module)
+    return module
+
+
+def test_16m_every_smoke_child_has_a_tools_folder_of_its_own(tmp_path, monkeypatch):
+    u"""🚨 16m -- the smoke's children never reach Surasura's REAL tools folder: unpinned,
+    a frozen run there rewrites the person's hato.json and hands their Surasura a file."""
+    monkeypatch.setenv(u"HATO_TOOLS_CLI", u"C:\\somewhere\\hato-cli.cmd")
+    env = _smoke().child_env(str(tmp_path))
+    assert os.path.dirname(env[u"HOUSEKI_TOOLS_DIR"]) == str(tmp_path), env[u"HOUSEKI_TOOLS_DIR"]
+    assert u"HATO_TOOLS_CLI" not in env
+
+
+def _source_cli(tmp_path, monkeypatch):
+    u"""A `hato-cli.cmd` that runs THIS checkout's `hato.cli` -- so the smoke's new rows
+    can be driven in seconds before any freeze. -> (smoke module, cli, env)."""
+    cli = tmp_path / u"bin" / u"hato-cli.cmd"
+    cli.parent.mkdir()
+    cli.write_bytes((u'@echo off\r\n"%s" -m hato.cli %%*\r\n' % sys.executable).encode("mbcs"))
+    monkeypatch.setenv(u"PYTHONPATH", ROOT)
+    smoke = _smoke()
+    store = tmp_path / u"store"
+    store.mkdir()
+    env = smoke.child_env(str(store))
+    env[u"HATO_JIMAKU_KEY"] = u"not-a-real-key"
+    return smoke, str(cli), env, str(store)
+
+
+def _failed(smoke):
+    return [(n, d) for n, ok, d in smoke._results if not ok]
+
+
+@pytest.mark.skipif(not sys.platform.startswith(u"win"), reason=u"a .cmd stand-in")
+def test_16m_the_smokes_relations_and_pairings_rows_hold_against_the_source(tmp_path,
+                                                                            monkeypatch):
+    u"""⭐ 16m -- the rows the freeze owes, driven through THIS checkout's CLI: what they
+    seed and what they read is right, so a red on the built bytes is the bytes."""
+    smoke, cli, env, store = _source_cli(tmp_path, monkeypatch)
+    smoke._relations(cli, env, store, ROOT)
+    smoke._pairings(cli, env, store)
+    names = [n for n, _ok, _d in smoke._results]
+    assert len(names) == 5, names
+    assert not _failed(smoke), _failed(smoke)
+
+
+@pytest.mark.skipif(not sys.platform.startswith(u"win"), reason=u"a .cmd stand-in")
+def test_16m_the_smokes_handoff_row_holds_against_the_source(tmp_path, monkeypatch):
+    u"""⭐ 16m -- the hand-off row through THIS checkout's CLI. ⚠ From source
+    `connect.advertised()` names HATO_TOOLS_CLI (A7) where the frozen bytes name
+    themselves, so the stand-in is advertised that way here."""
+    smoke, cli, env, store = _source_cli(tmp_path, monkeypatch)
+    env[u"HATO_TOOLS_CLI"] = cli
+    smoke._handoff(os.path.dirname(cli), cli, env, store)
+    names = [n for n, _ok, _d in smoke._results]
+    assert len(names) == 6, names
+    assert not _failed(smoke), _failed(smoke)
+
+
 def test_the_swappers_entry_imports_nothing_of_hato_but_the_swap_and_its_splash():
     with io.open(os.path.join(PACKAGING_DIR, u"entry_update.py"), encoding=u"utf-8") as fh:
         tree = ast.parse(fh.read())
@@ -1453,6 +1560,86 @@ def test_the_swappers_entry_imports_nothing_of_hato_but_the_swap_and_its_splash(
     assert u"hato.swap" in imported, u"the control: the walk found the swapper"
     ours = sorted(n for n in imported if n.startswith(u"hato"))
     assert set(ours) <= {u"hato.swap", u"hato.splash"}, ours
+
+
+# ===========================================================================
+# P1 (16l) -- the frozen entry points give a None stream a devnull
+# ===========================================================================
+
+ENTRY_POINTS = [(u"entry_gui.py", u"hato.gui"), (u"entry_watch.py", u"hato.watch")]
+
+
+def _run_entry(monkeypatch, filename, module_name):
+    u"""Run a frozen entry script as `__main__`, its `main` stubbed to record the
+    streams it sees when it is called. -> dict of the seen streams"""
+    seen = {}
+
+    def main():
+        seen[u"stdout"] = sys.stdout
+        seen[u"stderr"] = sys.stderr
+        return 0
+
+    stub = types.ModuleType(module_name)
+    stub.main = main
+    monkeypatch.setitem(sys.modules, module_name, stub)
+    path = os.path.join(ROOT, u"packaging", filename)
+    try:
+        runpy.run_path(path, run_name=u"__main__")
+    except SystemExit as exc:
+        assert exc.code == 0, exc.code
+    return seen
+
+
+@pytest.mark.parametrize(u"filename, module_name", ENTRY_POINTS,
+                         ids=[name for name, _ in ENTRY_POINTS])
+def test_16l_p1_entry_points_give_a_none_stream_devnull_and_leave_a_real_one_alone(
+        filename, module_name, monkeypatch):
+    u"""P1 rule 1. Double-clicked, `sys.stdout` and `sys.stderr` are None before
+    the entry does anything. A None stream must become `open(os.devnull, "w")`
+    before the entry's main runs; a stream that exists must be the same object."""
+    real_err = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", real_err)
+    seen = _run_entry(monkeypatch, filename, module_name)
+    out = seen.get(u"stdout")
+    try:
+        assert out is not None, (
+            u"RULE 1 BROKEN: %s called main with sys.stdout None; it must first "
+            u"put open(os.devnull, 'w') in its place" % filename)
+        assert getattr(out, u"name", None) == os.devnull, (
+            u"RULE 1 BROKEN: %s replaced sys.stdout with %r, not the devnull"
+            % (filename, out))
+        out.write(u"x")                                  # a bare write must not raise
+        assert seen.get(u"stderr") is real_err, (
+            u"RULE 1 BROKEN: %s replaced a stream that exists (sys.stderr)"
+            % filename)
+    finally:
+        if out is not None and out is not sys.__stdout__:
+            out.close()
+
+
+@pytest.mark.parametrize(u"filename, module_name", ENTRY_POINTS,
+                         ids=[name for name, _ in ENTRY_POINTS])
+def test_16l_p1_entry_points_give_a_none_stderr_devnull_too(filename, module_name, monkeypatch):
+    u"""P1 rule 1, the mirror arm -- and the stream the crash WAS about: a bare
+    `sys.stderr.write` raised from inside the handler explaining a refusal. ⚠ Added
+    2026-10-31 by the proof queue: M16-88 (the stderr half taken out) SURVIVED, because
+    the check above only ever set STDOUT to None."""
+    real_out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", real_out)
+    monkeypatch.setattr(sys, "stderr", None)
+    seen = _run_entry(monkeypatch, filename, module_name)
+    err = seen.get(u"stderr")
+    try:
+        assert err is not None and getattr(err, u"name", None) == os.devnull, (
+            u"RULE 1 BROKEN: %s called main with sys.stderr %r; a None stderr must "
+            u"become open(os.devnull, 'w') first" % (filename, err))
+        err.write(u"x")                                  # a bare write must not raise
+        assert seen.get(u"stdout") is real_out, (
+            u"RULE 1 BROKEN: %s replaced a stream that exists (sys.stdout)" % filename)
+    finally:
+        if err is not None and err is not sys.__stderr__:
+            err.close()
 
 
 if __name__ == u"__main__":

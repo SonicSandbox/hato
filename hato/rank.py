@@ -18,6 +18,7 @@ FILTERS first -- a filter is not a rank, and nothing below can rescue a file it 
                           be told it is not (`hato/formats.py`)
 
 THE KEY, each part compared only when every part above it is equal:
+    0 known       a number the alignment KNOWS before a guessed one, whatever format
     1 format      ⭐ the PREFERRED family first -- `.ass` (with `.ssa`) unless the
                   person chose `.srt` (9a). With `.ass` preferred this is the
                   2026-09-17 ruling, above everything, "even if it has chinese":
@@ -25,6 +26,13 @@ THE KEY, each part compared only when every part above it is equal:
                   BY EXTENSION. ⚠ The extension is part of the key and not
                   decoration: without it a .vtt and a .sup shared one rank and
                   were ordered by SIZE, which part 6 says never happens.
+    1b favourite  ⭐ LAYER 16 (16k, fork 3): a FAVOURITE release group's file first
+                  (`favourite_groups`, NanakoRaws by default), in the order the
+                  person listed them -- AFTER the format (a favourite's `.srt` waits
+                  behind another group's `.ass`: the 2026-09-17 ruling stays on top),
+                  BEFORE the language (or NanakoRaws' untagged file still lost to
+                  Haruhana's `[JPN]` one -- the case Sonic named). Matched as Layer
+                  15's same provider (`untimed.provider`). Empty: 1.0.9's order.
     2 language    Japanese only, then untagged, then Japanese plus another language
     3 fit         range, overlap, literal, guess (hato/episodes.py QUALITIES)
     4 coverage    the larger share of its release that fitted -- partial fits only
@@ -61,7 +69,7 @@ LANGUAGE_ORDER = ("single-ja", "unknown", "multi")
 #: and the last one raises `IndexError`. Measured 2026-09-17 when `known` was
 #: inserted: four checks went red reading *".ass is tried before .ass"* and
 #: *"version 1 is tried before version 1"*. `rank()` now asserts the two agree.
-_KEY_PARTS = ("known", "format", "language", "fit", "coverage", "agreement", "version",
+_KEY_PARTS = ("known", "format", "favourite", "language", "fit", "coverage", "agreement", "version",
               "size", "seen", "name")
 
 _LANGUAGE_WORDS = {"single-ja": u"Japanese-only", "unknown": u"untagged",
@@ -131,17 +139,20 @@ def _language_rank(language):
 
 
 def rank(candidates, *, allow_ai=False, seen_groups=frozenset(),
-         prefer=formats.DEFAULT_PREFERENCE, fallback=True):
+         prefer=formats.DEFAULT_PREFERENCE, fallback=True, favourites=()):
     """-> Ranking. `candidates`: hato.episodes.Candidate for ONE video.
 
     `prefer` / `fallback` -- the person's format settings (9a). ⚠ The defaults
     here are 1.0.2's behaviour, every format ranked and none dropped; the RUN
     passes `config.toml`'s, whose fallback default is OFF.
+    `favourites` -- release group names, first tried first (16k). ⚠ Empty here
+    (1.0.9's order); the RUN passes `config.toml`'s, whose default is NanakoRaws.
     """
     ranking = Ranking()
     seen_names = set()
     kept = []
     order = formats.order(prefer)
+    places = _favourite_places(favourites)
     for cand in candidates:
         name = cand.file["name"]
         fmt, language, version, ai = _facts(name)
@@ -179,6 +190,8 @@ def rank(candidates, *, allow_ai=False, seen_groups=frozenset(),
                # known one: which episode a file IS outranks what format it is in.
                1 if cand.quality in ("guess", "position") else 0,
                _format_rank(fmt, order),
+               # ⭐ 16k -- a favourite group's file, after the format, before the language
+               places.get(_group_key(name), len(places)),
                _language_rank(language),
                QUALITIES.index(cand.quality),
                # ⚠ Coverage says how clean a PARTIAL fit is. ⛔ NOT for a `range`
@@ -207,16 +220,33 @@ def rank(candidates, *, allow_ai=False, seen_groups=frozenset(),
         if ai:
             r.reasons.append(u"AI-generated, and allowed by --allow-ai.")
         if i > 0:
-            r.reasons.append(u"Below #%d: %s" % (i, _why(kept[i - 1], r, prefer)))
+            r.reasons.append(u"Below #%d: %s" % (i, _why(kept[i - 1], r, prefer, len(places))))
         if i + 1 < len(kept):
-            r.reasons.append(u"Above #%d: %s" % (i + 2, _why(r, kept[i + 1], prefer)))
+            r.reasons.append(u"Above #%d: %s" % (i + 2, _why(r, kept[i + 1], prefer, len(places))))
         if len(kept) == 1:
             r.reasons.append(u"The only candidate.")
     ranking.ordered = kept
     return ranking
 
 
-def _why(upper, lower, prefer=formats.DEFAULT_PREFERENCE):
+def _group_key(name):
+    u"""The release group a file name opens with, folded -- Layer 15's *same provider*
+    rule, ONE copy (`untimed.provider`). -> str or None."""
+    from hato import untimed
+    return untimed.provider(name)
+
+
+def _favourite_places(favourites):
+    u"""[names] -> {folded group: its place}, the first named first."""
+    places = {}
+    for name in favourites or ():
+        key = _group_key(u"[%s]" % (u"%s" % name).strip().strip(u"[]").strip())
+        if key and key not in places:
+            places[key] = len(places)
+    return places
+
+
+def _why(upper, lower, prefer=formats.DEFAULT_PREFERENCE, favourites=0):
     """The sentence for the FIRST key part where `upper` beats `lower`."""
     part = next((i for i, (a, b) in enumerate(zip(upper.key, lower.key)) if a != b), len(_KEY_PARTS) - 1)
     uc, lc = upper.candidate, lower.candidate
@@ -234,6 +264,13 @@ def _why(upper, lower, prefer=formats.DEFAULT_PREFERENCE):
         if prefer != formats.DEFAULT_PREFERENCE:
             return u".%s is tried before .%s -- you prefer .%s (Settings)." % (ufmt, lfmt, prefer)
         return u".%s is tried before .%s (RULED 2026-09-17: .ass above every other format)." % (ufmt, lfmt)
+    if what == "favourite":
+        from hato import untimed
+        mine = untimed.provider_shown(uc.file["name"])
+        if lower.key[2] >= favourites:
+            return u"[%s] is a favourite group, tried first." % mine
+        return u"[%s] comes before [%s] in your favourite groups." % (
+            mine, untimed.provider_shown(lc.file["name"]))
     if what == "language":
         return u"%s is tried before %s, within .%s." % (_LANGUAGE_WORDS[ulang], _LANGUAGE_WORDS[llang], ufmt)
     if what == "fit":
@@ -267,6 +304,12 @@ def _bytes(cand):
 # explain
 # ---------------------------------------------------------------------------
 
+def _stated_words(who):
+    u"""LAYER 16: the line under a candidate whose offset was STATED, not fitted."""
+    from hato.episodes import STATED_BY
+    return u"Its offset is stated by %s (the Frieren fix v2), not fitted." % STATED_BY.get(who, who)
+
+
 def explain(ranking):
     """The `hato rank --explain` rendering: every candidate with its key and the
     reason for its place, then everything the filters removed and why."""
@@ -285,6 +328,9 @@ def explain(ranking):
         cells = [row[k].rjust(widths[k]) if k in right else row[k].ljust(widths[k]) for k in range(7)]
         out.append(u"  " + u"  ".join(cells) + u"  " + row[7])
         if i:
+            stated = getattr(ranking.ordered[i - 1].candidate, "stated", None)
+            if stated:
+                out.append(u"  " + u" " * (widths[0] + 2) + _stated_words(stated))
             for reason in ranking.ordered[i - 1].reasons:
                 out.append(u"  " + u" " * (widths[0] + 2) + reason)
     if ranking.excluded:

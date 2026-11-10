@@ -7,6 +7,7 @@ The working cache -- downloads in flight, refused candidates, extracted archives
     content_hash(data)     full sha256 of something small (a subtitle, an archive)
     file_hash(path)        the same, streamed from a file
     safe_name(name)        a jimaku filename Windows accepts, with its shape kept
+    name_budget(folder)    the longest name that keeps folder + name inside MAX_PATH
     Cache(root=None)       <root>/blobs/<h[:2]>/<h>/<name>, temp-plus-rename
 
 🚨 NEVER HASH A WHOLE VIDEO. Hashing a 1.4 GB mkv defeats the entire purpose of a
@@ -160,6 +161,26 @@ def _split_ext(name):
     return u".".join(parts[:i + 1]), u"." + u".".join(kept)
 
 
+def clean_name(name):
+    """-> `name` with safe_name's character rules applied and NOTHING cut: the
+    illegal nine as their twins, no control characters, no trailing dots or
+    spaces, a reserved device name prefixed. (names.py cuts its stubs itself:
+    safe_name's end cut would drop a name's numbers.)"""
+    out = []
+    for ch in name:
+        twin = WIN_TWINS.get(ch)
+        if twin is not None:
+            out.append(twin)
+        elif ord(ch) >= 32:
+            out.append(ch)
+    s = u"".join(out).rstrip(u" .")
+    if not s:
+        s = u"unnamed"
+    if _RESERVED.match(s.split(u".", 1)[0].rstrip(u" ")):
+        s = u"_" + s
+    return s
+
+
 def safe_name(name, max_len=NAME_MAX):
     """-> `name` as one filename every filesystem hato runs on will accept.
 
@@ -182,18 +203,7 @@ def safe_name(name, max_len=NAME_MAX):
                          "fit in that" % (max_len, NAME_MIN))
     max_len = min(max_len, NAME_MAX)
 
-    out = []
-    for ch in name:
-        twin = WIN_TWINS.get(ch)
-        if twin is not None:
-            out.append(twin)
-        elif ord(ch) >= 32:
-            out.append(ch)
-    s = u"".join(out).rstrip(u" .")
-    if not s:
-        s = u"unnamed"
-    if _RESERVED.match(s.split(u".", 1)[0].rstrip(u" ")):
-        s = u"_" + s
+    s = clean_name(name)
     if _fits(s, max_len):
         return s
 
@@ -210,6 +220,18 @@ def safe_name(name, max_len=NAME_MAX):
         units += u
         size += b
     return u"".join(kept) + tag + ext
+
+
+def name_budget(folder):
+    """-> the longest name (`max_len` for safe_name) that keeps `folder` + `\\` +
+    name inside MAX_PATH on Windows; NAME_MAX elsewhere; never below NAME_MIN.
+
+    ⛔ The ONE copy of this rule: a blob's name and names.py's parser stubs both
+    ask it, so a deep cache folder cuts both the same way."""
+    budget = NAME_MAX
+    if os.name == "nt":
+        budget = min(budget, WIN_PATH_MAX - _units(str(folder)) - 1)
+    return max(budget, NAME_MIN)
 
 
 # ---------------------------------------------------------------------------
@@ -309,10 +331,7 @@ class Cache(object):
 
     def _blob_path(self, digest, name):
         folder = self.root / "blobs" / digest[:2] / digest
-        budget = NAME_MAX
-        if os.name == "nt":
-            budget = min(budget, WIN_PATH_MAX - _units(str(folder)) - 1)
-        return folder / safe_name(name, max_len=max(budget, NAME_MIN))
+        return folder / safe_name(name, max_len=name_budget(folder))
 
     # -- writes ---------------------------------------------------------------
 

@@ -744,37 +744,40 @@ def test_a_forced_pick_writes_the_file_and_says_whose_decision_it_was(tmp_path, 
 
 def test_a_pick_that_lands_is_copied_to_surasura_as_a_runs_is(tmp_path, capsys,
                                                              monkeypatch):
-    u"""🚨 The Layer 14 pass, Z14-5. The surasura card says *"Every subtitle hato aligns
-    is also copied"* -- and a pick never was; the next run skipped the video as
-    present, so surasura never had it. A pick is the path a person takes when a
-    download is refused: exactly when *"Download from jimaku anyway"*, chosen FOR
-    surasura, needs it. Arms: refused without force -- nothing; forced -- copied,
-    byte for byte; surasura off -- nothing."""
-    import json
-    from hato import keep
+    u"""🚨 The Layer 14 pass, Z14-5. A pick never reached Surasura; the next run skipped
+    the video as present. A pick is the path a person takes when a download is refused:
+    exactly when *"Download from jimaku anyway"*, chosen FOR Surasura, needs it.
+    ⭐ LAYER 16 arms: refused without force -- nothing; forced -- copied byte for byte
+    into the drop folder, a pairing `forced` by a `person`; switched off -- nothing."""
+    import _surasura
+    from hato import state
     media = _media.build(tmp_path)
     wrong = _scattered(media)
-    surasura = tmp_path / u"surasura"
+    drop = _surasura.install(tmp_path, monkeypatch)
     config_file = tmp_path / u"config.toml"
-    config_file.write_text(u"surasura_dir = %s\n" % json.dumps(str(surasura)),
-                           encoding="utf-8")
+    config_file.write_text(u"", encoding="utf-8")
     monkeypatch.setenv("HATO_CONFIG", str(config_file))
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / u"data"))
 
     code, (refused,) = _pick(capsys, media.video, wrong, force=False)
-    assert refused[u"written"] is False and not surasura.exists(), (
+    assert refused[u"written"] is False and not drop.exists(), (
         u"a pick that wrote nothing was copied: %s" % refused)
     code, (forced,) = _pick(capsys, media.video, wrong, force=True)
     assert code == 0 and forced[u"written"] is True, forced
-    copied = surasura / keep.SURASURA_FOLDER / Path(forced[u"output_path"]).name
-    assert copied.is_file(), u"the pick never reached surasura: %s" % forced
-    assert copied.read_bytes() == Path(forced[u"output_path"]).read_bytes()
-    assert forced[u"surasura"] == str(copied), forced
+    copied, = _surasura.dropped(drop)
+    assert copied.endswith(u"/" + Path(forced[u"output_path"]).name), copied
+    assert (drop / copied).read_bytes() == Path(forced[u"output_path"]).read_bytes()
+    assert forced[u"surasura"] == u"dropped", forced
+    with state.StateDB() as db:
+        rec = db.pairings(u"ja")[0].record
+    assert (rec[u"verdict"], rec[u"picked_by"]) == (u"forced", u"person")
+    assert rec[u"timing"][u"outcome"] == u"REFUSED", rec[u"timing"]
 
-    config_file.write_text(u"", encoding="utf-8")        # the control: surasura off
+    config_file.write_text(u'surasura_connect = "off"' + chr(10), encoding="utf-8")  # control
     other = _media.build(tmp_path / u"second")
     code, (plain,) = _pick(capsys, other.video, other.subtitle)
     assert plain[u"written"] is True and plain[u"surasura"] is None, plain
-    assert [p for p in surasura.rglob(u"*") if p.is_file()] == [copied]
+    assert _surasura.dropped(drop) == [copied]
 
 
 def test_the_stubs_forced_write_is_the_shape_the_engine_returns(tmp_path):

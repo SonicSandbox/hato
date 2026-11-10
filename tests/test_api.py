@@ -644,6 +644,42 @@ def test_identify_raises_past_a_401_instead_of_recording_it_per_show(tmp_path):
         u"must stop at the first" % bench.client.metered)
 
 
+class _FoundOnlyThroughKitsu(object):
+    u"""DERIVED, from recordings only: jimaku's title searches find nothing (the recorded
+    empty answer), and `anilist_id=` answers with the recorded `query=frieren` body -- so
+    the show resolves THROUGH KITSU, its runners-up Kitsu's own candidates."""
+
+    def __init__(self):
+        import json
+        api_dir = FIXTURES / "api"
+        self._found = json.loads((api_dir / "search__query_frieren.json")
+                                 .read_text(encoding="utf-8"))
+        self._nothing = json.loads((api_dir / "search__live_action_anime_default.json")
+                                   .read_text(encoding="utf-8"))
+        self.metered = 0
+
+    def search(self, query=None, *, anime=True, anilist_id=None):
+        self.metered += 1
+        return list(self._found if anilist_id is not None else self._nothing)
+
+
+def test_identify_keeps_only_jimaku_entries_as_runners_up(tmp_path):
+    u"""🚨 2026-10-04 hunt (bug 1), the library's door: a show found THROUGH KITSU kept
+    Kitsu's candidates as its runners-up -- ids like `'49240'`, strings, so `c.id !=
+    resolved.entry_id` was always true -- and a fetch from this plan asks jimaku for
+    those as ENTRY ids (`pipeline._escalate`): a metered call for an unrelated show, or a
+    `ValueError` that ends the run. ⭐ Only jimaku's own entries, an int id."""
+    bench = Bench(tmp_path, names=[u"sousou no friern - 01.mkv"], client=_FoundOnlyThroughKitsu())
+    world = bench.world()
+    world.kitsu = KitsuClient(client_module.RecordedSession(FIXTURES / "kitsu"),
+                              sleep=lambda seconds: None)
+    plan = api.identify(api.scan(bench.media, world=world, subs_dir=str(bench.subs)))
+
+    show, = plan.shows
+    assert show.resolved is not None and show.resolved.source == u"kitsu", show.reason
+    assert all(type(c.id) is int for c in show.alternates), show.alternates
+
+
 def test_one_shows_failure_is_that_shows_reason_and_the_rest_still_runs(tmp_path):
     u"""⚠ Anything one SHOW can fail on leaves the others to run. A title with
     no letter or digit in it cannot be sent at all (an empty query returns
@@ -954,7 +990,9 @@ def test_settings_defaults_match_configs_documented_schema():
     #: ⭐ `auto_update` (LAYER 11) too: whether hato updates ITSELF, nothing about a run
     #: -- written down here the day it joined the schema, which the full runner caught
     #: (ADVERSARY 2026-09-24, R1)
-    not_a_run_setting = {u"watch", u"schedule", u"auto_update"}
+    #: ⭐ LAYER 16: `surasura_dir`, 1.0.x's folder -- READ (refusing it would break
+    #: every upgraded config) and never used: 1.1.0 drops where Surasura says.
+    not_a_run_setting = {u"watch", u"schedule", u"auto_update", u"surasura_dir"}
     for name, (_kind, schema_default) in sorted(config_module.SCHEMA.items()):
         if name == u"folders":
             continue                        # required on both roads

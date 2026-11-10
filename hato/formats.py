@@ -37,6 +37,18 @@ tsubasa or the pipeline.
 """
 import re
 
+
+def fold_group(group):
+    u"""A release group's name, folded for comparing: case folded, everything but letters,
+    digits, `&` and `+` dropped -- `Nanako-Raws` = `NanakoRaws`. -> str ('' when nothing is
+    left). ⭐ LAYER 15's *same provider* rule (`untimed.provider`), and LAYER 16's
+    favourite groups (`config.check_groups`, `rank`), ONE copy -- HERE because `formats`
+    loads no tsubasa: the tray reads config.toml and must never (its 13 MB budget).
+    ⚠ `str.isalnum`, not `[0-9a-z]`: a group written in kanji is letters too, and stripped
+    to nothing every two such groups would be one provider. ⚠ 15z (B13): `&` and `+` STAY
+    -- `[A&B]` is two groups releasing together, and folded away it was the group `[AB]`."""
+    return u"".join(ch for ch in (group or u"").casefold() if ch.isalnum() or ch in u"&+")
+
 #: The two a person chooses between, in the order Settings shows them.
 PREFERENCES = (u"ass", u"srt")
 DEFAULT_PREFERENCE = u"ass"

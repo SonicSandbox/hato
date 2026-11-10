@@ -231,6 +231,47 @@ def test_a_test_that_writes_the_REAL_per_user_store_is_an_isolation_fault(tmp_pa
     assert "ISOLATION FAULT" in text
 
 
+_TOOLS_LEAK = (
+    "import os, sys\n"
+    "from pathlib import Path\n"
+    "def test_leaks():\n"
+    "    assert os.environ['HOUSEKI_TOOLS_DIR'], 'the runner redirects the tools folder'\n"
+    "    if sys.platform == 'win32':\n"
+    "        base = os.environ['LOCALAPPDATA']\n"
+    "    elif sys.platform == 'darwin':\n"
+    "        base = str(Path.home() / 'Library' / 'Application Support')\n"
+    "    else:\n"
+    "        base = os.environ['XDG_DATA_HOME']\n"
+    "    real = Path(base) / 'Houseki' / 'tools'\n"
+    "    real.mkdir(parents=True, exist_ok=True)\n"
+    "    (real / 'hato.json').write_text('{}')\n")
+
+_TOOLS_CLEAN = (
+    "import os\n"
+    "from pathlib import Path\n"
+    "def test_writes_only_where_told():\n"
+    "    folder = Path(os.environ['HOUSEKI_TOOLS_DIR'])\n"
+    "    folder.mkdir(parents=True, exist_ok=True)\n"
+    "    (folder / 'hato.json').write_text('{}')\n")
+
+
+@pytest.mark.parametrize("body,want", [(_TOOLS_LEAK, 5), (_TOOLS_CLEAN, 0)],
+                         ids=["planted-leak", "clean-control"])
+def test_a_test_that_writes_the_REAL_tools_folder_is_an_isolation_fault(tmp_path, body, want):
+    u"""⭐ LAYER 16. The shared tools folder holds Sonic's REAL surasura.json on this
+    desktop: a check that wrote hato.json there would take over his real entry. A
+    planted leak is a fault; the same write into HOUSEKI_TOOLS_DIR is not."""
+    local = tmp_path / "LocalAppData"
+    (local / "Houseki" / "tools").mkdir(parents=True)
+    (local / "Houseki" / "tools" / "surasura.json").write_text("{}", encoding="utf-8")
+    proj = project(tmp_path, [suite("tools", "test_tools.py")], {"test_tools.py": body})
+    env = {"LOCALAPPDATA": str(local), "XDG_DATA_HOME": str(local), "HOME": str(tmp_path),
+           "USERPROFILE": str(tmp_path)}
+    rc, text = run(proj, env_extra=env)
+    assert rc == want, text
+    assert ("ISOLATION FAULT" in text) is (want == 5), text
+
+
 def test_the_leak_scripts_idea_of_the_real_store_matches_hatos_own(monkeypatch, tmp_path):
     """⭐ The tie that stops the check above drifting from `hato/paths.py`.
 

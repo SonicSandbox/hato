@@ -36,12 +36,14 @@ filename: SRT cue blocks, WebVTT, ASS `Dialogue:` lines, and a document-sized ru
 of Japanese in a member that is not JSON.
 """
 import argparse
+import gzip
 import io
 import json
 import posixpath
 import re
 import tarfile
 import zipfile
+import zlib
 from pathlib import Path
 
 from hato.dev import claims
@@ -80,7 +82,22 @@ _KEY_SHAPED = re.compile(
 #: it out of anything published, whatever it was named and wherever it was dropped.
 #: ⚠ This line cannot match itself: after `BEGIN ` comes `(`, which the name part
 #: does not admit, so `PRIVATE KEY` never directly follows.
-_PRIVATE_KEY_BLOCK = re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+#: ⭐ A BLOCK, NOT A MARKER (2026-10-31, the first scan of the STANDALONE zip): Qt's own
+#: `Qt6Network.dll` carries `-----BEGIN RSA PRIVATE KEY-----\0` and its kin as the NUL-
+#: terminated strings its TLS parser recognises -- 16 "blocks", none with a key in it.
+#: A real key file is the marker, a LINE BREAK, any PEM header lines (an encrypted key's
+#: `Proc-Type:` / `DEK-Info:`), then base64 -- an Ed25519 PKCS#8 body alone is 64
+#: characters; 20 is the floor. ⛔ Never just the marker again: that reads every TLS
+#: library as a leak, and a check that always fails gets switched off.
+#: 🚨 16z Z-D2: "a LINE BREAK" was too narrow -- keys leak as a service-account JSON (the
+#: breaks are `\n` ESCAPES), an indented YAML block, one string literal per line (`"…\n"`,
+#: then the next line's quote) and a PEM pasted on ONE line (spaces). ⭐ So after the marker
+#: comes any run of breaks, escaped breaks, spaces, quotes and `+` -- and still never a NUL,
+#: which is all Qt's table has there.
+_PEM_GAP = rb"""(?:\\[rn]|[\s"'+])+"""
+_PRIVATE_KEY_BLOCK = re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----" + _PEM_GAP
+                                + rb"(?:[A-Za-z][A-Za-z-]*:[^\r\n\\]*" + _PEM_GAP + rb")*"
+                                + rb"[A-Za-z0-9+/=]{20,}")
 
 #: Values that are obviously not a credential. ⛔ Keep this list SHORT: every
 #: entry is a hole, and `abc123`-style fakes are deliberately NOT here -- a fake
@@ -167,16 +184,41 @@ def _members(label, data, depth, budget):
                     raise Fault("%s!%s declares %d bytes, over the %d MiB member cap"
                                 % (label, info.filename, info.file_size,
                                    MAX_MEMBER_BYTES // MiB))
+                try:
+                    body = zf.read(info)
+                except (zipfile.BadZipFile, zlib.error, OSError, EOFError) as exc:
+                    raise Fault("%s!%s could not be read: %s" % (label, info.filename, exc))
                 for pair in _members("%s!%s" % (label, info.filename),
-                                     zf.read(info), depth + 1, budget):
+                                     body, depth + 1, budget):
                     yield pair
         finally:
             zf.close()
         return
     try:
         tf = tarfile.open(fileobj=io.BytesIO(data))
-    except (tarfile.TarError, OSError) as exc:
-        raise Fault("%s looks like a tarball and could not be opened: %s" % (label, exc))
+    except (tarfile.TarError, OSError, zlib.error) as exc:
+        if data[:2] != _GZIP_MAGIC:
+            raise Fault("%s looks like a tarball and could not be opened: %s" % (label, exc))
+        # ⭐ A GZIPPED FILE THAT IS NOT A TAR IS STILL SHIPPED BYTES (2026-10-31, the first scan
+        # of the STANDALONE zip: tsubasa's `data/aliases.tsv.gz` is a gzipped table, and the
+        # scan refused the whole artifact). Un-gzipped -- capped like any member -- and its
+        # bytes scanned as one. ⛔ Never skipped: a scan that skips its subject fails.
+        try:
+            with gzip.GzipFile(fileobj=io.BytesIO(data)) as gz:
+                plain = gz.read(MAX_MEMBER_BYTES + 1)
+        except (OSError, EOFError, zlib.error) as again:  # ⚠ 16z Z-D7: bad deflate is zlib.error
+            raise Fault("%s is gzip and could not be read as a tarball (%s) or as one "
+                        "gzipped file (%s)" % (label, exc, again))
+        if len(plain) > MAX_MEMBER_BYTES:
+            raise Fault("%s un-gzips to more than the %d MiB member cap"
+                        % (label, MAX_MEMBER_BYTES // MiB))
+        # ⭐ 16z Z-D6: the label keeps the INNER name (`x.srt.gz` -> `…!x.srt`) so the
+        # subtitle-extension claim sees a gzipped subtitle; `(gunzipped)` hid it.
+        inner = posixpath.basename(label.split("!")[-1])
+        inner = inner[:-3] if inner.lower().endswith(".gz") and len(inner) > 3 else "(gunzipped)"
+        for pair in _members("%s!%s" % (label, inner), plain, depth + 1, budget):
+            yield pair
+        return
     try:
         for info in tf.getmembers():
             if not info.isfile():
@@ -184,11 +226,15 @@ def _members(label, data, depth, budget):
             if info.size > MAX_MEMBER_BYTES:
                 raise Fault("%s!%s declares %d bytes, over the %d MiB member cap"
                             % (label, info.name, info.size, MAX_MEMBER_BYTES // MiB))
-            handle = tf.extractfile(info)
-            if handle is None:
+            try:
+                handle = tf.extractfile(info)
+                body = handle.read() if handle is not None else None
+            except (tarfile.TarError, zlib.error, OSError, EOFError) as exc:
+                raise Fault("%s!%s could not be read: %s" % (label, info.name, exc))
+            if body is None:
                 continue
             for pair in _members("%s!%s" % (label, info.name),
-                                 handle.read(), depth + 1, budget):
+                                 body, depth + 1, budget):
                 yield pair
     finally:
         tf.close()

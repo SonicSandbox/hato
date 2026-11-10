@@ -44,7 +44,7 @@ def provider(name):
     group = tokens.bracketed_group(os.path.basename(name))
     if not group:
         return None
-    folded = u"".join(ch for ch in group.casefold() if ch.isalnum() or ch in u"&+")
+    folded = formats.fold_group(group)
     return folded or None
 
 
@@ -78,7 +78,22 @@ def tier(video_name, file_name):
 #: a film (`movie`). ⛔ Never `guess` or `position`: those are hypotheses the alignment
 #: offers for TIMING to refuse, and this road has none -- with the provider's episode 01
 #: missing, its 02 was placed as 01 and called *"same provider"*.
+#: ⭐ LAYER 16 (16i): a `range` / `overlap` fit may be STATED (`Candidate.stated`: the
+#: entry's own names or anime-relations say where the season starts) -- `placeable`
+#: takes those whole or not; the whole-part guard is only for an offset nothing states.
 FITS = (u"range", u"overlap", u"literal", u"movie")
+
+
+def placeable(cand):
+    u"""May this road place `cand`? -> bool. A FIT, and -- 🚨 the Frieren finding -- one
+    RE-NUMBERED (an offset other than 0) only when its whole part landed: a part of which
+    only some files land slid there because the arithmetic liked it best, and nothing but
+    timing could say whether the slide is true. The number both sides write needs no
+    such proof (offset 0, or a literal / movie match, offset None).
+    ⭐ v2: nor does an offset STATED by the entry's names or by anime-relations
+    (`Candidate.stated`) -- this guard is the LAST resort, for an offset nothing states."""
+    return cand.quality in FITS and (cand.offset in (None, 0) or cand.coverage >= 1.0
+                                     or bool(getattr(cand, "stated", None)))
 
 
 #: ⭐ 15z (B6) -- the fewest dialogue lines a file placed by its name may have and still

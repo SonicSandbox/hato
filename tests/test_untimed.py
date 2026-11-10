@@ -218,3 +218,21 @@ def test_the_choices_are_off_first_and_off_by_default():
     assert formats.untimed_words(u"same_provider") == u"Download one from the same provider"
     assert formats.untimed_words(u"any_provider") \
         == u"Download one that fits the episode number"
+
+
+class _Cand(object):
+    def __init__(self, quality, offset, coverage, stated=None):
+        self.quality, self.offset, self.coverage, self.stated = quality, offset, coverage, stated
+
+
+@pytest.mark.parametrize("cand, ok", [
+    (_Cand(u"overlap", -28, 0.3, u"names"), True),             # stated: the bridge is a fact
+    (_Cand(u"overlap", 28, 0.3, u"anime-relations"), True),
+    (_Cand(u"overlap", 3, 0.3), False),                        # ⛔ change 3, the last resort
+    (_Cand(u"range", 3, 1.0), True),
+    (_Cand(u"overlap", 0, 0.3), True),
+    (_Cand(u"literal", None, 1.0), True),
+    (_Cand(u"guess", -28, 0.3, u"names"), False),              # a guess is never a fit
+])
+def test_a_stated_offset_needs_no_whole_part_and_an_unstated_one_does(cand, ok):
+    assert untimed.placeable(cand) is ok

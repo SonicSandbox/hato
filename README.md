@@ -84,7 +84,7 @@ installs itself. If a new version cannot start, the one you had is put back.
 ```bash
 git clone https://github.com/SonicSandbox/hato
 cd hato
-pip install "tsubasa-sync[parsing]>=0.1.10" requests
+pip install "tsubasa-sync[parsing]>=0.1.11" requests
 ```
 
 Python 3.10 or newer. On 3.10 also `pip install "tomli>=1.1"` — 3.11 has it built in.
@@ -152,11 +152,38 @@ cleanly, the episode goes to **Needs you** instead of being written badly.
 | **Watch for new videos** | Sits in the tray and runs a minute after something appears |
 | **Start with Windows** | hato is already watching when you sit down |
 | **Subtitle format** | `.ass` or `.srt` first. The other kind only if you tick the box — it starts off, so an episode jimaku has only in the other kind waits in **Needs you**, one click from taking it |
+| **Favourite release groups** | One line of names, commas between — the name in brackets a subtitle file starts with, like `[NanakoRaws]`. Their files are tried first, the first named first. **NanakoRaws** is there until you change it; empty means hato's own order. It only changes the order: your format still comes first, and the timing check still decides which file fits your copy |
 | **Update automatically** | On by default. New versions are signed, downloaded and checked quietly — the window never restarts under you. **Settings → Updates** has *Check now*, and *Go back* to the version before. From source, hato only says a new version is out: `git pull` |
 
 > **A note about airing shows.** For a season still going out, the subtitle is
 > published hours to days *after* the episode. Watching works best on finished shows;
 > for airing ones the daily sweep catches up.
+
+---
+
+## With Surasura
+
+If [Surasura](https://github.com/SonicSandbox/surasura) is installed on the same
+computer, hato hands it each new subtitle. There is nothing to set up and no folder
+to pick: Surasura says where its library wants subtitles, and hato copies each new
+one there, in a folder of its own per show. The subtitle beside your video stays
+where it is.
+
+With each copy hato tells Surasura what it is — which video it belongs to, and
+whether tsubasa timed it to that video or it came another way (taken out of the
+video itself, say) — so Surasura knows how far to trust its timing when it makes
+cards from it.
+
+One switch in the window, **Hand new subtitles to Surasura**, turns it off. Off,
+nothing is copied and Surasura is told nothing; files already copied stay in
+Surasura's library. If Surasura's library is out of reach for a while — a drive
+asleep — the copy waits and is tried again on the next runs.
+
+**If Surasura is not installed, none of this exists.** hato does exactly what it
+did before, and nothing in the window asks about it.
+
+> Before 1.1.0 this was a folder you picked by hand, and hato only copied into it.
+> That picker is gone: Surasura names its folder now.
 
 ---
 
@@ -193,6 +220,20 @@ has to work harder.
 > deliberately forgets a bad answer rather than keeping it. And listing an entry's
 > files costs one call per show per run. Downloads themselves are unmetered and need
 > no key.
+
+### Everything it talks to
+
+- **jimaku.cc** — finding, listing and downloading subtitles. The key is for this.
+- **Kitsu** — the second service above, only when a show's name is hard to place.
+- **GitHub** — the update check, and the new version's download when there is one.
+- **The anime-relations list**, from `raw.githubusercontent.com` — which episode
+  numbers of a season a group's running count stands for (episode 29 of a group
+  that never restarted counting can be season 2's first). A copy ships inside hato;
+  a newer one is fetched **at most once a week**, beside the update check, and
+  **never during a run**. A download that fails or looks wrong is thrown away and
+  hato keeps the copy it had.
+
+Set `HATO_NO_NETWORK=1` and hato makes none of these calls — the list included.
 
 ---
 
@@ -293,6 +334,7 @@ python -m hato cache        where the working cache is and how big it has got
 python -m hato config       the resolved config; or check that the key resolves
 python -m hato key          where the key comes from, or set one
 python -m hato extract      unpack one archive into the cache and list what came out
+python -m hato pairings --json   what hato has handed to Surasura (Surasura asks this)
 ```
 
 ### Scheduling it yourself

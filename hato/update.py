@@ -1075,13 +1075,15 @@ def settings_for_going_back(version, path=None, db_path=None):
     ⛔ Never raises: a file that cannot be read or written is left as it is, and the
     swapper's own proof still puts this version back if the kept one cannot start.
     ⭐ 15z (C7) -- and hato's memory, for a version before the untimed road
-    (`_road_waits_for_going_back`)."""
+    (`_road_waits_for_going_back`). ⚠ 16z -- and hato.json, for a version before
+    Connect (`_connect_for_going_back`)."""
     from hato import config
     try:
         words = config.make_readable_by(version, path)
     except (config.ConfigError, OSError):
         words = []
-    return words + _road_waits_for_going_back(version, db_path, dry_run=False)
+    return (words + _road_waits_for_going_back(version, db_path, dry_run=False)
+            + _connect_for_going_back(version, db_path, dry_run=False))
 
 
 def going_back_words(version, path=None, db_path=None):
@@ -1092,7 +1094,8 @@ def going_back_words(version, path=None, db_path=None):
         words = config.readable_by(config.load(path), version)[1]
     except (config.ConfigError, OSError):
         words = []
-    return words + _road_waits_for_going_back(version, db_path, dry_run=True)
+    return (words + _road_waits_for_going_back(version, db_path, dry_run=True)
+            + _connect_for_going_back(version, db_path, dry_run=True))
 
 
 #: ⭐ LAYER 15 -- the first hato with the untimed road.
@@ -1127,6 +1130,43 @@ def _road_waits_for_going_back(version, db_path=None, dry_run=True):
     return [u"%d episode%s waiting for a subtitle by its name %s no longer waited for — "
             u"%s cannot look for one" % (count, u"" if count == 1 else u"s",
                                          u"is" if count == 1 else u"are", version)]
+
+
+#: ⭐ LAYER 16 -- the first hato with Surasura Connect (hato.json, `pairings`).
+CONNECT_SINCE = (1, 1, 0)
+
+
+def _connect_for_going_back(version, db_path=None, dry_run=True):
+    u"""⚠ 16z -- Surasura Connect, for a kept `version` before it. -> [words]
+
+    Z-A7: the press rewrites hato.json as switched-off does -- `verbs: []`, the `cli`
+    KEPT (Surasura drops an entry with none) -- through the ONE writer
+    (`connect.write_hato_json`): the kept cli has no `pairings` to offer.
+    Z-A3: 1.0.9's own *Clear hato's memory* empties EVERY table, what hato told
+    Surasura too, and no 1.0.9 can be changed -- so, when the store holds pairings,
+    Go back SAYS it. ⛔ Never raises; asking (`dry_run`) writes nothing, and no state
+    DB is created."""
+    parsed = parse_version(version)
+    if parsed is None or parsed >= CONNECT_SINCE:
+        return []
+    import os
+    from hato import connect, paths, state
+    if not dry_run:
+        try:
+            connect.write_hato_json(u"off", version=version)
+        except Exception:                    # noqa: BLE001 -- Connect is never why it fails
+            pass
+    try:
+        where = db_path or paths.state_db_path()
+        if not os.path.exists(str(where)):
+            return []
+        rows, _since = state.read_pairings(where)
+    except Exception:                        # noqa: BLE001 -- the memory is advisory
+        return []
+    if not rows:
+        return []
+    return [u"“Clear hato's memory” in %s also forgets which subtitles hato handed to "
+            u"Surasura" % version]
 
 
 def skip(version, path=None):

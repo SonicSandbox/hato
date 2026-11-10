@@ -163,6 +163,23 @@ WIN_H = 660
 # small helpers
 # ---------------------------------------------------------------------------
 
+def _complain(message):
+    u"""Say `message` where somebody can find it: hato.log, and stderr if any. -> None
+
+    🚨 16l P1 -- THE FROZEN WINDOW HAS NO `sys.stderr`. `hato.exe` is
+    `console=False`: double-clicked, Python sets both streams to None, and a bare
+    `sys.stderr.write` raised `AttributeError` from inside the very handler that
+    was explaining a refusal. ⭐ `watch.complain` copes with None and writes
+    hato.log -- one writer for the tray, the error net and this.
+    ⛔ NEVER RAISES (`watch.complain`'s rule; the import is guarded too).
+    """
+    try:
+        from hato import watch as _watch
+        _watch.complain(message, who=u"window")
+    except Exception:                         # noqa: BLE001
+        pass
+
+
 def ease():
     u"""The one easing curve, from `theme.EASE`. -> QEasingCurve
 
@@ -358,9 +375,24 @@ class State(object):
         #: ⭐ RUNBOOK 13j -- what is typed in the blacklist's filter: kept here, so a
         #: rebuild of Settings keeps it
         self.blacklist_filter = u""
-        #: ⭐ RUNBOOK 7h. Empty means the integration is off, which is the
-        #: default -- most people do not run surasura.
-        self.surasura_dir = u""
+        #: ⭐ LAYER 16 (16g) -- `surasura_connect`: `auto` (the default, never
+        #: written: the hand-off happens when Surasura is installed), `off`, or a
+        #: hand-written `on`. ⛔ 1.0.x's `surasura_dir` is not the window's any more
+        #: (the picker went: Surasura names its folder).
+        self.surasura_connect = u"auto"
+        #: whether the FILE carries `surasura_connect`, which 1.0.9 refuses
+        self.connect_key_in_file = False
+        #: ⭐ LAYER 16 (16k) -- `favourite_groups`, NanakoRaws while unwritten; whether
+        #: the FILE carries it (1.0.9 refuses the key); and what the last edit came to,
+        #: when the line was refused (⛔ never a dialog: said under the line)
+        self.favourite_groups = (u"NanakoRaws",)
+        self.favourites_key_in_file = False
+        self.favourites_said = u""
+        #: False when a tray IS running whose runs cannot read `surasura_connect`
+        self.tray_reads_connect = True
+        #: `connect.status(...)` as last read (`HatoWindow.refresh_surasura`), or None
+        #: until read -- drawn as *not installed*
+        self.surasura = None
         #: ⭐ RUNBOOK 9a -- the format a person wants, and whether the other will
         #: do. `config.toml`'s defaults: `.ass`, and the other kind never.
         self.prefer_format = formats.DEFAULT_PREFERENCE
@@ -715,6 +747,24 @@ EMBEDDED_CHOICES = (
 #: ⭐ The substance behind the choice -- including Sonic's own understanding
 #: (2026-09-25): *"an .ass sub you download may not be the same exact line
 #: breaks etc as the srt from the video."*
+#: ⭐ LAYER 16 (16k) -- the favourite groups' info dot. ⚠ What it ORDERS and what it
+#: never overrides, in the order the key compares them (`rank.py`, fork 3).
+FAVOURITES_TIP = (
+    u"Subtitles from these release groups are tried first, the first named first — "
+    u"the name in brackets a subtitle file starts with, like [NanakoRaws].\n\n"
+    u"It only changes the order hato tries files in. Your format still comes first "
+    u"(a favourite's .srt waits behind another group's .ass), a file that is surely "
+    u"the episode still goes before a guessed one, and, for a video with subtitles inside "
+    u"it, the timing check still decides which file fits your copy.\n\n"
+    # ⚠ 16z (Z-C5): the untimed road (Layer 15) has no timing check to decide anything
+    u"A video with no subtitles inside it has nothing to time a file against: one by the "
+    u"video's own provider still goes first, and whichever file is chosen — a favourite's "
+    u"too — is saved not timed.\n\n"
+    u"Empty: hato's own order.")
+
+#: The one line's hint, beside it.
+FAVOURITES_HINT = u"first is tried first · commas between"
+
 EMBEDDED_TIP = (
     u"A Japanese subtitle track inside the video is already timed to it, and "
     u"your player shows it, so by default nothing is downloaded — and nothing "
@@ -762,6 +812,15 @@ UNTIMED_TIP = (
     u"When jimaku has nothing for it, hato looks once a day for a week, then stops. A "
     u"file that goes missing is put back from hato's own copy — choose Skip it, or add "
     u"the video to the skip list, to stop that.")
+
+#: ⭐ LAYER 16 (16g) -- the SURASURA switch's ⓘ: what is handed over, and where.
+CONNECT_TIP = (
+    u"When Surasura is installed on this computer, each subtitle hato saves is also "
+    u"copied into Surasura's library — a folder per show, where Surasura says — and "
+    u"Surasura is told whether it was timed to the video, so it can make cards from it. "
+    u"The subtitle beside the video stays where it is.\n\n"
+    u"Off: nothing is copied and Surasura is told nothing. Files already copied stay in "
+    u"Surasura's library.")
 
 
 #: 🚨 ONE TOOLTIP PER SKIP, AND EACH ONE HAS TO BE TRUE OF ITS OWN ROW.
@@ -2681,6 +2740,8 @@ class HatoWindow(Styled):
         # replaces it, exactly as it replaces `spawn`.
         self._reading = []
         self._read_timer = None
+        #: ⛔ 16z Z-D5 -- the readers whose progress callback already failed, said ONCE
+        self._progress_said = set()
         #: ⭐ 14z (B-5) -- `hato config` writes waiting their turn, and one in flight
         self._settings_queue = []
         self._settings_writing = False
@@ -4304,6 +4365,78 @@ class HatoWindow(Styled):
         body.addWidget(tail)
         return card
 
+    def _favourites_line(self, card, body):
+        u"""⭐ LAYER 16 (16k, fork 3 A) -- favourite release groups: ONE line of names,
+        the first tried first, NanakoRaws by default. Under the format's two rows,
+        because it is the next thing the order compares (`rank.py`: format, then this).
+
+        ⛔ A TEXT FIELD THAT A REBUILD HANDS BACK (LEDGER-HOT, Z13-1): it carries an
+        object name, so `_settings_held` keeps its words, cursor and keyboard, and
+        its edit is judged only when the PERSON finishes it (`editingFinished`)."""
+        state = self.state
+        row = QWidget(card)
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 4, 0, 0)
+        line.setSpacing(8)
+        line.addWidget(label(u"Favourite release groups", None, row))
+        field = QLineEdit(u", ".join(state.favourite_groups), row)
+        field.setObjectName(u"favourites")
+        field.setPlaceholderText(u"none — hato's own order")
+        field.setMinimumWidth(220)
+        field.editingFinished.connect(self._set_favourites)
+        self.favourites_field = field
+        line.addWidget(field, 1)
+        line.addWidget(label(FAVOURITES_HINT, u"hint", row))
+        line.addWidget(info_dot(FAVOURITES_TIP, row))
+        body.addWidget(row)
+        if state.favourites_said:
+            said = label(state.favourites_said, u"hint", card)
+            said.setWordWrap(True)
+            mark(said, u"warn", True)
+            body.addWidget(said)
+        if (state.old_tray or not state.tray_reads_connect) and state.favourites_key_in_file:
+            # 🚨 AN OLDER hato CANNOT READ `favourite_groups` -- 1.0.9's runs refuse a
+            # config.toml carrying it (`config.NEWER_THAN_1_0_9`), whatever its value.
+            # ⚠ `tray_reads_connect`: the token a 1.1.0 tray writes (16g), and the same
+            # release reads both keys. Directly under the line it speaks for (Z14-2).
+            old = QWidget(card)
+            pair = QHBoxLayout(old)
+            pair.setContentsMargins(0, 2, 0, 0)
+            pair.setSpacing(8)
+            note = label(u"The hato in your tray is an older version and cannot read "
+                         u"this setting — its runs stop until it is restarted.",
+                         u"hint", old)
+            note.setWordWrap(True)
+            pair.addWidget(note, 1)
+            restart = button(u"Restart the tray", old)
+            restart.clicked.connect(self.restart_watcher)
+            kept(restart, u"favourites.restart_tray")
+            pair.addWidget(restart)
+            body.addWidget(old)
+
+    def _set_favourites(self):
+        u"""⭐ 16k -- the line, when the person finishes it: refused HERE, in words, and
+        put back (as a time is: `_set_schedule`); otherwise written through the one
+        writer. Nothing changed -> nothing written. Empty -> `[]`: hato's own order."""
+        from hato import config as _config
+        field = getattr(self, u"favourites_field", None)
+        if field is None:
+            return
+        try:
+            names = _config.check_groups(_config.groups_from_text(field.text()),
+                                         u"favourite_groups")
+        except _config.ConfigError as exc:
+            self.state.favourites_said = safe(u"%s" % exc).replace(u"favourite_groups: ", u"", 1)
+            field.setText(u", ".join(self.state.favourite_groups))
+            self.render()
+            return
+        if names == tuple(self.state.favourite_groups):
+            return        # ⚠ 16n (R8): unchanged -> nothing written; a refusal showing stays
+        self.state.favourite_groups = names
+        self.state.favourites_said = u""
+        self._write_setting(u"--set", u"favourite_groups=%s" % u", ".join(names))
+        self.render()
+
     def _card_format(self, parent):
         u"""⭐ RUNBOOK 9a -- which format, and whether the other one will do.
 
@@ -4386,6 +4519,7 @@ class HatoWindow(Styled):
             kept(restart, u"format.restart_tray", then=u"format.prefer:%s" % state.prefer_format)
             pair.addWidget(restart)
             body.addWidget(old)
+        self._favourites_line(card, body)
         # ⭐ RUNBOOK 14a -- a video whose own file already holds a Japanese text track:
         # leave it (the ruled default, 2026-09-17: already in sync, for free), or
         # download from jimaku anyway -- for surasura, which only ever receives a
@@ -4624,28 +4758,84 @@ class HatoWindow(Styled):
         somebody who does already knows.
         """
         card, body = self._card(u"surasura", parent)
+        state = self.state
         top = QWidget(card)
         line = QHBoxLayout(top)
         line.setContentsMargins(0, 0, 0, 0)
         line.setSpacing(11)
 
-        mark = QLabel(top)
+        logo = QLabel(top)
         pixmap = branding.surasura_pixmap(28, top.devicePixelRatioF())
         if pixmap is not None and not pixmap.isNull():
-            mark.setPixmap(pixmap)
-        line.addWidget(mark)
+            logo.setPixmap(pixmap)
+        line.addWidget(logo, 0, Qt.AlignmentFlag.AlignTop)
 
         words = QWidget(top)
         stack = QVBoxLayout(words)
         stack.setContentsMargins(0, 0, 0, 0)
-        stack.setSpacing(2)
-        stack.addWidget(label(u"Send a copy to surasura", None, words))
-        # ⚠ `paragraph`, NOT a `hint` label: a QLabel does not wrap unless told,
-        # and a check named for exactly that caught this sentence being cut at
-        # "...into a Hato folder".
-        stack.addWidget(paragraph(
-            u"Every subtitle hato aligns is also copied into a Hato folder "
-            u"inside the folder you choose.", words))
+        stack.setSpacing(6)
+        # ⭐ LAYER 16 (16g), FORK 2 RULED 2026-10-29: ONE SWITCH, ON by default. ON is
+        # automatic -- nothing written; OFF writes `surasura_connect = "off"`. ⛔ No
+        # folder to choose any more: *"Nor do you need to ever pick a location for
+        # surasura anymore because surasura will handle it"* (Sonic, 2026-10-12).
+        row = QWidget(words)
+        pair = QHBoxLayout(row)
+        pair.setContentsMargins(0, 0, 0, 0)
+        pair.setSpacing(8)
+        switch = Switch(row)
+        switch.setChecked(state.surasura_connect != u"off")
+        switch.clicked.connect(self._toggle_connect)
+        kept(switch, u"surasura.connect")
+        pair.addWidget(switch)
+        pair.addWidget(label(u"Hand new subtitles to Surasura", None, row))
+        pair.addWidget(label(u"· when Surasura is installed", u"hint", row))
+        pair.addWidget(info_dot(CONNECT_TIP, row))
+        pair.addStretch(1)
+        stack.addWidget(row)
+        # ⭐ THE STATUS LINE (`gui_run.connect_words`, the mock's five wordings): what
+        # hato found, in words -- and what waits, COUNTED. Nothing here is a dialog.
+        said = gui_run.connect_words(state.surasura)
+        import html
+        lead = u""
+        if said[u"lead"]:
+            lead = u"<span style=\"color:%s\">%s</span> " % (
+                theme.OK if said[u"tone"] == u"ok" else theme.LOOK,
+                html.escape(said[u"lead"], quote=False))
+        status = label(lead + html.escape(said[u"rest"], quote=False), u"connectsay", words)
+        status.setTextFormat(Qt.TextFormat.RichText)
+        status.setWordWrap(True)
+        status.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        stack.addWidget(status)
+        if said[u"path"]:
+            stack.addWidget(Elide(said[u"path"], words, u"code",
+                                  mode=Qt.TextElideMode.ElideMiddle))
+        for key in (u"waiting", u"stuck"):
+            if said[key]:
+                counted = paragraph(said[key], words)
+                mark(counted, u"warn", True)
+                stack.addWidget(counted)
+        if (state.old_tray or not state.tray_reads_connect) and (
+                state.surasura_connect != u"auto" or state.connect_key_in_file):
+            # 🚨 AN OLDER hato CANNOT READ `surasura_connect` -- 1.0.9's runs refuse a
+            # config.toml carrying it (`config.NEWER_THAN_1_0_9`), whatever its value.
+            # ⭐ Under the switch it speaks for (Z14-2), as the untimed choice's.
+            old = QWidget(words)
+            beside = QHBoxLayout(old)
+            beside.setContentsMargins(0, 2, 0, 0)
+            beside.setSpacing(8)
+            note = label(u"The hato in your tray is an older version and cannot read "
+                         u"this setting — its runs stop until it is restarted.",
+                         u"hint", old)
+            note.setWordWrap(True)
+            beside.addWidget(note, 1)
+            restart = button(u"Restart the tray", old)
+            restart.clicked.connect(self.restart_watcher)
+            # ⛔ No `then`: the control it speaks for is a SWITCH, and a Space there acts
+            # (B-2's landing is a chosen radio, where a Space does nothing) -- parked, as
+            # the Updates card's own switch note is
+            kept(restart, u"surasura.restart_tray")
+            beside.addWidget(restart)
+            stack.addWidget(old)
         # ⭐ THE WAY TO surasura ITSELF. Somebody reading this card who does not
         # run it has exactly one question -- what is it -- and a link answers
         # that better than a paragraph explaining it here would.
@@ -4661,48 +4851,48 @@ class HatoWindow(Styled):
         stack.addWidget(link)
         line.addWidget(words, 1)
         body.addWidget(top)
-
-        if self.state.surasura_dir:
-            body.addWidget(self._path_line(
-                card, os.path.join(self.state.surasura_dir,
-                                   u"Hato"),
-                dot=True, on_remove=lambda _p: self.clear_surasura(),
-                keep=u"surasura"))
-        else:
-            body.addWidget(label(u"Off — no folder chosen.", u"hint", card))
-
-        tail = QWidget(card)
-        row = QHBoxLayout(tail)
-        row.setContentsMargins(0, 2, 0, 0)
-        row.setSpacing(8)
-        pick = button(u"Change folder…" if self.state.surasura_dir
-                      else u"Choose a folder…", tail)
-        pick.clicked.connect(self.choose_surasura)
-        kept(pick, u"surasura.choose")
-        row.addWidget(pick)
-        row.addStretch(1)
-        body.addWidget(tail)
         return card
 
-    def choose_surasura(self):
-        u"""Pick where surasura should find the copies."""
-        path = QFileDialog.getExistingDirectory(
-            self, u"Choose the folder surasura reads from", u"",
-            QFileDialog.Option.ShowDirsOnly)
-        if not path:
-            return None
-        path = os.path.abspath(path)
-        self.state.surasura_dir = path
-        self._write_setting(u"--set", u"surasura_dir=%s" % path)
+    def _toggle_connect(self):
+        u"""⭐ LAYER 16 (16g), fork 2 -- the one switch. OFF writes `surasura_connect =
+        "off"`; ON writes `auto`, which the writer leaves OUT of the file
+        (`config.NEWER_KEYS`: automatic is never written, and an older hato reads a file
+        without it). ⛔ Nothing already copied is touched -- those files are Surasura's.
+        ⚠ Takes effect at the next run; the card says what it will do at once."""
+        choice = u"auto" if self.state.surasura_connect == u"off" else u"off"
+        self.state.surasura_connect = choice
+        self._write_setting(u"--set", u"surasura_connect=%s" % choice)
+        self.refresh_surasura(render=False)
         self.render()
-        return path
 
-    def clear_surasura(self):
-        u"""Turn the integration off. ⛔ Nothing already copied is removed --
-        those files are surasura's now, not hato's to take back."""
-        self.state.surasura_dir = u""
-        self._write_setting(u"--set", u"surasura_dir=")
-        self.render()
+    def refresh_surasura(self, render=True):
+        u"""⭐ LAYER 16 (16g) -- read the hand-off again: surasura.json, hato.json kept in
+        step, the store's counts (`connect.status`). -> True when what the card says
+        moved. ⭐ Once per window refresh (RUNBOOK 16.1): the window's start, a run's
+        end, a pick, the switch, and a `stat` that moved (`connect.watched`).
+        ⛔ Never raises; a refresh that changes nothing renders nothing."""
+        try:
+            from hato import connect
+            found = connect.status(self.state.surasura_connect)
+            self._connect_seen = connect.watched(found)
+        except Exception:                     # noqa: BLE001 -- the card, never a stop
+            return False
+        before = gui_run.connect_words(self.state.surasura)
+        self.state.surasura = found
+        moved = gui_run.connect_words(found) != before
+        if moved and render and self.state.tab == TAB_SET:
+            self.render(live=self.state.running)
+        return moved
+
+    def _surasura_moved(self):
+        u"""-> True when surasura.json or its library's reachability moved since the
+        last read: two `stat`s, every look."""
+        try:
+            from hato import connect
+            return connect.watched(self.state.surasura) != getattr(
+                self, u"_connect_seen", None)
+        except Exception:                     # noqa: BLE001
+            return False
 
     def _card_blacklist(self, parent):
         rows = self.state.blacklist
@@ -4956,6 +5146,13 @@ class HatoWindow(Styled):
             untimed = self.tray_reads_untimed()                 # LAYER 15
             changed = changed or untimed != self.state.tray_reads_untimed
             self.state.tray_reads_untimed = untimed
+            connects = self.tray_reads_connect()                # LAYER 16
+            changed = changed or connects != self.state.tray_reads_connect
+            self.state.tray_reads_connect = connects
+            # ⭐ 16g -- Surasura installed, its library moved or back: two `stat`s a look,
+            # and a read only when one moved
+            if self._surasura_moved():
+                changed = self.refresh_surasura(render=False) or changed
             # ⭐ A DATE PASSES WITH NOTHING ELSE CHANGING (ADVERSARY 2026-09-22
             # A16). An open window held a waited row hidden past its date, and
             # *"retrying in 30m"* read the same five hours later. Once a minute,
@@ -4994,8 +5191,11 @@ class HatoWindow(Styled):
             # memory is asked again, whether or not its snapshot is usable.
             self.refresh_problems()
             self.refresh_memory()
+            moved = self.refresh_surasura(render=False)    # 16g: what it handed over
             rows, summary, saved_at = gui_run.load_last_run()
             if not rows and not summary:
+                if moved:
+                    self.render()
                 return
             self.state.rows = rows
             self.state.summary = summary
@@ -5437,7 +5637,7 @@ class HatoWindow(Styled):
                 else None
             u.skipped = update.skipped()
         except Exception as exc:              # noqa: BLE001
-            sys.stderr.write(u"hato: the update state could not be read: %s\n" % exc)
+            _complain(u"hato: the update state could not be read: %s\n" % exc)
         return u
 
     def _judged(self, decision):
@@ -6367,6 +6567,7 @@ class HatoWindow(Styled):
             self.state.picked_word[key] = word   # ⭐ the colour is what was WRITTEN
             self.state.open_pick = self.state.next_unresolved(key)
             self.refresh_problems()          # the memory will drop it: a file landed
+            self.refresh_surasura(render=False)   # 16g: a pick is handed over too
         self.render()
         self._animate_accordions()
 
@@ -6608,6 +6809,10 @@ class HatoWindow(Styled):
         self.state.format_keys_in_file = False     # the values decide (`_card_format`)
         self.state.extract_key_in_file = False     # the value decides (SAVE chosen)
         self.state.untimed_key_in_file = False     # the value decides (not *Skip it*)
+        self.state.connect_key_in_file = False     # the value decides (not automatic)
+        # ⭐ 16k -- the value decides: written only away from the default
+        self.state.favourites_key_in_file = (tuple(self.state.favourite_groups)
+                                             != (u"NanakoRaws",))
         self.state.update_key_in_file = not self.state.updates.auto
 
     def _read(self, argv, done, each=None):
@@ -6634,26 +6839,53 @@ class HatoWindow(Styled):
         return runner
 
     def _poll_reads(self):
-        still = []
-        for runner, done, events, each in self._reading:
-            fresh = runner.drain()
-            events.extend(fresh)
-            for event in (fresh if each is not None else ()):
+        u"""One tick: drain every reader, and hand each finished one to its `done`.
+
+        🚨 16l P1 -- A `done` THAT RAISED WAS CALLED AGAIN EVERY 150 ms. The handler
+        wrote to a `sys.stderr` the frozen window does not have, so IT raised, the
+        loop left before `self._reading = still`, and the next tick found the same
+        finished reader -- plus every reader queued behind it, never served.
+        ⭐ So each `done` sits in its own try, the cursor is past a reader BEFORE its
+        `done` runs, and `self._reading = still` is ALWAYS assigned (`finally`):
+        a reader whose `done` has been called is never in it.
+        ⚠ The LIVE list is walked, by index: a `done` that starts another read
+        appends to it, and that reader is polled in this same tick, as before.
+        """
+        reading, still, at = self._reading, [], 0
+        try:
+            while at < len(reading):
+                entry = reading[at]
+                runner, done, events, each = entry
+                fresh = runner.drain()
+                events.extend(fresh)
+                for event in (fresh if each is not None else ()):
+                    try:
+                        each(event)
+                    except Exception as exc:  # noqa: BLE001 -- never take the window down
+                        # ⛔ 16z Z-D5: ONCE per reader. Per event it was thousands of
+                        # `=== hato window` blocks in a download, each one a "run" to
+                        # `_trim`, pushing the real runs out of hato.log.
+                        if id(runner) not in self._progress_said:
+                            self._progress_said.add(id(runner))
+                            _complain(u"hato: a child's progress could not be used: %s\n"
+                                      % exc)
+                finished = runner.finished()
+                if finished is None:
+                    still.append(entry)
+                    at += 1
+                    continue
+                events.extend(runner.drain())
+                at += 1                       # ⛔ past it BEFORE `done`: called ONCE
+                self._progress_said.discard(id(runner))
                 try:
-                    each(event)
+                    done(finished, events)
                 except Exception as exc:      # noqa: BLE001 -- never take the window down
-                    sys.stderr.write(u"hato: a child's progress could not be used: %s\n"
-                                     % exc)
-            finished = runner.finished()
-            if finished is None:
-                still.append((runner, done, events, each))
-                continue
-            events.extend(runner.drain())
-            try:
-                done(finished, events)
-            except Exception as exc:          # noqa: BLE001 -- never take the window down
-                sys.stderr.write(u"hato: a child's answer could not be used: %s\n" % exc)
-        self._reading = still
+                    _complain(u"hato: a child's answer could not be used: %s\n" % exc)
+        finally:
+            # ⚠ Anything that still escaped (a `drain` that raised) leaves the
+            # reader it was on, and those behind it, for the next tick.
+            still.extend(reading[at:])
+            self._reading = still
         if not still and self._read_timer is not None:
             self._read_timer.stop()
 
@@ -6918,6 +7150,17 @@ class HatoWindow(Styled):
         except Exception:                     # noqa: BLE001 -- a guess must not crash
             return True
 
+    @staticmethod
+    def tray_reads_connect():
+        u"""-> False when a tray IS running whose runs cannot read `surasura_connect`
+        (LAYER 16): every hato before 1.1.0. No tray, or one saying `connect`, -> True."""
+        try:
+            from hato import watch as _watch
+            caps = _watch.watching_capabilities()
+            return caps is None or u"connect" in caps
+        except Exception:                     # noqa: BLE001 -- a guess must not crash
+            return True
+
     def restart_watcher(self):
         u"""⭐ V1 -- replace an older tray with this build's. -> the argv, or None."""
         self.stop_watcher()
@@ -6927,6 +7170,7 @@ class HatoWindow(Styled):
         self.state.tray_reads_updates = True          # LAYER 11
         self.state.tray_reads_extract = True          # 14c
         self.state.tray_reads_untimed = True          # LAYER 15
+        self.state.tray_reads_connect = True          # LAYER 16
         self.render()
         return argv
 
@@ -7276,6 +7520,7 @@ class HatoWindow(Styled):
             # scanned nothing (A3's shape). `_poll_reads` drained again; this did not.
             news = self._take_events(self._runner.drain()) or news
             self.state.running = False
+            self._log_stopped(finished)
             ran = not self._busy and not finished.could_not_run
             if not self._targeted and ran and not self._fresh:
                 self.state.summary = finished.summary or self.state.summary
@@ -7289,6 +7534,7 @@ class HatoWindow(Styled):
             # settled some and added others, in folders this window never ran.
             self.refresh_problems()
             self.refresh_memory()            # 8g: the card's numbers moved too
+            self.refresh_surasura(render=False)   # 16g: rendered below, in full
             # ⛔ NOT SAVED HERE ANY MORE. `hato` itself writes what every run
             # found (`hato/lastrun.py`), so this window's own run is recorded
             # by the same writer as the tray's and the scheduler's. A save here
@@ -7312,6 +7558,21 @@ class HatoWindow(Styled):
         # ⭐ RUNBOOK 13b: a tick with news is LIVE -- Settings is not rebuilt under
         # the person; the run's end renders in full
         self.render(live=finished is None)
+
+    def _log_stopped(self, finished):
+        u"""🚨 2026-10-04 hunt (bug 3) -- a run that STOPPED leaves the child's own words
+        in hato.log. They were kept in `Run.stderr` and written nowhere, so a crash
+        outside hato's own `except` -- or a frozen child's raw traceback -- reached a
+        tester as one footer line and nothing to send. ⭐ Through the net's writer, the
+        window's one way into the log (`=== hato window …`, never counted as a run).
+        ⛔ Only exit 1 with something said: Windows' terminate is exit 1 too, and says
+        nothing. Never raises (`ErrorNet.write`)."""
+        said = (finished.stderr or u"").strip()
+        if not finished.stopped or not said:
+            return False
+        net = self._error_net if self._error_net is not None else ErrorNet()
+        return net.write(u"hato: the run exited %d -- what it said:\n%s\n"
+                         % (finished.code, said))
 
     def error_caught(self):
         u"""⭐ RUNBOOK 10b -- the net caught an error: the footer says so, and a
@@ -7569,7 +7830,10 @@ def settings_from_disk(state=None):
         state.recurse = cfg.recurse
         state.watch = cfg.watch
         state.schedule = cfg.schedule
-        state.surasura_dir = cfg.surasura_dir
+        state.surasura_connect = cfg.surasura_connect     # ⭐ LAYER 16
+        state.connect_key_in_file = cfg.origin(u"surasura_connect") == u"config.toml"
+        state.favourite_groups = tuple(cfg.favourite_groups)   # ⭐ LAYER 16 (16k)
+        state.favourites_key_in_file = cfg.origin(u"favourite_groups") == u"config.toml"
         state.prefer_format = cfg.prefer_format
         state.format_fallback = cfg.format_fallback
         state.skip_embedded = cfg.skip_embedded          # ⭐ RUNBOOK 14a
@@ -7589,7 +7853,7 @@ def settings_from_disk(state=None):
         # empty, and a window that opened on silent defaults would be telling
         # the person their settings vanished.
         state.config_error = str(exc)
-        sys.stderr.write(u"hato: %s\n" % exc)
+        _complain(u"hato: %s\n" % exc)        # ⛔ 16l P1 -- never a bare stream
     # ⭐ D2 -- whether the daily run is ON is Task Scheduler's to say, and the
     # time it runs at is the task's own when one exists. AFTER the config, so the
     # config's time is only the one to register at.
@@ -7762,6 +8026,10 @@ def main(argv=None):
     window.state.tray_reads_updates = window.tray_reads_updates()   # LAYER 11
     window.state.tray_reads_extract = window.tray_reads_extract()   # 14c
     window.state.tray_reads_untimed = window.tray_reads_untimed()   # LAYER 15
+    window.state.tray_reads_connect = window.tray_reads_connect()   # LAYER 16
+    # ⭐ 16g -- the hand-off at the window's start: surasura.json read, hato.json kept in
+    # step (RUNBOOK 16.1), the store's counts for the card. Rendered by `check_updates`.
+    window.refresh_surasura(render=False)
     window.state.waits = gui_run.load_waits()          # 4c -- the waits chosen before
     window.refresh_problems()
     window.refresh_blacklist()

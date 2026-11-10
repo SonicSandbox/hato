@@ -1483,6 +1483,95 @@ def test_a_log_that_cannot_be_written_is_a_note_not_a_failure(tmp_path, monkeypa
     assert u"API call" in out
 
 
+def test_a_run_that_crashes_writes_its_traceback_to_the_log(tmp_path, monkeypatch, capsys):
+    u"""🚨 2026-10-04 -- 1.0.9's NoneType crash left the tester's store holding `state.db`
+    and NOTHING ELSE: the traceback went to stderr only, and `run` returned before the
+    log was written, so there was nothing to send us. ⭐ The run's block in hato.log IS
+    the crash -- its one line and its traceback -- and stderr still says it first."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+
+    def crashes(*args, **kwargs):
+        raise AttributeError(u"'NoneType' object has no attribute 'strip'")
+
+    monkeypatch.setattr(run_cmd.pipeline, "run", crashes)
+    code, out, err = lab.cli(capsys, "--json")
+
+    assert code == 1, err
+    assert err.startswith(u"hato: the run stopped on an unexpected AttributeError: "), err
+    text = (lab.data / "hato.log").read_text(encoding="utf-8")
+    assert re.search(u"^=== hato \\d", text, re.M), text      # a RUN's block: it was a run
+    assert u"the run stopped on an unexpected AttributeError" in text, text
+    assert u"Traceback (most recent call last)" in text and u"in crashes" in text, text
+
+
+def test_a_show_that_crashes_leaves_its_traceback_in_the_runs_log_block(tmp_path, monkeypatch,
+                                                                        capsys):
+    u"""⭐ 2026-10-04 (bug 2) -- one show's fault is that show's ERROR rows now, and the
+    run goes on and exits 0: so its traceback must reach hato.log with the run's own
+    block, or the per-show guard would have hidden the evidence the crash used to show."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+    real = pipeline._Run._candidates
+
+    def candidates(self, show, alignment, video, root, seen_groups):
+        if os.path.basename(str(video.path)) == u"frieren S2 - 04.mkv":
+            raise AttributeError(u"'NoneType' object has no attribute 'strip'")
+        return real(self, show, alignment, video, root, seen_groups)
+
+    monkeypatch.setattr(pipeline._Run, "_candidates", candidates)
+    code, out, err = lab.cli(capsys, "--candidates", "1")
+
+    assert code == 0, err
+    text = (lab.data / "hato.log").read_text(encoding="utf-8")
+    assert text.count(u"=== hato ") == 1, text                   # ONE block: the run's
+    assert u"stopped on an unexpected AttributeError" in text, text
+    assert u"Traceback (most recent call last)" in text and u"in candidates" in text, text
+    assert u"Traceback" not in out, u"a traceback is the log's, never the screen's"
+
+
+def test_16l_p2_a_report_fault_after_a_run_is_one_sentence_and_a_log_traceback(
+        tmp_path, monkeypatch, capsys):
+    u"""16l P2 (#6) -- the run already wrote its files, then `report.render` raised. The
+    fault must not reach the screen as a traceback: ONE plain sentence on stderr that says
+    the report could not be shown and points at hato.log, the traceback goes to hato.log,
+    and the exit is EXIT_FAILED. ⚠ The files the run wrote stay -- this is a report fault,
+    not a rollback."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+
+    def broken_render(*args, **kwargs):
+        raise ValueError(u"the report cannot be drawn")
+
+    monkeypatch.setattr(report, "render", broken_render)
+    code, out, err = lab.cli(capsys)
+
+    assert code == run_cmd.EXIT_FAILED, (code, err)
+    assert u"Traceback (most recent call last)" not in err, err
+    assert sum(u"could not be shown" in line for line in err.split(u"\n")) == 1, err
+    assert u"hato.log" in err, err
+    text = (lab.data / "hato.log").read_text(encoding="utf-8")
+    assert u"Traceback (most recent call last)" in text and u"in broken_render" in text, text
+
+
+def test_16l_p2_a_json_report_fault_after_a_run_is_one_sentence_and_a_log_traceback(
+        tmp_path, monkeypatch, capsys):
+    u"""16l P2 (#6) -- the same guard under `--json`: `report.ndjson` raises after the run
+    wrote its files. stderr holds ONE plain sentence (no traceback), hato.log holds the
+    traceback, and the exit is EXIT_FAILED."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+
+    def broken_ndjson(*args, **kwargs):
+        raise ValueError(u"the report cannot be written as NDJSON")
+
+    monkeypatch.setattr(report, "ndjson", broken_ndjson)
+    code, out, err = lab.cli(capsys, "--json")
+
+    assert code == run_cmd.EXIT_FAILED, (code, err)
+    assert u"Traceback (most recent call last)" not in err, err
+    assert sum(u"could not be shown" in line for line in err.split(u"\n")) == 1, err
+    assert u"hato.log" in err, err
+    text = (lab.data / "hato.log").read_text(encoding="utf-8")
+    assert u"Traceback (most recent call last)" in text and u"in broken_ndjson" in text, text
+
+
 # ===========================================================================
 # 9. exit codes -- ⛔ a refusal is not a failure
 # ===========================================================================
@@ -1710,6 +1799,12 @@ def _stable(text, lab):
 #: thirteen are `.srt`, which the ruled default -- `.ass` preferred, the other kind
 #: never -- no longer offers. Measured whole (a line diff of the full render, not
 #: pytest's elided one): that number is the ONLY change.
+#: ⚠ 16i (the Frieren fix v2, Q1) put Haruhana's STATED `- 31 [JPN].ass` first; ⭐ 16k's
+#: default favourite group (NanakoRaws, fork 3) puts NanakoRaws' `S2 - 03` first again,
+#: so episode 3 reads as it did before 16i. ⭐ And episode 4 now fetches NanakoRaws'
+#: `S2 - 04 … .ass` (101 B here) where shincaps' (108 B) won before -- both untagged,
+#: both literal: only SIZE parted them (46,979 against 46,499 bytes), and a favourite
+#: now does. Measured whole: those are the only changes.
 SNAPSHOT_RUN = u"""\
   Sousou no Frieren 2nd Season  S2
   \u21b3 parsed "frieren" \u2192 jimaku entry 11446
@@ -1726,7 +1821,7 @@ SNAPSHOT_RUN = u"""\
   \u2299  01               subtitle already present \u2014 skipped, no request made
   \u2298  02               no subtitle track in the video \u2014 can't sync yet, nothing downloaded
 
-  \u2713  04   \u2193 108 B   +0.13s     96% \u00b7 locked      \u2192 frieren S2 - 04.ja.ass
+  \u2713  04   \u2193 101 B   +0.13s     96% \u00b7 locked      \u2192 frieren S2 - 04.ja.ass
   \u2713  05   \u2193 95 B    +0.13s     96% \u00b7 locked      \u2192 frieren S2 - 05.ja.ass
   \u2691  06   \u2193 95 B    -33.07 / -42.96 @3:18   91% \u00b7 strong \u00b7 2 segments
                                             \u2192 frieren S2 - 06.ja.ass
@@ -2171,3 +2266,46 @@ def test_15_the_untimed_flag_reaches_the_run_through_the_real_entry_point(
     shown = flat(out)
     assert u"≈ not timed · another provider, may be off" in shown, shown
     assert u"1 fetched, not timed" in shown, shown
+
+
+@pytest.mark.parametrize("where, extra", [("render", ()), ("ndjson", ("--json",))])
+def test_16l_p2_a_report_fault_after_the_run_is_one_sentence_and_the_log(
+        tmp_path, monkeypatch, capsys, where, extra):
+    u"""⚠ #6 -- a fault in the REPORT, after a run that wrote files: exit 1, one plain
+    sentence on stderr (no traceback on screen), the traceback in hato.log."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+
+    def broken(*args, **kwargs):
+        raise ValueError(u"the report broke")
+
+    monkeypatch.setattr(run_cmd.report, where, broken)
+    code, out, err = lab.cli(capsys, *extra)
+
+    assert code == run_cmd.EXIT_FAILED, err
+    assert u"Traceback (most recent call last)" not in err, err
+    assert err.strip().splitlines() == [
+        u"hato: the run finished, but its report could not be shown "
+        u"(ValueError: the report broke) -- the details are in hato.log."], err
+    text = (lab.data / "hato.log").read_text(encoding="utf-8")
+    assert u"Traceback (most recent call last)" in text and u"in broken" in text, text
+    assert list(lab.subs.iterdir()) or list(lab.media.glob(u"*.jpn.*")), u"the run's files went"
+
+
+def test_16z_D4_one_run_one_log_block_when_stdout_breaks_after_the_log(
+        tmp_path, monkeypatch, capsys):
+    u"""Z-D4: the run's block was already in hato.log when SHOWING the report failed
+    (`hato | more` closed: OSError 22) -- and `_report_fault` wrote a SECOND block for the
+    same run, which `_trim` then counted as a run. One run, one block; the fault is still
+    the one plain sentence on stderr."""
+    lab = normal(Lab(tmp_path), monkeypatch)
+
+    def broken_pipe(args, text):
+        raise OSError(22, u"Invalid argument")
+
+    monkeypatch.setattr(run_cmd, "_say", broken_pipe)
+    code, out, err = lab.cli(capsys)
+
+    assert code == run_cmd.EXIT_FAILED, err
+    assert sum(u"could not be shown" in line for line in err.split(u"\n")) == 1, err
+    text = (lab.data / "hato.log").read_text(encoding="utf-8")
+    assert text.count(u"=== hato ") == 1, text

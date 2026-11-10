@@ -135,23 +135,32 @@ def test_pooling_the_releases_into_one_range_gives_a_worse_result(tmp_path, read
     assert right_and_wrong(per_release) == (available, 0)
     right, _wrong = right_and_wrong(pooled)
     assert right < available, (right, available)
-    lost = sorted(n for n, i in reading.items() if i.episode not in season["numbers"])
+    # ⚠ AMENDED v2 (2026-10-11): by the number a file is ALIGNED by -- `S02E06.第34話`
+    # is season 2's 6 since tsubasa reads both numbers, so it is no longer "the other way".
+    # ⚠ AMENDED 16z (A4): pass 0's floor is per LANDING file now, so the names' stated +28 is
+    # no longer dropped because the pooled part also holds 01-10. It places every ABSOLUTE
+    # file where it belongs and the SEASONAL ones are lost -- still one numbering lost whole,
+    # nothing placed wrong, and what is kept is kept by the statement, never by the fit.
+    lost = sorted(n for n, i in reading.items() if episodes._numbered(i)[1] in season["numbers"])
     still = sorted(c.name for v in videos for c in pooled.per_video.get(str(v.path), ()) if c.name in lost)
-    assert lost and still == [], still
+    assert lost and still == [] and _wrong == 0, (still, _wrong)
     assert any(g.quality == "range" for g in per_release.groups)
-    assert not any(g.quality == "range" for g in pooled.groups), pooled.groups
+    assert all(g.how.startswith(episodes.STATED_SAY[u"names"]) for g in pooled.groups
+               if g.quality == "range"), pooled.groups
 
 
 def test_a_release_whose_names_read_two_numberings_is_split_and_every_file_lands_on_its_episode(
         tmp_path, reading, season):
     """⚠ Measured on the capture: the Amazon WEBRip reads `S02E06.第34話 …` as 34
     with no season. Aligned ALONE -- nothing to borrow an offset from -- every
-    Amazon file must still land on its true episode and no other."""
+    Amazon file must still land on its true episode and no other.
+    ⚠ AMENDED v2 (2026-10-11): tsubasa now reads BOTH numbers (`dual_numbering`), so the
+    release is no longer split -- ONE season-2 part, its whole range at 0."""
     amazon = [f for f in FILES if u".Amazon." in f["name"]]
     assert {reading[f["name"]].season is None for f in amazon} == {True, False}, "the capture mixes both"
     videos = stubs(tmp_path / "v", seasonal(season["numbers"]))
     a = episodes.align(amazon, videos, workdir=tmp_path / "w")
-    assert len(a.groups) == 2 and {g.quality for g in a.groups} == {"overlap"}, a.groups   # two PARTIAL parts
+    assert len(a.groups) == 1 and a.groups[0].quality == "range" and a.groups[0].season == 2, a.groups
     for f in amazon:
         info = reading[f["name"]]
         true_episode = info.episode if info.season is not None else info.episode - season["shift"]
@@ -382,7 +391,10 @@ def test_one_video_matches_literal_numbers_only_and_says_it_is_the_soft_spot(tmp
     # red when `position` landed -- exactly what it should do. A lone video now ALSO
     # gets the weakest hypothesis from releases that number the season differently,
     # because refusing to offer anything is not one of Rule 1's options.
-    assert {c.quality for c in got} <= {"literal", "position"}
+    # ⚠ AMENDED v2 (2026-10-11): a release placed by an offset its names or the list
+    # STATE is evidence even for one video -- the soft spot is the arithmetic's, not theirs.
+    assert {c.quality for c in got if not c.stated} <= {"literal", "position"}
+    assert {c.offset for c in got if c.stated} <= {season["shift"]}, got
     assert any(c.quality == "literal" for c in got)
     note, = [n for n in a.notes if u"soft spot" in n]
     assert u"matched literally" in note
@@ -1072,3 +1084,603 @@ def test_a_film_and_an_unnumbered_video_have_no_newest(tmp_path):
         episode, season = None, None
     a = episodes.align([], [], workdir=tmp_path / "w", movie=True)
     assert episodes.newest_offered(a, Film()) is None
+
+
+# ---------------------------------------------------------------------------
+# ⭐ THE FRIEREN FINDING (2026-09-27, re-measured 2026-10-12): a fit by LENGTH alone
+# ---------------------------------------------------------------------------
+#
+# Entry 11446's Amazon WEBRip is two parts (`S02E01-05, 09-10` read as season 2,
+# `S02E06.第34話` read as an absolute 34). Any two runs of equal length fit at ONE
+# offset, so its 3-file part "fitted" a 3-video folder at +3 -- `range` -- and the
+# untimed road placed episode 34 for 31. These are the witnesses.
+
+_PROVEN = ("range", "overlap")
+
+
+def _absolute(season_read, episode, season):
+    u"""An episode in the capture's absolute count: a seasonal number inside the
+    season's own range is shifted; anything else already counts on."""
+    if season_read is not None and episode in season["numbers"]:
+        return episode + season["shift"]
+    return episode
+
+
+def _wrong_proven(a, videos, season):
+    out = []
+    for v in videos:
+        want = _absolute(v.season, v.episode, season)
+        for c in a.per_video.get(str(v.path), ()):
+            if c.quality in _PROVEN and _absolute(c.info.season, c.info.episode, season) != want:
+                out.append((v.episode, c.name, c.quality, c.offset))
+    return out
+
+
+def _count_on_part(a):
+    return [g for g in a.groups if g.group.endswith(u"Amazon.ja-jp[sdh]") and g.season is None]
+
+
+NETFLIX_LIKE = u"Sousou.no.Frieren.S02E%02d.1080p.NF.WEB-DL.AAC2.0.H.264.mkv"
+
+
+@pytest.mark.parametrize("naming", ["absolute", "S02E count-on"])
+def test_a_part_its_own_release_contradicts_is_not_proven_by_its_length(tmp_path, season, naming):
+    u"""WITNESS A. The Amazon release ALONE against three videos of the season's middle.
+    ⭐ The harm is real first: the count-on part is exactly as long as the folder and
+    sits at a re-numbered offset -- the shape that fits uniquely by length alone."""
+    amazon = [f for f in UNDUAL if u".Amazon." in f["name"]]          # v2: a release that SWITCHES
+    shift = season["shift"]
+    numbers = [n + shift for n in season["numbers"][2:5]]           # 31, 32, 33
+    pattern = absolute if naming == "absolute" else (lambda ns: [NETFLIX_LIKE % n for n in ns])
+    videos = stubs(tmp_path / "v", pattern(numbers))
+    a = episodes.align(amazon, videos, workdir=tmp_path / "w")
+    part, = _count_on_part(a)
+    assert len(part.episodes) == len(videos) and part.offsets and 0 not in part.offsets, part
+    assert _wrong_proven(a, videos, season) == [], _wrong_proven(a, videos, season)
+    assert part.quality == "guess" and part.how.startswith(episodes.DISPUTED), part
+
+
+@pytest.mark.parametrize("naming", ["absolute", "S02E count-on"])
+def test_the_whole_entry_offers_no_wrong_episode_as_proven_and_keeps_the_right_ones(
+        tmp_path, season, naming):
+    u"""WITNESS B. The whole entry against the same three videos: the right files won
+    already, but the wrong Amazon file was a FIT -- #2 under `.srt` -- and the untimed
+    road tries the next file when the first fails its download or its Japanese read."""
+    shift = season["shift"]
+    numbers = [n + shift for n in season["numbers"][2:5]]
+    pattern = absolute if naming == "absolute" else (lambda ns: [NETFLIX_LIKE % n for n in ns])
+    videos = stubs(tmp_path / "v", pattern(numbers))
+    a = episodes.align(FILES, videos, workdir=tmp_path / "w")
+    assert _wrong_proven(a, videos, season) == [], _wrong_proven(a, videos, season)
+    for v in videos:
+        right = [c for c in a.per_video[str(v.path)] if c.quality == "range" and c.offset == 0]
+        assert len(right) >= 4, (v.name, right)      # Haruhana, Kitauji, Nekomoe, Netflix
+
+
+def test_a_fragment_of_a_split_release_lends_its_offset_to_no_other_release(tmp_path, season):
+    u"""WITNESS C -- found by the 2026-10-11 sweep. Seasonal names S2 05-07 against the
+    whole entry: the 3-file Amazon part fitted +29 by length, and pass 2 LENT +29 to every
+    absolute release as *"where WEBRip.Amazon fit a whole range"* -- so Haruhana's 34 was a
+    proven fit for 05, #1 under `.ass` and `.srt`."""
+    videos = stubs(tmp_path / "v", seasonal(season["numbers"][4:7]))   # 05, 06, 07
+    a = episodes.align(UNDUAL, videos, workdir=tmp_path / "w")       # v2: a release that SWITCHES
+    part, = _count_on_part(a)
+    assert len(part.episodes) == len(videos), part                     # the harm is real
+    assert _wrong_proven(a, videos, season) == [], _wrong_proven(a, videos, season)
+    assert not [g for g in a.groups if u"fit a whole range" in g.how and u"Amazon" in g.how], [
+        (g.group, g.how) for g in a.groups]
+
+
+def test_the_number_both_sides_write_is_never_demoted(tmp_path, season):
+    u"""The control: the same split release against 34-36 -- the count-on part sits at
+    offset 0, where the file's number IS the video's -- keeps its proven fit."""
+    amazon = [f for f in UNDUAL if u".Amazon." in f["name"]]          # v2: a release that SWITCHES
+    numbers = [n + season["shift"] for n in season["numbers"][5:8]]   # 34, 35, 36
+    videos = stubs(tmp_path / "v", absolute(numbers))
+    a = episodes.align(amazon, videos, workdir=tmp_path / "w")
+    part, = _count_on_part(a)
+    assert part.offsets == (0,) and part.quality in _PROVEN, part
+    for v in videos:
+        assert [c for c in a.per_video[str(v.path)]
+                if c.quality in _PROVEN and c.info.episode == v.episode], v.name
+
+
+def test_16n_F9_a_release_split_across_two_partitions_lends_nothing(tmp_path, season):
+    u"""16n F-9 (adversary A1). WITNESS C with the release's two parts in DIFFERENT
+    partitions: a folder of absolute-named 29, 30, 37, 38 and `S2`-named 05-07. Amazon's
+    season-2 part (01-05, 09-10) fits the absolute videos best (4 at -28), its 34-36
+    fragment the S2 videos (3 at +29, by length) -- so pass 1 of the S2 partition saw ONE
+    Amazon part and called the release whole. Haruhana's 33-36 ties there at +28 (true)
+    and +29; borrowing the fragment's +29 put 34 on 05, 35 on 06, 36 on 07."""
+    shift = season["shift"]
+    amazon = [f for f in UNDUAL if u".Amazon." in f["name"]]          # v2: a release that SWITCHES
+    haruhana = [f for f in FILES if f["name"].startswith(u"[Haruhana]") and u"[JPN]" in f["name"]
+                and int(_re.search(u" - ([0-9]+) ", f["name"]).group(1)) in range(5 + shift, 9 + shift)]
+    s2 = stubs(tmp_path / "v", seasonal(season["numbers"][4:7])                  # 05, 06, 07
+               + absolute([n + shift for n in season["numbers"][0:2] + season["numbers"][8:10]]))
+    a = episodes.align(amazon + haruhana, s2, workdir=tmp_path / "w")
+    videos = [v for v in s2 if v.season is not None]
+    part, = _count_on_part(a)
+    # ⭐ the harm is real: the fragment is fitted against the S2 videos, its season part is not
+    assert part.partition == videos[0].season and len(part.episodes) == len(videos), part
+    assert [g for g in a.groups if u"Amazon" in g.group and g.season is not None
+            and g.partition is None], [(g.group, g.season, g.partition) for g in a.groups]
+    haru, = [g for g in a.groups if g.group == u"Haruhana" and g.partition == videos[0].season]
+    assert len(haru.episodes) == 4 and haru.offsets, haru            # it IS placed in the S2 videos
+    assert not [g for g in a.groups if u"fit a whole range" in g.how and u"Amazon" in g.how], [
+        (g.group, g.how) for g in a.groups]
+    wrong = _wrong_proven(a, videos, season)
+    assert [w for w in wrong if u"Amazon" not in w[1]] == [], wrong
+    assert shift in haru.offsets, haru                               # the true offset is still tried
+    # 🚨 AND THE FRAGMENT'S OWN FIT (lead's ruling, 16n): `range` +29 by length, and pass 3
+    # cannot dispute it -- its season part was fitted against the absolute videos. A fragment
+    # of a split release is never WHOLE, so the untimed road refuses it; timing still tries it.
+    for v in videos:
+        frag = [c for c in a.per_video[str(v.path)] if u"Amazon" in c.name]
+        assert frag and not [c for c in frag if _placeable(c)], [
+            (c.name, c.quality, c.offset, c.coverage) for c in frag]
+
+
+
+
+def test_releases_that_number_differently_never_dispute_each_other(tmp_path, season):
+    u"""A dispute is ONE release against itself. The whole season, seasonal names: every
+    release keeps its proven fit -- NanakoRaws at 0 and Haruhana at the season's shift put
+    different NUMBERS on video 1, and both are right."""
+    videos = stubs(tmp_path / "v", seasonal(season["numbers"]))
+    a = episodes.align(UNDUAL, videos, workdir=tmp_path / "w")      # v2: a release that SWITCHES
+    by_group = dict((g.group, g) for g in a.groups if g.season is None or g.group != u"WEBRip.Amazon.ja-jp[sdh]")
+    for group in (u"Haruhana", u"KitaujiSub", u"NanakoRaws", u"shincaps"):
+        assert by_group[group].quality in _PROVEN, by_group[group]
+    assert by_group[u"Haruhana"].offsets == (season["shift"],), by_group[u"Haruhana"]
+
+
+# ---------------------------------------------------------------------------
+# ⭐ v2 (2026-10-11): BOTH NUMBERS READ, AND A STATED BRIDGE
+# ---------------------------------------------------------------------------
+#
+# tsubasa now keeps the second number of `S02E06.第34話` (`Item.dual_numbering`), so
+# the Amazon release is ONE season-2 part, and its own names STATE the bridge
+# (S2E6 = 34: season 2 starts at 29). anime-relations states the same bridge for
+# releases whose names say nothing. A stated offset places a part; the arithmetic
+# only decides where nothing states one.
+
+import inspect as _inspect
+import re as _re
+
+from hato import untimed as _untimed
+
+
+def _placeable(c):
+    u"""The untimed road's own test where it has one (v1, v2); main's FITS otherwise --
+    so a red on main is the BEHAVIOUR, never a missing name."""
+    test = getattr(_untimed, "placeable", None)
+    return test(c) if test else c.quality in _untimed.FITS
+
+
+def _stated(c):
+    return getattr(c, "stated", None)
+
+
+def _dual(info):
+    return getattr(info, "dual_numbering", None)
+
+
+def _align(files, videos, workdir, bridge=None):
+    if bridge is not None and "bridge" in _inspect.signature(episodes.align).parameters:
+        return episodes.align(files, videos, workdir=workdir, bridge=bridge)
+    return episodes.align(files, videos, workdir=workdir)
+
+#: The capture's Amazon names with the season-episode taken OFF the three dual
+#: files -- a release that really does switch numbering, so changes (1) and (2)
+#: keep a witness after both numbers are read.
+UNDUAL = [dict(f, name=_re.sub(u"[.]S[0-9]{2}E[0-9]{2}[.](?=第)", u".", f["name"])) for f in FILES]
+
+FRIEREN_S2_ANILIST = 182255
+
+
+def _bridge():
+    try:
+        from hato import relations
+    except ImportError:
+        return object()                      # main: no list to ask -- `_align` drops it
+    found = relations.for_entry(FRIEREN_S2_ANILIST)
+    assert found is not None and found.shift == 28, found     # the snapshot states it
+    return found
+
+
+def _true_absolute(info, season):
+    if _dual(info):
+        return _dual(info)[2]
+    return _absolute(info.season, info.episode, season)
+
+
+def test_a_name_stating_both_numberings_joins_its_release_by_season(tmp_path, reading, season):
+    u"""WITNESS v2-A. tsubasa reads both numbers of `S02E06.第34話`; the file joins its
+    release's season-2 part, and the release is one part with no hole."""
+    amazon = [f for f in FILES if u".Amazon." in f["name"]]
+    dual = [_dual(reading[f["name"]]) for f in amazon if u"第" in f["name"]]
+    assert dual and all(d and d[0] == 2 and d[2] - d[1] == season["shift"] for d in dual), dual
+    videos = stubs(tmp_path / "v", seasonal(season["numbers"]))
+    a = episodes.align(amazon, videos, workdir=tmp_path / "w")
+    part, = [g for g in a.groups if u"Amazon" in g.group]
+    assert part.season == 2 and list(part.episodes) == season["numbers"], part
+    assert part.offsets == (0,) and part.quality == "range", part
+
+
+@pytest.mark.parametrize("numbers", [[31, 32, 33], [34, 35, 36], [30, 37], [38]])
+def test_the_names_state_the_bridge_and_the_right_file_is_placed(tmp_path, reading, season, numbers):
+    u"""WITNESS v2-B. Amazon ALONE against absolute-named videos, no list: its own names
+    state S2E6 = 34, so 31 is S2E3 -- placed, `stated`, and the untimed road may take it.
+    Main placed 34-36 for 31-33 (`range` +3) and v1 placed nothing."""
+    amazon = [f for f in FILES if u".Amazon." in f["name"]]
+    videos = stubs(tmp_path / "v", absolute(numbers))
+    a = episodes.align(amazon, videos, workdir=tmp_path / "w")
+    for v in videos:
+        got = [c for c in a.per_video.get(str(v.path), ()) if _placeable(c)]
+        assert [_true_absolute(c.info, season) for c in got] == [v.episode], (v.name, got)
+        assert _stated(got[0]) == u"names" and got[0].offset == -season["shift"], got
+
+
+def test_anime_relations_places_a_release_whose_names_state_nothing(tmp_path, reading, season):
+    u"""WITNESS v2-C. Haruhana alone (absolute names only) against S2 05-07: nothing in
+    its names says where season 2 starts, so without the list it is a tie and waits.
+    With anime-relations (182255: 29-38 -> 1-10) it is placed at +28."""
+    haruhana = [f for f in FILES if f["name"].startswith(u"[Haruhana]")]
+    videos = stubs(tmp_path / "v", seasonal([5, 6, 7]))
+    without = episodes.align(haruhana, videos, workdir=tmp_path / "a")
+    assert not [c for v in videos for c in without.per_video.get(str(v.path), ())
+                if _placeable(c)], u"the harm is real: alone it proves nothing"
+    a = _align(haruhana, videos, tmp_path / "b", bridge=_bridge())
+    for v in videos:
+        got = [c for c in a.per_video[str(v.path)] if _placeable(c)]
+        assert got and {c.info.episode for c in got} == {v.episode + season["shift"]}, (v.name, got)
+        assert {_stated(c) for c in got} == {u"anime-relations"}, got
+
+
+def test_a_seasonless_video_is_never_bridged_into_the_sequels_own_count(tmp_path, season):
+    u"""GUARD. `Frieren - 05` may be the FIRST season's 5: the list states nothing for it,
+    and nothing is placed by the bridge."""
+    haruhana = [f for f in FILES if f["name"].startswith(u"[Haruhana]")]
+    videos = stubs(tmp_path / "v", absolute([5, 6, 7]))
+    a = _align(haruhana, videos, tmp_path / "w", bridge=_bridge())
+    assert not [c for v in videos for c in a.per_video.get(str(v.path), ()) if _stated(c)], a.groups
+
+
+def test_two_sources_that_disagree_state_nothing(tmp_path, season):
+    u"""GUARD. The names say +28; a list that says +27 is contradicted, so neither speaks
+    (fail safe) and the fit falls back to the arithmetic."""
+    amazon = [f for f in FILES if u".Amazon." in f["name"]]
+    from hato import relations
+    wrong = relations.Bridge(27, 28, 37, 1, 10, u"anime-relations")
+    videos = stubs(tmp_path / "v", absolute([31, 32, 33]))
+    a = _align(amazon, videos, tmp_path / "w", bridge=wrong)
+    assert not [c for v in videos for c in a.per_video.get(str(v.path), ()) if _stated(c)]
+    assert not [c for v in videos for c in a.per_video.get(str(v.path), ()) if _placeable(c)
+                and c.offset not in (None, 0)], u"change 3 is the last resort, and it holds"
+
+
+def test_the_list_places_the_platforms_season_tag_on_an_absolute_number(tmp_path, season):
+    u"""WITNESS v2-D. Netflix-like video names `S02E31` (a season tag on the absolute number)
+    against Amazon alone: the names' bridge cannot speak (both sides read season 2), the
+    list reads NUMBERS -- 31 is in 29-38 -- and places S2E3."""
+    amazon = [f for f in FILES if u".Amazon." in f["name"]]
+    videos = stubs(tmp_path / "v", [NETFLIX_LIKE % n for n in (31, 32, 33)])
+    a = _align(amazon, videos, tmp_path / "w", bridge=_bridge())
+    for v in videos:
+        got = [c for c in a.per_video[str(v.path)] if _placeable(c)]
+        assert [_dual(c.info) or (c.info.season, c.info.episode) for c in got] == [
+            (2, v.episode - season["shift"])], (v.name, got)
+
+
+def test_names_that_state_two_starts_state_none(tmp_path, season):
+    u"""GUARD. One season, two files whose names disagree on where it starts (S2E6 = 34,
+    S2E7 = 45): the names state no bridge, a note says so, and nothing is placed as stated."""
+    amazon = [dict(f, name=f["name"].replace(u"第35話", u"第45話")) for f in FILES
+              if u".Amazon." in f["name"]]
+    assert any(u"第45話" in f["name"] for f in amazon)
+    videos = stubs(tmp_path / "v", absolute([31, 32, 33]))
+    a = episodes.align(amazon, videos, workdir=tmp_path / "w")
+    assert not [c for v in videos for c in a.per_video.get(str(v.path), ()) if _stated(c)]
+    assert [n for n in a.notes if u"two different starts" in n], a.notes
+
+
+def test_a_later_season_written_twice_is_no_bridge(tmp_path):
+    u"""GUARD. `S02E06.第6話` -- a platform writing the SEASON's number twice -- would say
+    season 2 starts at broadcast episode 1, which no later season can. It states nothing:
+    seasonless 05-07 get no stated fit from it."""
+    amazon = [dict(f, name=f["name"].replace(u"第34話", u"第6話").replace(u"第35話", u"第7話")
+                   .replace(u"第36話", u"第8話")) for f in FILES if u".Amazon." in f["name"]]
+    assert any(u"S02E06.第6話" in f["name"] for f in amazon)
+    videos = stubs(tmp_path / "v", absolute([5, 6, 7]))
+    a = episodes.align(amazon, videos, workdir=tmp_path / "w")
+    assert not [c for v in videos for c in a.per_video.get(str(v.path), ()) if _stated(c)], [
+        (c.name, c.offset, _stated(c)) for v in videos for c in a.per_video.get(str(v.path), ())]
+
+
+def test_a_stated_part_wins_a_dispute_it_has_less_support_in(tmp_path, season):
+    u"""GUARD. The release's season part is stated (-28) but lands only 2 files on 29-32; its
+    switched part (`第34-37話`, no season-episode) slides to +5 and lands 4. Support alone
+    would keep the slide -- 34 for 29. A stated numbering wins the dispute whatever the count.
+    The 37 is constructed in the capture's own shape (`file_dict`).
+    ⚠ PORTED 2026-10-31 (the proof queue's anchor preflight): the prototype added this guard
+    after its tests diff was taken (`out/2026-10-11-frieren-fix-v2/witness_v2_align_support.py`),
+    so 16i's port missed it and MFS-17 named a witness that did not exist -- pytest's "not
+    found", which a runner reads as a KILL.
+    ⭐ 16o (MFS-17 survived): 16n's fragment rule (F-9) now keeps the slid part off the
+    untimed road whether or not it loses the dispute (coverage < 1), so `_placeable` no
+    longer sees the dispute. What winning it still decides is the TIMED road's order: the
+    slid part is a `guess`, and `rank` tries it after the stated file (`rank.py`: a guess
+    after every known number). Left out of the dispute, it was `range` and tried FIRST."""
+    amazon = [f for f in UNDUAL if u".Amazon." in f["name"]
+              and (u"第" in f["name"] or u".S02E01." in f["name"] or u".S02E02." in f["name"])]
+    amazon.append(file_dict(u"葬送のフリーレン.第37話 ヒンメルの自伝.WEBRip.Amazon.ja-jp[sdh].srt"))
+    videos = stubs(tmp_path / "v", absolute([29, 30, 31, 32]))
+    a = _align(amazon, videos, tmp_path / "w", bridge=_bridge())
+    wrong = [(v.episode, c.name, c.quality, c.offset) for v in videos
+             for c in a.per_video.get(str(v.path), ())
+             if _placeable(c) and _true_absolute(c.info, season) != v.episode]
+    assert wrong == [], wrong
+    for v in videos:
+        ranked = [r.candidate for r in rank.rank(a.per_video.get(str(v.path), ())).ordered]
+        right = [i for i, c in enumerate(ranked) if _true_absolute(c.info, season) == v.episode]
+        slid = [(i, c.name, c.quality) for i, c in enumerate(ranked)
+                if _true_absolute(c.info, season) != v.episode]
+        assert slid and all(q == u"guess" for _i, _n, q in slid), (v.episode, slid)
+        assert not right or max(right) < min(i for i, _n, _q in slid), (v.episode, slid)
+
+
+@pytest.mark.parametrize("numbers", [[29, 30, 31], [30, 31, 32]])
+def test_a_stated_part_disputes_a_slid_part_of_its_own_release(tmp_path, season, numbers):
+    u"""GUARD (found by the v2 sweep, 2026-10-11). A release that really SWITCHES numbering
+    (`第34話` with no season-episode), the list ON, videos 29-31: the season part is placed
+    by the list at -28; the 3-file absolute part slid to +5 by length. The stated part is the
+    other side of that dispute -- left out of it, 34 was a proven fit for 29."""
+    amazon = [f for f in UNDUAL if u".Amazon." in f["name"]]
+    videos = stubs(tmp_path / "v", absolute(numbers))
+    a = _align(amazon, videos, tmp_path / "w", bridge=_bridge())
+    wrong = [(v.episode, c.name, c.quality, c.offset) for v in videos
+             for c in a.per_video.get(str(v.path), ())
+             if _placeable(c) and _true_absolute(c.info, season) != v.episode]
+    assert wrong == [], wrong
+
+
+# ---------------------------------------------------------------------------
+# LAYER 16, 16i -- what the prototype left to do: the commands pass the list's
+# bridge, and every place that explains a placement says when it was STATED
+# ---------------------------------------------------------------------------
+
+def test_one_video_placed_by_a_stated_offset_says_so_in_its_note(tmp_path, season):
+    u"""16i. A lone video is the soft spot -- unless its place was STATED. Amazon alone
+    against `Frieren - 31`: its names state +28, and the note names them (and the release),
+    where it used to call the whole thing a literal match. Control: Haruhana alone, the
+    names silent and no list -- the note says nothing was stated."""
+    amazon = [f for f in FILES if u".Amazon." in f["name"]]
+    v = stubs(tmp_path / "v", absolute([31]))
+    a = episodes.align(amazon, v, workdir=tmp_path / "w")
+    assert [c for c in a.per_video[str(v[0].path)] if _stated(c) == u"names"], a.per_video
+    note, = [n for n in a.notes if u"soft spot" in n]
+    assert u"STATED by the entry's own names for " in note and u"Amazon" in note, note
+    assert u"otherwise matched literally" in note, note
+
+    haruhana = [f for f in FILES if f["name"].startswith(u"[Haruhana]")]
+    w = stubs(tmp_path / "h", seasonal([5]))
+    b = episodes.align(haruhana, w, workdir=tmp_path / "x")
+    note, = [n for n in b.notes if u"soft spot" in n]
+    assert u"STATED" not in note and u"its number was matched literally" in note, note
+
+
+def test_hato_align_with_anilist_says_the_list_states_the_offset(tmp_path, capsys, season):
+    u"""16i. `hato align --explain --anilist 182255` hands the command the list's bridge,
+    as a run does: Haruhana alone against S2 05-07 is placed at +28 and the row says
+    anime-relations stated it. Without --anilist the header says the list was not asked
+    and nothing is stated -- the two arms differ ONLY by the flag."""
+    listed = tmp_path / "haruhana.json"
+    listed.write_text(json.dumps([f for f in FILES if f["name"].startswith(u"[Haruhana]")],
+                                 ensure_ascii=False), encoding="utf-8")
+    stubs(tmp_path / "v", seasonal([5, 6, 7]))
+    base = ["--explain", str(tmp_path / "v"), "11446", "--files", str(listed)]
+
+    assert _run_align(base) == 0
+    without = capsys.readouterr().out
+    assert u"anime-relations not asked" in without.splitlines()[0], without
+    assert u"states offset" not in without, without
+
+    assert _run_align(base + ["--anilist", str(FRIEREN_S2_ANILIST)]) == 0
+    with_list = capsys.readouterr().out
+    head = with_list.splitlines()[0]
+    assert u"AniList 182255" in head and u"29-38 are its own 1-10" in head, head
+    assert u"anime-relations states offset +%d" % season["shift"] in with_list, with_list
+
+
+def test_hato_align_with_an_anilist_the_list_does_not_know_says_so(tmp_path, capsys):
+    stubs(tmp_path / "v", seasonal([5]))
+    assert _run_align(["--explain", str(tmp_path / "v"), "11446", "--files",
+                       str(API / "entries_11446_files.json"), "--anilist", "1"]) == 0
+    assert u"anime-relations: no rule for AniList 1" in capsys.readouterr().out.splitlines()[0]
+
+
+@pytest.mark.parametrize("listed, says", [
+    ((), u"the list could not be read"),
+    ((u"- ?|?|1:21-24 -> ?|?|9:1-4!", u"- ?|?|1:25-28 -> ?|?|9:1-4!"), u"state no one shift"),
+], ids=["unreadable", "disagree"])
+def test_16n_F11_a_list_that_could_not_be_read_is_told_from_one_with_no_rule(
+        tmp_path, capsys, monkeypatch, listed, says):
+    u"""A10: the header said *"no rule for AniList N"* when the list failed to load, or
+    when it held several rules for the entry that disagree -- three cases, one sentence."""
+    from hato import relations
+    rules = relations.parse(u"::rules\n" + u"\n".join(listed) + u"\n")
+    monkeypatch.setattr(relations, "load", lambda path=None: list(rules))
+    monkeypatch.setattr(relations, "_LOADED", [])
+    stubs(tmp_path / "v", seasonal([5]))
+    assert _run_align(["--explain", str(tmp_path / "v"), "11446", "--files",
+                       str(API / "entries_11446_files.json"), "--anilist", "9"]) == 0
+    head = capsys.readouterr().out.splitlines()[0]
+    assert says in head and u"no rule for" not in head, head
+
+
+def test_the_names_state_in_words_that_agree(tmp_path, season):
+    u"""16i. *"its names states offset"* was the prototype's grammar. The `how` of a part
+    the names place is *"its names state offset -28"*."""
+    amazon = [f for f in FILES if u".Amazon." in f["name"]]
+    a = episodes.align(amazon, stubs(tmp_path / "v", absolute([31, 32, 33])), workdir=tmp_path / "w")
+    text = episodes.explain(a)
+    assert u"its names state offset -%d" % season["shift"] in text, text
+    assert u"names states" not in text, text
+
+
+
+# ---------------------------------------------------------------------------
+# 16z -- the Opus adversary's alignment rows (Z-B1, Z-B2, A4-A7). Each one a WRONG
+# episode stated (or proven) by a bridge; each fix states nothing rather than guess.
+# ---------------------------------------------------------------------------
+
+HARUHANA = u"[Haruhana] Sousou no Frieren - %02d [WebRip][HEVC-10bit 1080p][JPN].ass"
+NANAKO = u"[NanakoRaws] Sousou no Frieren S%d - %02d (NTV 1080p HEVC AAC).ass"
+
+
+def _longer_season(numbers, shift=11):
+    u"""A season of 13 after a season of 11 (Oshi no Ko's shape), named as Amazon names
+    Frieren: `S02E01.第12話` -- the season's OWN count (1-13) reaches into the absolute
+    count (12-24), so `12` alone is season 2's 12 or its 1."""
+    return [file_dict(u"葬送のフリーレン.S02E%02d.第%d話.WEBRip.Amazon.ja-jp[sdh].srt" % (n, n + shift))
+            for n in numbers]
+
+
+def _season_episode(c):
+    dual = _dual(c.info)
+    return dual[1] if dual else c.info.episode
+
+
+@pytest.mark.parametrize("shape", ["seasonless videos", "seasonless release", "the videos say"])
+def test_16z_zb1_a_season_whose_own_count_reaches_its_shift_states_nothing(tmp_path, shape):
+    u"""Z-B1 (probe 1). `bridge_for` refuses a list rule whose two counts overlap; the
+    names' bridge never asked. +11 from `S02E01.第12話`, with 13 episodes in the season:
+    (a) seasonless videos 01-13 numbered by the season -- S2E01 went on video 12 as STATED;
+    (b) a seasonless release numbering by the season (`- 12`, `- 13`) went on S2 01-02;
+    (c) the names show only E01-E02, but the folder's own `S2 - 13` shows the season is
+    longer than the shift -- the same (b), told by the videos."""
+    if shape == "seasonless videos":
+        files, videos = _longer_season(range(1, 14)), stubs(tmp_path / "v", absolute(range(1, 14)))
+        mine = lambda c: u"Amazon" in c.name
+        right = lambda c, v: _season_episode(c) == v.episode
+    else:
+        files = _longer_season(range(1, 14) if shape == "seasonless release" else (1, 2))
+        files += [file_dict(HARUHANA % n) for n in (12, 13)]
+        videos = stubs(tmp_path / "v", seasonal(range(1, 14)))
+        mine = lambda c: u"Haruhana" in c.name
+        right = lambda c, v: c.info.episode == v.episode
+    a = episodes.align(files, videos, workdir=tmp_path / "w")
+    rows = [(v.episode, c.name, c.offset, _stated(c)) for v in videos
+            for c in a.per_video.get(str(v.path), ()) if mine(c)]
+    assert not [r for r in rows if r[3]], rows
+    assert not [(v.episode, c.name) for v in videos for c in a.per_video.get(str(v.path), ())
+                if mine(c) and _placeable(c) and not right(c, v)], rows
+
+
+def test_16z_zb2_an_open_rule_states_nothing_for_a_video_at_or_past_its_start(tmp_path):
+    u"""Z-B2 (probe 2). `13-? -> 1-?!` never says where the entry's own count ends, and
+    `bridge_for` invents it (12). With S2 01-12 on jimaku and `S2 - 13` just aired, the
+    list put S2 **01** on 13 as stated. Now the rule says nothing for 13 -- and, as
+    without the list, nothing is placed; below its start it still speaks (01-12 at 0)."""
+    from hato import relations
+    rule = u"::rules\n- 54852|47240|163142:13-? -> 57612|48397|172192:1-?!\n"
+    bridge = relations.bridge_for(relations.parse(rule), 172192)
+    assert bridge is not None and (bridge.shift, bridge.abs_lo, bridge.abs_hi) == (12, 13, None)
+    files = [file_dict(NANAKO % (2, n)) for n in range(1, 13)]
+    videos = stubs(tmp_path / "v", seasonal([13]))
+    a = episodes.align(files, videos, workdir=tmp_path / "w", bridge=bridge)
+    got = [(c.name, c.offset, _stated(c)) for c in a.per_video.get(str(videos[0].path), ())]
+    assert not [g for g in got if g[2]] and not [
+        c for c in a.per_video.get(str(videos[0].path), ()) if _placeable(c)], got
+    below = stubs(tmp_path / "b", seasonal([3, 4, 5]))
+    b = episodes.align(files, below, workdir=tmp_path / "x", bridge=bridge)
+    for v in below:
+        assert [(c.info.episode, c.offset, _stated(c)) for c in b.per_video[str(v.path)]] == [
+            (v.episode, 0, u"anime-relations")], v.name
+
+
+@pytest.mark.parametrize("source", ["the list", "the names"])
+def test_16z_a4_a_whole_show_release_on_the_sequel_entry_is_placed_where_stated(tmp_path, source):
+    u"""A4. Haruhana `- 01..38` (both seasons, absolute) on the S2 entry against S2 01-10.
+    +28 is stated -- by the list (11-28 are in neither of the entry's counts, so the release
+    numbers across the seasons) or by Amazon's `S02E06.第34話` -- and pass 0 dropped it
+    because files 01-28 would fall below episode 0; offset 0 then took `range`: S1's n on
+    S2's n, all ten. ⭐ The floor is per LANDING file: 29-38 land, as stated."""
+    files = [file_dict(HARUHANA % n) for n in range(1, 39)]
+    bridge = None
+    if source == "the list":
+        bridge = _bridge()
+    else:
+        files += [f for f in FILES if u".Amazon." in f["name"]]
+    videos = stubs(tmp_path / "v", seasonal(range(1, 11)))
+    a = episodes.align(files, videos, workdir=tmp_path / "w", bridge=bridge)
+    for v in videos:
+        got = [(c.info.episode, c.offset, _stated(c)) for c in a.per_video[str(v.path)]
+               if u"Haruhana" in c.name and _placeable(c)]
+        assert got == [(v.episode + 28, 28, u"anime-relations" if bridge else u"names")], (v.name, got)
+
+
+def test_16z_a4_a_stated_offset_that_lands_nothing_vetoes_offset_0(tmp_path):
+    u"""A4, the veto. The same release, the names stating +28, and the folder holds S2 11-12
+    (aired after the release's 38): +28 lands nothing, and offset 0 -- covering every
+    video -- took `range`: S1's 11 and 12 on S2's. A statement that the part numbers
+    across the seasons contradicts offset 0: nothing is placed.
+    GUARD: a seasonless release numbering the SEASON (`- 01..10`, nothing past the shift)
+    is not contradicted -- against S2 01-10 it keeps its own numbers."""
+    files = [file_dict(HARUHANA % n) for n in range(1, 39)]
+    files += [f for f in FILES if u".Amazon." in f["name"]]
+    videos = stubs(tmp_path / "v", seasonal([11, 12]))
+    a = episodes.align(files, videos, workdir=tmp_path / "w")
+    got = [(v.episode, c.name, c.offset, c.quality) for v in videos
+           for c in a.per_video.get(str(v.path), ()) if u"Haruhana" in c.name and _placeable(c)]
+    assert got == [], got
+    own = [file_dict(HARUHANA % n) for n in range(1, 11)] + [f for f in FILES if u".Amazon." in f["name"]]
+    videos = stubs(tmp_path / "s", seasonal(range(1, 11)))
+    b = episodes.align(own, videos, workdir=tmp_path / "x")
+    for v in videos:
+        assert [(c.info.episode, c.offset) for c in b.per_video[str(v.path)]
+                if u"Haruhana" in c.name and _placeable(c)] == [(v.episode, 0)], v.name
+
+
+def test_16z_a5_past_the_budget_the_note_names_the_stated_offset(tmp_path, monkeypatch, season):
+    u"""A5. Past the full-fit budget only the structural offsets are COUNTED -- but pass 0
+    adds the stated one, and the note said it did not. Amazon alone against 31-33, its
+    names stating -28 (not a structural offset here): the note names it and who said it."""
+    amazon = [f for f in FILES if u".Amazon." in f["name"]]
+    monkeypatch.setattr(episodes, "FULL_FIT_BUDGET", 1)
+    a = episodes.align(amazon, stubs(tmp_path / "v", absolute([31, 32, 33])), workdir=tmp_path / "w")
+    notes = [n for n in a.notes if u"full-fit budget" in n]
+    assert notes and all(u"episode-1 offsets" in n for n in notes), a.notes
+    stated = u"the offset -%d stated by the entry's own names" % season["shift"]
+    assert [n for n in notes if stated in n], notes
+
+
+def test_16z_a6_a_part_labelled_season_1_is_never_bridged_by_the_list(tmp_path):
+    u"""A6 (probe 3). `S1 - 01..10` on the S2 entry -- a mislabel, or the first season's --
+    against seasonless 31-33: the list read its numbers as the entry's own count and placed
+    S1 03-05 at -28, `range`, stated. A video that says season 1 is never bridged; nor is
+    a file that does."""
+    files = [file_dict(NANAKO % (1, n)) for n in range(1, 11)]
+    videos = stubs(tmp_path / "v", absolute([31, 32, 33]))
+    a = episodes.align(files, videos, workdir=tmp_path / "w", bridge=_bridge())
+    got = [(v.episode, c.name, c.offset, c.quality, _stated(c)) for v in videos
+           for c in a.per_video.get(str(v.path), ()) if _stated(c) or _placeable(c)]
+    assert got == [], got
+
+
+def test_16z_a7_names_that_disagree_with_themselves_silence_the_list_too(tmp_path):
+    u"""A7. Amazon's names state two starts for season 2 (`第34話` and a `第45話`), and a
+    WRONG list states 27: the names were silent, so the list spoke alone and put S2E04 on
+    31. Names that cannot agree on a season say its counts are not what anyone thinks --
+    the list does not speak alone there, and the note says so."""
+    from hato import relations
+    amazon = [dict(f, name=f["name"].replace(u"第35話", u"第45話")) for f in FILES
+              if u".Amazon." in f["name"]]
+    wrong = relations.Bridge(27, 28, 37, 1, 10, u"anime-relations")
+    videos = stubs(tmp_path / "v", absolute([31, 32, 33]))
+    a = episodes.align(amazon, videos, workdir=tmp_path / "w", bridge=wrong)
+    got = [(v.episode, c.name, c.offset, _stated(c)) for v in videos
+           for c in a.per_video.get(str(v.path), ()) if _stated(c)]
+    assert got == [], got
+    assert [n for n in a.notes if u"two different starts" in n and u"anime-relations" in n], a.notes

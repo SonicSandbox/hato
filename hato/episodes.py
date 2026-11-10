@@ -24,6 +24,20 @@ tests/test_align_episodes.py measures exactly that).
 Amazon WEBRip reads `S02E06.第34話 …` as episode 34 with no season, and its
 siblings as season 2. So a release is split by the season tsubasa read before
 anything is fitted, and each part is placed on its own.
+⭐ LAYER 16 (16i, the Frieren fix v2): tsubasa 0.1.11 reads BOTH numbers of such
+a name (`dual_numbering` = (2, 6, 34)), and the file joins its release by the
+SEASON-episode -- Amazon is one season-2 part again. Its names then STATE the
+bridge between the counts (34 - 6 = +28), and so may anime-relations
+(`hato/relations.py`, the entry's own `!` rule): see pass 0 below.
+
+⭐ PASS 0, BEFORE ANY ARITHMETIC: an offset STATED by the entry's own names or by
+anime-relations places the part (`Candidate.stated`), whatever the fit likes
+best -- any run of N fits any N videos at one offset, and only a statement about
+the show's counts can say which. Fail safe: names and list disagree -> nothing is
+stated; two shifts in one season, a shift of 0 above season 1, or below 0 ->
+nothing; a seasonless video is never bridged into a sequel's own count. A stated
+part is never demoted in a dispute, and is the other side of every one it is in.
+Stated, but nothing of it lands -> the arithmetic decides, as before.
 
 ⭐ WHEN A PART CANNOT PLACE ITSELF -- its best fit ties (Amazon's 34-36 fit
 anywhere from +26 to +33 against 1-10) -- the tie is broken, in this order, by:
@@ -61,8 +75,9 @@ two fit it equally well.
     a special (tokens.is_special)     SP1 <-> SP1, and never episode 1
     a half episode (13.5)             13.5 <-> 13.5, never rounded
 ⛔ REFUSED, never guessed: a file or a video holding several episodes.
-⚠ ONE VIDEO has no range to fit -- only literal numbers are matched. The known
-soft spot (02-data-model.md §Where this breaks); every such alignment says so.
+⚠ ONE VIDEO has no range to fit -- only literal numbers are matched, and a STATED
+offset (pass 0) where one exists. The known soft spot (02-data-model.md §Where
+this breaks); every such alignment says so, and names who stated what.
 
 This module decides who is OFFERED. hato/rank.py decides who goes first, and
 the timing verdict decides who is right.
@@ -104,9 +119,9 @@ FULL_FIT_BUDGET = 250000
 class Candidate(object):
     """One jimaku file offered for one video. Derived; never stored."""
 
-    __slots__ = ("file", "info", "group", "offset", "quality", "coverage", "reason")
+    __slots__ = ("file", "info", "group", "offset", "quality", "coverage", "reason", "stated")
 
-    def __init__(self, file, info, group, offset, quality, coverage, reason):
+    def __init__(self, file, info, group, offset, quality, coverage, reason, stated=None):
         self.file = file            # the jimaku dict, untouched
         self.info = info            # tsubasa's reading of its name (hato.names.NameInfo)
         self.group = group          # tokens.release_group(name)
@@ -114,6 +129,10 @@ class Candidate(object):
         self.quality = quality      # one of QUALITIES
         self.coverage = coverage    # 0..1 -- the share of its part's episodes that land on a video
         self.reason = reason        # one sentence, for a person
+        #: ⭐ None, or WHO STATED the offset: "names" (a file on the entry writes both
+        #: numberings, `S02E06.第34話`) or "anime-relations" (the outside list). A
+        #: stated offset is a fact about the show's counts, not the fit's arithmetic.
+        self.stated = stated
 
     @property
     def name(self):
@@ -191,10 +210,11 @@ class Alignment(object):
 # align
 # ---------------------------------------------------------------------------
 
-def align(files, videos, *, workdir, movie=False):
+def align(files, videos, *, workdir, movie=False, bridge=None):
     """-> Alignment. `files`: jimaku file dicts. `videos`: tsubasa discovered
     video items (or anything with .path .name .title .season .episode
-    .episode_candidates). `workdir`: where hato.names may put its stubs."""
+    .episode_candidates). `workdir`: where hato.names may put its stubs.
+    `bridge`: hato.relations.Bridge for this entry, or None (the list is silent)."""
     files, dropped = _distinct(files)
     videos = sorted(videos, key=_video_order)
     result = Alignment(videos, files, movie)
@@ -203,10 +223,18 @@ def align(files, videos, *, workdir, movie=False):
                             % (dropped, "y was" if dropped == 1 else "ies were"))
     infos = read_names([f["name"] for f in files], workdir, group_of=tokens.release_group)
     by_name = dict((i.name, i) for i in infos)
+    unread = [i.name for i in infos if i.unread]
+    if unread:
+        # ⛔ 16z Z-D1: no stub could hold these names unchanged -- offered to no video and
+        # said, never read from a shortened name as a wrong episode.
+        files = [f for f in files if not by_name[f["name"]].unread]
+        result.notes.append(u"%d file(s) have names too long to read whole in hato's work folder "
+                            u"and were left out rather than read shortened: %s"
+                            % (len(unread), _listed(unread)))
     if movie:
         _align_movie(result, files, by_name)
     else:
-        _align_episodes(result, files, by_name)
+        _align_episodes(result, files, by_name, bridge)
     if not videos:
         result.notes.append(u"There are no videos to align against.")
     return result
@@ -331,11 +359,67 @@ class _Part(object):
 def _part_key(group, info):
     """-> (release group, season read). 🚨 THE ONE PLACE A FILE JOINS A PART.
     Per release AND per numbering: never pooled across releases, and a release
-    whose names read two numberings is split in two."""
-    return (group, info.season)
+    whose names read two numberings is split in two.
+
+    ⭐ A name that states BOTH numberings (`S02E06.第34話`, tsubasa's
+    `dual_numbering`) joins by its SEASON: its siblings number by season, so it
+    is one release with no hole -- never a 3-file fragment that fits any 3
+    videos at one offset (the Frieren finding, 2026-10-11)."""
+    return (group, _numbered(info)[0])
 
 
-def _align_episodes(result, files, by_name):
+def _numbered(info):
+    """-> (season, episode) a file is ALIGNED by: its season-episode when its name
+    states both numberings, else what tsubasa read."""
+    dual = getattr(info, "dual_numbering", None)
+    if dual:
+        return dual[0], dual[1]
+    return info.season, info.episode
+
+
+class _NameBridge(object):
+    """What the entry's OWN names state: season s episode e is absolute e + k(s).
+
+    From every file whose name writes both numberings. ⛔ Fail safe: a season
+    whose files state two different k states nothing.
+    ⛔ 16z (Z-B1): nor does a season whose OWN count reaches its absolute start -- the rule
+    `relations.bridge_for` keeps (`own_hi >= src_lo`). 13 episodes after 11: `12` is the
+    season's 12 or its 1, and no number can say which. The own count is the highest
+    season-episode the names, the part's own files and the season's videos show."""
+
+    def __init__(self, infos):
+        seen = collections.defaultdict(set)
+        own = collections.defaultdict(int)     # season -> its highest own episode named
+        for info in infos:
+            dual = getattr(info, "dual_numbering", None)
+            if dual and dual[0] is not None and _is_whole(dual[1]) and _is_whole(dual[2]):
+                k = int(dual[2]) - int(dual[1])
+                # ⛔ A later season cannot start at broadcast episode 1: `S02E06.第6話` is a
+                # platform writing the SEASON's number twice, not a bridge (and k < 0 is noise).
+                if k < 0 or (dual[0] >= 2 and k == 0):
+                    continue
+                seen[dual[0]].add(k)
+                own[dual[0]] = max(own[dual[0]], int(dual[1]))
+        self.shift = dict((s, ks.pop()) for s, ks in seen.items() if len(ks) == 1)
+        self.own = dict(own)
+        self.conflicts = sorted(s for s, ks in seen.items() if len(ks) > 1)
+
+    def offset(self, part_season, video_season, part_episodes=(), video_episodes=()):
+        if part_season is not None and video_season is None:
+            season, sign, seen = part_season, -1, part_episodes
+        elif part_season is None and video_season is not None:
+            season, sign, seen = video_season, 1, video_episodes
+        else:
+            return None
+        k = self.shift.get(season)
+        if k is None:
+            return None
+        if k and max([self.own.get(season, 0)] + [int(e) for e in seen]) > k:
+            return None     # ⛔ Z-B1: the own count reaches k + 1 -- the counts overlap
+        return sign * k
+
+
+def _align_episodes(result, files, by_name, bridge=None):
     parts = collections.OrderedDict()   # _part_key -> _Part
     specials, halves = [], []
     refused_files, not_subtitles, skipped, unnumbered = [], [], [], []
@@ -368,7 +452,7 @@ def _align_episodes(result, files, by_name):
         if part is None:
             part = parts[key] = _Part(key[0], key[1])
         part.files.append((f, info))
-        part.episodes.add(int(info.episode))
+        part.episodes.add(int(_numbered(info)[1]))
 
     partitions = collections.OrderedDict()  # video season -> {episode: [video]}
     special_videos, half_videos = [], []
@@ -392,10 +476,25 @@ def _align_episodes(result, files, by_name):
         partitions.setdefault(video.season, {}).setdefault(int(video.episode), []).append(video)
         result.per_video[path] = []
 
+    names = _NameBridge(by_name.values())
+    if names.conflicts:
+        result.notes.append(u"The entry's names state two different starts for season %s; "
+                            u"no bridge is taken from them%s." % (u", ".join(
+                                u"%d" % s for s in names.conflicts),
+                                u" or from anime-relations" if bridge is not None else u""))
     allowed = _one_partition_each(result, list(parts.values()), partitions)
+    # 🚨 SPLIT IS A FACT OF THE RELEASE, NOT OF ONE PARTITION (16n F-9): counted inside
+    # `_fit_partition`, a release whose two parts went to DIFFERENT partitions looked whole
+    # in each, and its 3-file fragment lent +29 again (absolute 29, 30, 37, 38 + S2 05-07).
+    # -> {group: the episodes of the WHOLE release}, for every release in more than one part.
+    release = collections.Counter()
+    for p in parts.values():
+        release[p.group] += len(p.episodes)
+    split = dict((g, release[g]) for g, n in collections.Counter(p.group for p in parts.values()).items() if n > 1)
     for season, by_episode in partitions.items():
         compatible = [p for p in parts.values() if season in allowed[id(p)]]
-        _fit_partition(result, compatible, season, by_episode, len(partitions) > 1)
+        _fit_partition(result, compatible, season, by_episode, len(partitions) > 1,
+                       split, names, bridge)
 
     _match_literally(result, specials, special_videos, halves, half_videos)
     _finish(result, partitions, refused_files, not_subtitles, skipped, unnumbered)
@@ -475,9 +574,34 @@ def _seasons_text(seasons):
                          for s in sorted(seasons, key=lambda s: (s is None, s or 0)))
 
 
-def _fit_partition(result, parts, season, by_episode, several):
+def _stated(part, season, video_eps, names, bridge):
+    """-> (offset, who) a bridge STATES for this part against these videos, or None.
+
+    ⛔ Both sources speak and disagree -> nothing is stated (fail safe)."""
+    said = []
+    if names is not None:
+        d = names.offset(part.season, season, part.episodes, video_eps)
+        if d is not None:
+            said.append((d, u"names"))
+    # ⛔ 16z (A7): names that disagree with THEMSELVES about a season are not "silent" --
+    # they say its counts are not what anyone thinks, so the list does not speak alone there.
+    silenced = names is not None and (part.season in names.conflicts or season in names.conflicts)
+    if bridge is not None and not silenced:
+        try:
+            d = bridge.offset(part.episodes, season, video_eps, part_season=part.season)
+        except Exception:   # noqa: BLE001 -- ⛔ a second opinion never stops a run
+            d = None
+        if d is not None:
+            said.append((d, u"anime-relations"))
+    if not said or len(set(d for d, _w in said)) != 1:
+        return None
+    return said[0][0], u" and ".join(w for _d, w in said)
+
+
+def _fit_partition(result, parts, season, by_episode, several, split, names=None, bridge=None):
     video_eps = sorted(by_episode)
     fits = []
+    past = []       # the parts past the full-fit budget -- noted after pass 0 (16z A5)
     for part in parts:
         overlaps, full = _overlaps(part.episodes, video_eps)
         best = max(overlaps.values()) if overlaps else 0
@@ -487,27 +611,69 @@ def _fit_partition(result, parts, season, by_episode, several):
                                                          else u"S%d videos" % season))
         summary.partition = season
         if not full:
-            result.notes.append(
-                u"%s (%s): %d episodes against %d videos is past the full-fit budget, so only the "
-                u"literal, first/last-anchored and episode-1 offsets were tried."
-                % (part.group, summary.numbering, len(part.episodes), len(video_eps)))
+            past.append((part, summary))
         fits.append((part, overlaps, best, ties, summary))
 
-    # pass 1 -- a part with ONE best offset, backed by at least two episodes, places itself
+    # pass 0 -- ⭐ an offset STATED by the entry's own names or by anime-relations places
+    # the part, whatever the arithmetic likes best: any run of N fits any N videos at one
+    # offset, and only a statement about the show's counts can say which (2026-10-11).
     clean = collections.OrderedDict()   # offset -> [groups that fitted their whole range there]
     decided = {}
+    stated = {}
+    video_set = set(video_eps)
+    for i, (part, overlaps, best, ties, summary) in enumerate(fits):
+        said = _stated(part, season, video_eps, names, bridge)
+        if said is None:
+            continue
+        offset, who = said
+        # ⭐ 16z (A4): the floor is per LANDING file. A whole-show 1-38 release stated +28
+        # lands 29-38; that 01-28 would fall below episode 0 is no reason to drop it.
+        landed = sum(1 for e in part.episodes if e - offset in video_set and e - offset >= EPISODE_FLOOR)
+        if not landed:
+            # stated, but nothing of it is here: the fit decides -- ⛔ 16z (A4) but never at
+            # offset 0 for a part numbered PAST the stated shift: it counts on from the first
+            # season, so its 11 is S1's 11, not this season's (a seasonless 01-10 still may be).
+            if offset > 0 and max(part.episodes) > offset and overlaps.pop(0, None) is not None:
+                best = max(overlaps.values()) if overlaps else 0
+                ties = sorted(d for d, c in overlaps.items() if c == best) if best else []
+                fits[i] = (part, overlaps, best, ties, summary)
+            continue
+        overlaps.setdefault(offset, landed)
+        # ⭐ every video covered (and more than one) is a `range` fit, as offset 0 covering
+        # every video already is in pass 2 -- a stated offset is at least that good
+        whole = landed == len(video_eps) > 1
+        decided[id(part)] = ([offset], "range" if whole else "overlap",
+                             u"%s offset %s" % (STATED_SAY[who], _fmt_offset(offset)))
+        stated[id(part)] = who
+
+    for part, summary in past:
+        # ⚠ 16z (A5): pass 0 tried the stated offset too, structural or not -- say so
+        also = (u", and the offset %s stated by %s," % (_fmt_offset(decided[id(part)][0][0]),
+                                                        STATED_BY[stated[id(part)]])
+                if id(part) in stated else u"")
+        result.notes.append(
+            u"%s (%s): %d episodes against %d videos is past the full-fit budget, so only the "
+            u"literal, first/last-anchored and episode-1 offsets%s were tried."
+            % (part.group, summary.numbering, len(part.episodes), len(video_eps), also))
+
+    # pass 1 -- a part with ONE best offset, backed by at least two episodes, places itself
+    # 🚨 A release split in two (`_part_key`) LENDS nothing: its part's "whole range" is a
+    # fragment of the release, whole only because it is as long as the folder -- Amazon's
+    # 34-36 against S2 05-07 lent +29, and every absolute release took episode 34 for 05.
+    # ⛔ `split` comes from the WHOLE alignment (`_align_episodes`), never from `parts`.
     for part, overlaps, best, ties, summary in fits:
+        if id(part) in decided:
+            continue
         if best >= 2 and len(ties) == 1:
             offset = ties[0]
             whole = best == len(part.episodes) == len(video_eps)
             decided[id(part)] = ([offset], "range" if whole else "overlap",
                                  u"its whole range fits at one offset" if whole
                                  else u"one offset fits best; part of the range lands")
-            if whole:
+            if whole and part.group not in split:
                 clean.setdefault(offset, []).append(part.group)
 
     # what each release's self-placed parts already cover
-    video_set = set(video_eps)
     covered = collections.defaultdict(set)
     for part, overlaps, best, ties, summary in fits:
         if id(part) in decided:
@@ -570,6 +736,9 @@ def _fit_partition(result, parts, season, by_episode, several):
                                      u"ends and to episode 1"
                                      % u", ".join(_fmt_offset(d) for d in anchors))
 
+    # pass 3 -- a release that disagrees with itself proves no offset there
+    decided.update(_disputed(fits, decided, video_set, stated))
+
     unplaced, unplaced_parts = [], []
     for part, overlaps, best, ties, summary in fits:
         result.groups.append(summary)
@@ -586,22 +755,35 @@ def _fit_partition(result, parts, season, by_episode, several):
         summary.offsets, summary.quality, summary.how = tuple(offsets), quality, how
         summary.coverage = max(overlaps[d] for d in offsets) / float(len(part.episodes))
         for offset in offsets:
-            coverage = overlaps[offset] / float(len(part.episodes))
+            # 🚨 A FRAGMENT IS NEVER WHOLE (16n F-9, the lead's ruling): a re-numbered fit of
+            # one part of a split release, which nothing STATES, is measured against the whole
+            # release -- so `untimed.placeable` refuses it and only timing may place it. Pass 3
+            # cannot catch it when the release's other part was fitted to another partition.
+            fragment = offset != 0 and part.group in split and id(part) not in stated
+            coverage = overlaps[offset] / float(split[part.group] if fragment else len(part.episodes))
             for f, info in sorted(part.files, key=lambda fi: fi[0]["name"]):
-                target = int(info.episode) - offset
+                target = int(_numbered(info)[1]) - offset
                 for video in by_episode.get(target, ()):
                     result.per_video[str(video.path)].append(Candidate(
                         f, info, part.group, None if quality == "literal" else offset, quality,
-                        coverage, _reason(part, summary, quality, offset, info, target, len(video_eps))))
+                        coverage, _reason(part, summary, quality, offset, info, target, len(video_eps)),
+                        stated.get(id(part))))
     if len(video_eps) == 1:
         # ⭐ THE SOFT SPOT, ANSWERED. Anything still unplaced gets one last, weakest
         # hypothesis -- the video's number read as a POSITION in the release's own
         # range -- and the timing verdict rules on it (Rule 1).
         guessed = _offer_by_position(result, unplaced_parts, video_eps[0], by_episode)
         still = [s for p, s in unplaced_parts if id(p) not in guessed]
-        note = (u"One video (episode %s): there is no range to align against, so its number was "
-                u"matched literally%s -- the known soft spot (02-data-model.md)."
-                % (_fmt_ep(video_eps[0]),
+        said = collections.OrderedDict()   # who stated -> the releases it placed
+        for part in parts:
+            if id(part) in stated:
+                said.setdefault(stated[id(part)], []).append(part.group)
+        where = u"".join(u"where it falls was STATED by %s for %s, and " % (
+                             STATED_BY[who], _listed(sorted(set(groups))))
+                         for who, groups in said.items())
+        note = (u"One video (episode %s): there is no range to align against, so %sits number was "
+                u"%smatched literally%s -- the known soft spot (02-data-model.md)."
+                % (_fmt_ep(video_eps[0]), where, u"otherwise " if where else u"",
                    u", then by position in each release's own numbering" if guessed else u""))
         if still:
             note += (u" %d release(s) were not offered at all, because the video's number does "
@@ -609,6 +791,78 @@ def _fit_partition(result, parts, season, by_episode, several):
                          u"%s (%s, %s)" % (s.group, s.numbering, _ranges(s.episodes))
                          for s in still)))
         result.notes.append(note)
+
+
+#: The opening words of a disputed part's `how` -- `_reason` reads them (one copy).
+DISPUTED = u"its release disagrees with itself"
+
+#: `Candidate.stated` -> the words that say who stated an offset (pass 0). One copy:
+#: `explain`'s `how`, the single-video note and `rank --explain` all read it.
+STATED_BY = {u"names": u"the entry's own names", u"anime-relations": u"anime-relations",
+             u"names and anime-relations": u"the entry's own names and anime-relations"}
+STATED_SAY = {u"names": u"its names state", u"anime-relations": u"anime-relations states",
+              u"names and anime-relations": u"its names and anime-relations state"}
+
+
+def _claims(part, offsets, video_set):
+    u"""video episode -> the set of the part's own episode numbers it puts there."""
+    out = collections.defaultdict(set)
+    for d in offsets:
+        for e in part.episodes:
+            if e - d in video_set:
+                out[e - d].add(e)
+    return out
+
+
+def _disputed(fits, decided, video_set, stated=None):
+    u"""🚨 A RELEASE CARRIES EACH EPISODE ONCE -- so when two of its parts put DIFFERENT
+    episodes on one video, one of them is wrong, and a fit by length alone cannot say
+    which. -> {id(part): the demoted decision}
+
+    MEASURED 2026-09-27, re-measured 2026-10-12 (the Frieren finding): entry 11446's
+    Amazon WEBRip splits in two -- `S02E01-05, 09-10` read as season 2 and
+    `S02E06.第34話` read as an absolute 34 -- and against a folder of 31, 32, 33 the
+    3-file part fits the 3 videos at ONE offset, +3, because any two runs of equal
+    length do. Pass 1 called that `range`; the untimed road placed episode 34 for 31.
+    The release's other part, at its own offset, claimed the same three videos for
+    episodes 1-3. Both cannot be true.
+
+    ⭐ The part that lands MORE of its files keeps its fit (the release's numbering is
+    mostly where it says); equal, and neither is proven -- it becomes a `guess`, which
+    timing may still try and the untimed road never places.
+    ⛔ Never demoted: a placement at the number BOTH sides write (offset 0) -- that is
+    not the alignment's arithmetic, it is the names agreeing (rule 3).
+    ⚠ Only `range` and `overlap` are demoted: a guess is one already."""
+    placed = [(part, overlaps) for part, overlaps, _b, _t, _s in fits if id(part) in decided]
+    # ⭐ v2: a STATED part is never demoted -- and it IS the other side of every dispute
+    # it is in, whatever the support: a part its own release's stated numbering
+    # contradicts proves nothing (measured: leaving stated parts out let Amazon's
+    # `第34話` part slide to +5 against 29-31 with the list on, 60 wrong fits).
+    stated = stated or {}
+    out = {}
+    for part, overlaps in placed:
+        offsets, quality, _how = decided[id(part)]
+        if quality not in PROVEN or list(offsets) == [0] or id(part) in stated:
+            continue
+        mine = _claims(part, offsets, video_set)
+        support = max(overlaps[d] for d in offsets)
+        for other, theirs_overlaps in placed:
+            if other is part or other.group != part.group:
+                continue
+            theirs_offsets = decided[id(other)][0]
+            theirs = _claims(other, theirs_offsets, video_set)
+            clash = sorted(v for v in mine if v in theirs and mine[v] != theirs[v])
+            if not clash or (support > max(theirs_overlaps[d] for d in theirs_offsets)
+                             and id(other) not in stated):
+                continue
+            out[id(part)] = (offsets, "guess", u"%s -- its %s part puts episodes %s on the same "
+                             u"videos (%s), so %s is not proven" % (
+                                 DISPUTED, u"absolute" if other.season is None
+                                 else u"season %d" % other.season,
+                                 _ranges(set(e for v in clash for e in theirs[v])),
+                                 _ranges(clash), u" and ".join(_fmt_offset(d) for d in offsets)))
+            break
+    return out
 
 
 #: ⭐ How many items a note NAMES before it counts the rest. A note is a sentence,
@@ -664,7 +918,7 @@ def _offer_by_position(result, unplaced_parts, episode, by_episode):
         if not (1 <= wanted <= len(eps)):        # ⛔ the guard, and it is load-bearing
             continue
         target = eps[wanted - 1]
-        hits = [(f, info) for f, info in part.files if info.episode == target]
+        hits = [(f, info) for f, info in part.files if _numbered(info)[1] == target]
         if not hits:
             continue
         offset = target - wanted
@@ -695,16 +949,20 @@ def _reason(part, summary, quality, offset, info, target, n_videos):
     who = u"%s (%s, episodes %s)" % (part.group, summary.numbering, _ranges(part.episodes))
     if quality == "range":
         return (u"%s fits the %d videos cleanly at offset %s, so its episode %s is episode %s."
-                % (who, n_videos, _fmt_offset(offset), _fmt_ep(info.episode), _fmt_ep(target)))
+                % (who, n_videos, _fmt_offset(offset), _fmt_ep(_numbered(info)[1]), _fmt_ep(target)))
     if quality == "literal":
         return u"%s has no fit that stands out; its number %s is taken literally." % (
-            who, _fmt_ep(info.episode))
+            who, _fmt_ep(_numbered(info)[1]))
+    if quality == "guess" and summary.how.startswith(DISPUTED):
+        return (u"%s: offset %s is a GUESS (%s): its episode %s would be episode %s. The timing "
+                u"verdict decides." % (who, _fmt_offset(offset), summary.how,
+                                       _fmt_ep(_numbered(info)[1]), _fmt_ep(target)))
     if quality == "guess":
         return (u"%s could sit at several offsets and nothing broke the tie, so offset %s is a "
                 u"GUESS (%s): its episode %s would be episode %s. The timing verdict decides."
-                % (who, _fmt_offset(offset), summary.how, _fmt_ep(info.episode), _fmt_ep(target)))
+                % (who, _fmt_offset(offset), summary.how, _fmt_ep(_numbered(info)[1]), _fmt_ep(target)))
     return (u"%s fits best at offset %s (%s), so its episode %s is episode %s."
-            % (who, _fmt_offset(offset), summary.how, _fmt_ep(info.episode), _fmt_ep(target)))
+            % (who, _fmt_offset(offset), summary.how, _fmt_ep(_numbered(info)[1]), _fmt_ep(target)))
 
 
 def _match_literally(result, specials, special_videos, halves, half_videos):
@@ -978,13 +1236,13 @@ def _offer_lines(cands):
     by_key = collections.OrderedDict()
     for c in sorted(cands, key=lambda c: (c.quality == "movie", c.quality == "literal",
                                           c.offset if c.offset is not None else 0,
-                                          c.info.episode if c.info.episode is not None else 0)):
+                                          _numbered(c.info)[1] if _numbered(c.info)[1] is not None else 0)):
         if c.quality == "movie":
             key = (u"", u"movie")
         elif c.quality == "literal":
-            key = (u"file %s" % _fmt_ep(c.info.episode), u"literal")
+            key = (u"file %s" % _fmt_ep(_numbered(c.info)[1]), u"literal")
         else:
-            key = (u"file %s" % _fmt_ep(c.info.episode), u"offset %s" % _fmt_offset(c.offset))
+            key = (u"file %s" % _fmt_ep(_numbered(c.info)[1]), u"offset %s" % _fmt_offset(c.offset))
         groups = by_key.setdefault(key, collections.OrderedDict())
         groups[c.group] = groups.get(c.group, 0) + 1
     w0 = max([len(k[0]) for k in by_key] or [0])

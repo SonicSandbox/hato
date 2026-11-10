@@ -24,6 +24,12 @@ and `--stage --json --progress` streams `{"type": "progress", "stage": "download
 ⛔ From a checkout, on any OS, this only ever TELLS (`update.check`): updating a
 checkout is git's job. ⛔ Nothing here runs at import.
 
+⭐ LAYER 16 (16j): `--auto` -- the tray's hourly child and the daily run's -- also
+refreshes the anime-relations list, AFTER its own check -- at most weekly, never while
+a run holds the lock, silent unless it fails (`relations.refresh`). ⛔ 16z (Z-C6):
+`--auto` ONLY. `--check` (the window's, read at its exit: *Check now* waited for the
+download), a bare `hato update`, `--stage`, `--apply` and `--rollback` never do.
+
 Exit codes: 0 it ran, whatever it found · 1 staging did not finish -- the reason on
 stderr and in hato.log (`=== hato update … ===`), and under `--json` one
 `{"type": "error", "reason": …}` object · 2 usage.
@@ -272,8 +278,36 @@ def _tried(version, now):
         pass
 
 
+def refresh_relations(now):
+    u"""16j -- the weekly anime-relations refresh, beside `--auto`'s update check. ->
+    what happened (`relations.refresh`'s word, or `in-run`). ⛔ Never during a run: the
+    tray's hourly child and the daily run's come here (16z: never the window's), and a
+    run may be aligning with the list right now. ⛔ Never raises."""
+    from hato import relations, runlock
+    try:
+        # ⚠ 16n (R6): HELD or UNUSABLE -- an unreadable lock is no run, but not free
+        # either; unsure is not now
+        if runlock.lock_state() != runlock.FREE:
+            return u"in-run"
+    except Exception:                         # noqa: BLE001 -- unsure: not now
+        return u"in-run"
+    return relations.refresh(now)
+
+
 def run(args, now=None):
     now = time.time() if now is None else now
+    code = _run(args, now)
+    # 🚨 16n (R5): only after a NORMAL answer -- never after an exception or Ctrl-C
+    # (it ran in `finally`, and a network GET started anyway)
+    # 🚨 16z (Z-C6): `--auto` ONLY -- the tray's hourly child and the daily run's. The
+    # window reads its `--check` child at exit: *Check now* waited for the list's
+    # download too. (`--if-due` from memory -- 16n R4 -- is a `--check`: never either.)
+    if args.auto:
+        refresh_relations(now)
+    return code
+
+
+def _run(args, now):
     if args.auto:
         return _auto(args, now)
     if args.apply or args.rollback:

@@ -143,6 +143,24 @@
         "why": "LAYER 15, the pure half: which file a video with NO subtitle track gets, by its NAME (fork 7) -- exact (named as the video, for a video whose name SAYS its provider -- edge 3), same (the leading [group] or its full-width brackets, punctuation and case folded but `&` and `+` kept, and no two DIFFERENT stated sources: TV, BD, DVD, WEB -- a broadcaster is TV, a disc never is, and the group's own name states none), other (any_provider only) -- the tier AHEAD of rank's order and rank's order within it; the sources a name states, a call sign only inside a bracket; and the words of a wait (a week, then stopped), none of which names the setting or another provider (fork 14). Pure functions, no I/O. ⛔ Structurally cannot cover whether the chosen file IS the episode's -- nothing can, which is why the road says NOT TIMED everywhere; test_pipeline §15 drives the road end to end."
       },
       {
+        "name": "connect",
+        "cmd": ["-m", "pytest", "tests/test_connect.py", "-q", "--no-header"],
+        "default": true,
+        "why": "LAYER 16, Surasura Connect: surasura.json read (torn once -> read again, over 4 KiB, cli gone, too new), the effective state's every row (off, absent, too-new, offline, drops, registers), hato.json (only from a frozen exe or HATO_TOOLS_CLI, rewritten only when a field other than `updated` differs, `verbs: []` with `cli` kept when off, UTF-8, atomic, a crashed writer's temp cleared), the tools folder tied to Surasura's and the runner's guard, and the `surasura_connect` key with Go back. Every check in its own HOUSEKI_TOOLS_DIR."
+      },
+      {
+        "name": "connect_e2e",
+        "cmd": ["-m", "pytest", "tests/test_connect_e2e.py", "-q", "--no-header"],
+        "default": false,
+        "why": "OPT-IN, never in the default run: LAYER 16's hand-off against a REAL Surasura -- a scratch clone of public 3.0-dev with its own venv, a throwaway root and tools folder in hato AppData (RUNBOOK 16a; HATO_E2E_SURASURA names another). Make cards off -> dropped only; on -> register lands in New arrivals; the show placed in Current -> after-show; the same record -> same; Surasura's folder scan first -> already + new, a success. Run by name -- `python run_tests.py connect_e2e` -- after any change to connect.py or to Surasura's contract."
+      },
+      {
+        "name": "relations",
+        "cmd": ["-m", "pytest", "tests/test_relations.py", "-q", "--no-header"],
+        "default": true,
+        "why": "LAYER 16 (16i, the Frieren fix v2): the anime-relations reader -- the bundled snapshot states Frieren S2 (182255: 29-38 -> 1-10); `!` / `~` / `?` read; anything that cannot state ONE shift states nothing; a seasonless or season-1 video is never bridged into a sequel's own count. Pure, no I/O but the bundled file."
+      },
+      {
         "name": "align_episodes",
         "cmd": ["-m", "pytest", "tests/test_align_episodes.py", "-q", "--no-header"],
         "default": true,
