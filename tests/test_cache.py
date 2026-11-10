@@ -168,6 +168,28 @@ def test_a_video_no_bigger_than_128_KiB_is_covered_whole(tmp_path):
                 "covered whole" % (size, offset))
 
 
+# ⭐ The contract's seven vectors (Surasura's `content_key`; hato-answers.md §Q2):
+# byte i = i % 251. Surasura keys a pairing by exactly this string, so ANY change to
+# the recipe -- the size's width or byte order, the 128 KiB line, the head/tail --
+# makes every pairing hato ever handed over unfindable. Pinned literally.
+CONTENT_KEY_VECTORS = (
+    (1000, "v1-a596f696db9299c940c4dbdc5184bd859baa40d980cbd1472f0610998da0971d"),
+    (100000, "v1-35ad68a7b9d386a036d20004ecb65b14ae2d42d8861480babaa36bfea33580cd"),
+    (300000, "v1-4b07ea24a4bef035d540cdbb9d00020d83e09245e2455baebe498315e35e1fbd"),
+    (0, "v1-af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"),
+    (65536, "v1-3192f0200afc272bf234494004343e428a932e979a8b840cd14da25465b442a7"),
+    (131072, "v1-316145b76fc25a90874a7d8d32948df2bbac7fb27295ff6e8ada20d663622ed2"),
+    (131073, "v1-359195e004e4bfd1a0a6fdbb6a51f0eb1640d0832fe345e4a356713a3a341573"),
+)
+
+
+@pytest.mark.parametrize("size,want", CONTENT_KEY_VECTORS)
+def test_the_video_hash_matches_the_contracts_seven_vectors(tmp_path, size, want):
+    video = tmp_path / ("vector-%d.mkv" % size)
+    video.write_bytes(bytes(i % 251 for i in range(size)))
+    assert cache.video_hash(video) == want, size
+
+
 def test_the_video_hash_is_stable_versioned_and_survives_a_rename(tmp_path):
     body = os.urandom(300 * KiB)
     video = tmp_path / "[Group] Show - 03.mkv"

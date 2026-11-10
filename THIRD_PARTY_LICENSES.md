@@ -12,12 +12,17 @@ depends on, what it does **not** redistribute, and under what terms.
 
 ## Bundled in the Python package
 
-**hato's own artwork, and nothing else of anyone's.** `hato/data/` carries the
+**hato's own artwork, and one list of someone else's.** `hato/data/` carries the
 hato icon exported at seven sizes plus a `.ico`, and three surasura icons for
 the optional integration — all original work by the author of this project,
-under the same GPL-3.0-or-later terms. No vocabulary, no corpus, no
-third-party binaries. Everything else hato needs it either generates at
-runtime or finds on the machine.
+under the same GPL-3.0-or-later terms — and:
+
+| Bundled | Licence | Note |
+| --- | --- | --- |
+| **anime-relations** (`hato/data/anime-relations.txt`), from [`erengy/anime-relations`](https://github.com/erengy/anime-relations) | **Public domain** — the file's own header: *"This file is in the public domain."* | Which episode numbers of one season a fansub group's continuous numbering stands for (Taiga's list). The snapshot shipped is the one marked `last_modified: 2026-10-11`; hato fetches a newer copy at most once a week into its own cache folder (see the README's *Network*), and the copy in the package is never changed |
+
+No vocabulary, no corpus, no third-party binaries. Everything else hato needs
+it either generates at runtime or finds on the machine.
 
 > ⚠ **This section used to say "Nothing," and that was wrong twice** — it
 > overlooked the icons above and said nothing at all about the Windows
@@ -40,6 +45,7 @@ built with PyInstaller in `--onedir` form and contains, beside hato itself:
 | **OpenSSL** (`libssl`, `libcrypto`) | **Apache-2.0** | Via CPython's `ssl` module |
 | **numpy** | **BSD-3-Clause** | tsubasa's alignment |
 | **PyInstaller bootloader** | **GPL-2.0-with-exception** | The exception explicitly permits distributing the frozen application under its own terms |
+| **anime-relations** (`_internal/hato/data/anime-relations.txt`), from [`erengy/anime-relations`](https://github.com/erengy/anime-relations) | **Public domain** (stated in the file's header) | The same snapshot as the Python package (`last_modified: 2026-10-11`), refreshed at most weekly into hato's cache at runtime |
 | the runtime dependencies listed below | as listed | py7zr, rarfile, requests, certifi and their own dependencies |
 
 ⛔ **`LICENSE` and this file travel inside that zip**, at its top level. GPLv3
@@ -185,7 +191,7 @@ are in the tree. Read from installed metadata on 2026-09-17:
 | Via | Packages |
 | --- | --- |
 | `requests` | certifi (MPL-2.0) · urllib3 (MIT) · charset-normalizer (MIT) · idna (BSD-3-Clause) · **chardet (LGPL, v2 or later)** · PySocks (BSD) |
-| `guessit` | rebulk (MIT) · babelfish (BSD-3-Clause) · python-dateutil (dual BSD / Apache-2.0) · six (MIT) · importlib_metadata (Apache-2.0) · zipp (MIT) · packaging (dual Apache-2.0 / BSD) |
+| `guessit` | rebulk (MIT) · babelfish (BSD-3-Clause) · python-dateutil (dual BSD / Apache-2.0) · tzdata (Apache-2.0; python-dateutil 3.0 requires it) · six (MIT) · importlib_metadata (Apache-2.0) · zipp (MIT) · packaging (dual Apache-2.0 / BSD) |
 | `py7zr` | several LGPL-2.1-or-later components — pyppmd, pybcj, inflate64, multivolumefile — plus texttable (MIT), brotli (MIT), psutil (BSD-3-Clause), pycryptodomex (BSD / public domain), backports.zstd (PSF-2.0) · and through psutil: pyreadline3 (BSD), setuptools (MIT) |
 | `tsubasa-sync` | numpy (BSD-3-Clause) |
 | `PyQt6` | PyQt6-sip (BSD-2-Clause) |

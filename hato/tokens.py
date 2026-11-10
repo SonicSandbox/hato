@@ -341,7 +341,11 @@ _DESCRIPTOR = re.compile(r"\d{3,4}x\d{3,4}|@|hevc|x26[45]|h\.?26[45]|mpeg2", re.
 def release_group(name):
     """tsubasa does not publish a release group -- a candidate for tsubasa to expose."""
     m = _LEADING_BRACKET.match(name)
-    if m and m.group(1).strip():
+    # 🚨 `m.group(1)` FIRST: it is None for 【…】 and ［…］, which 15z (B13) added to the
+    # pattern -- and `.strip()` on it stopped every 1.0.9 run that met one (2026-10-04).
+    # ⛔ Never their contents: in a jimaku name they are a title, a label or a date
+    # (`【推しの子】`), and read as the group they pool Amazon with Netflix.
+    if m and m.group(1) and m.group(1).strip():
         return m.group(1).strip()
     fingerprint = _unbracketed_fingerprint(name)
     return fingerprint or name or u"(unnamed)"

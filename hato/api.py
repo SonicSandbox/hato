@@ -544,8 +544,11 @@ def identify(plan, *, world=None):
                 # ⭐ The runners-up, kept because they cost nothing here and are
                 # the only thing that lets a fetch move past an entry that holds
                 # none of this folder's episodes (`pipeline._escalate`).
+                # 🚨 jimaku's own entries only: a Kitsu candidate's id is a string
+                # (`pipeline._identify`, the 2026-10-04 hunt's bug 1).
                 show.alternates = [c for c in found.candidates
-                                   if c.accepted and c.id != found.resolved.entry_id]
+                                   if c.accepted and type(c.id) is int
+                                   and c.id != found.resolved.entry_id]
     finally:
         plan.api_calls = world.client.metered - before
         plan.kitsu_calls = _kitsu_calls(world) - kitsu_before

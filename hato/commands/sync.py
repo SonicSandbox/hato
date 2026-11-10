@@ -26,11 +26,10 @@ child -- painted it *"paired"* in green. Measured 2026-09-22.
               this same deterministic check, so without it a pick cannot succeed.
               Exit 0 when the file was written, and the answer says it was FORCED.
 
-⭐ AND A FILE THAT LANDS IS COPIED TO surasura, as a run's is (the Layer 14 pass,
-Z14-5). The surasura card says *"Every subtitle hato aligns is also copied"* -- and a
-pick never was: the next run then skipped the video as present, so surasura never
-had it. It is the path a person takes when a download is refused, which is exactly
-when *"Download from jimaku anyway"* -- chosen FOR surasura -- needs it.
+⭐ AND A FILE THAT LANDS IS HANDED TO SURASURA, as a run's is (the Layer 14 pass,
+Z14-5; LAYER 16): copied into its library and registered when Surasura is installed,
+`picked_by: person`, `verdict: forced` when the timing did not hold. A pick never was
+copied once: the next run then skipped the video as present, so Surasura never had it.
 """
 from __future__ import print_function
 
@@ -147,17 +146,32 @@ def configured_out(video):
     return None
 
 
-def configured_surasura():
-    u"""The folder surasura reads from, when config names one. -> path or ""
+def hand_to_surasura(video, subtitle, written, forced, result=None):
+    u"""⭐ LAYER 16 -- the pick handed to Surasura. -> (state or None, notes)
 
-    ⚠ `configured_out`'s rule: a config that will not load copies nothing -- a
-    run there would not start either, and the pick itself still stands.
+    ⚠ `configured_out`'s rule: a config that will not load hands nothing over -- a run
+    there would not start either, and the pick itself still stands. ⛔ Never raises.
     """
-    from hato import config
+    from hato import config, connect, state
     try:
-        return config.load().surasura_dir or u""
+        cfg = config.load()
     except Exception:                                 # noqa: BLE001 -- as above
-        return u""
+        return None, []
+    try:
+        with state.StateDB() as db:
+            link = connect.refresh(cfg.surasura_connect)
+            handoff = connect.Handoff(db, cfg.surasura_connect,
+                                      subs_dir=str(cfg.subs_dir_resolved), link=link)
+            verdict = connect.FORCED if forced else connect.TIMED
+            got = handoff.keep(
+                video=video, subtitle_path=written, verdict=verdict, picked_by=u"person",
+                timing=connect.timing_of(result, verdict),
+                series=connect.series_name(kept_path=subtitle,
+                                           subs_dir=str(cfg.subs_dir_resolved), video=video),
+                source_name=os.path.basename(subtitle))
+            return got, handoff.notes
+    except Exception as exc:                          # noqa: BLE001 -- a note, never an error
+        return None, [u"Surasura was not handed the subtitle: %s" % exc]
 
 
 def run(args):
@@ -179,17 +193,13 @@ def run(args):
     said = answer(result, video, subtitle, args.force, args.dry_run)
     said[u"surasura"] = None
     if said[u"written"]:
-        # ⭐ Z14-5 -- `keep.surasura_copy`, the run's own copier. ⛔ A copy that fails
-        # is NOT a failed pick: the subtitle beside the video is written and correct
-        # (the run's rule, `pipeline.py` -- a note, never an error)
-        from hato import keep
-        try:
-            said[u"surasura"] = keep.surasura_copy(said[u"output_path"],
-                                                   configured_surasura())
-        except OSError as exc:
-            said[u"surasura_error"] = u"the surasura copy could not be written: %s" % exc
-        if said[u"surasura"] is not None:
-            said[u"surasura"] = str(said[u"surasura"])
+        # ⭐ Z14-5, LAYER 16 -- the run's own hand-off. ⛔ One that fails is NOT a
+        # failed pick: the subtitle beside the video is written and correct.
+        got, notes = hand_to_surasura(video, subtitle, said[u"output_path"], said[u"forced"],
+                                      result)
+        said[u"surasura"] = got
+        if notes:
+            said[u"surasura_error"] = u"; ".join(notes)
     if args.json:
         print(json.dumps(said, ensure_ascii=False, sort_keys=True))
         if said[u"written"]:

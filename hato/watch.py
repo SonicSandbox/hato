@@ -1172,10 +1172,35 @@ def main(argv=None):
             return 2
 
     icon_box = []
+    #: ⭐ LAYER 16 (16g) -- the hand-off as last read, what it was read against
+    #: (`connect.watched`, the setting), and whether a run was going at the last tick.
+    link = {u"found": surasura_status(cfg), u"running": False,
+            u"setting": getattr(cfg, u"surasura_connect", u"auto")}
+    link[u"seen"] = _connect_watched(link[u"found"])
 
     def tooltip():
-        return u"hato -- watching %d folder%s" % (len(folders),
-                                                  u"" if len(folders) == 1 else u"s")
+        return tray_tooltip(len(folders), link[u"found"])
+
+    def retip():
+        u"""⭐ 16g -- the tooltip's Surasura line follows what moves it: the switch, a run
+        ending (it kept files), Surasura installed or its library back. ⛔ Read only
+        when one of them moved (two `stat`s a tick), and the shell told only when the
+        words changed."""
+        alive = running()
+        setting = getattr(current[u"cfg"], u"surasura_connect", u"auto")
+        seen = _connect_watched(link[u"found"])
+        ended = link[u"running"] and not alive
+        link[u"running"] = alive
+        if not ended and seen == link[u"seen"] and setting == link[u"setting"]:
+            return False
+        before = tooltip()
+        link[u"found"] = surasura_status(current[u"cfg"])
+        link[u"seen"] = _connect_watched(link[u"found"])
+        link[u"setting"] = setting
+        now = tooltip()
+        if now != before and icon_box:
+            icon_box[0].set_tooltip(now)
+        return now != before
 
     def reread():
         u"""🚨 S02 (ADVERSARY-2026-09-18) -- a folder added in Settings while
@@ -1309,6 +1334,7 @@ def main(argv=None):
 
     def tick():
         reread()
+        retip()                               # LAYER 16 (16g)
         revive()
         timer.poll()
         retry.poll()
@@ -1342,6 +1368,81 @@ def main(argv=None):
         clear_pending()
         clear_pid_file()
     return 0
+
+
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 16 (16g) -- the tray's Surasura line (fork 1, RULED 2026-10-29: W1, counts)
+# ---------------------------------------------------------------------------
+
+#: Windows' tooltip field: 128 WCHARs INCLUDING the nul (`tray.Tray`).
+TOOLTIP_MAX = 127
+#: Fork 1's offline words -- the library out of reach (a NAS asleep, edge 3).
+OFFLINE_LINE = u"Surasura: library offline · tries again next run"
+
+
+def surasura_status(cfg):
+    u"""`connect.status` for the tray's settings. -> Status, or None (never raises:
+    the tray's tooltip is never why it stops)."""
+    try:
+        from hato import connect
+        return connect.status(getattr(cfg, u"surasura_connect", u"auto"))
+    except Exception:                         # noqa: BLE001
+        return None
+
+
+def _connect_watched(found):
+    try:
+        from hato import connect
+        return connect.watched(found)
+    except Exception:                         # noqa: BLE001
+        return None
+
+
+def surasura_line(found):
+    u"""The tooltip's second line, in fork 1's words (W1, counts). -> text, or None.
+
+    *"Surasura: 12 handed over · 1 waits for Surasura"* · *"Surasura: 12 copied to its
+    library"* (Make cards off in Surasura) · *"Surasura: library offline · tries again
+    next run"*. ⛔ No line when Surasura isn't there, is too new, or the switch is off
+    -- a tray that says nothing about Surasura is 1.0.9's tray.
+    ⚠ ONE COUNT A RUN MOVES: the latest pairing per video (`state.pairing_counts`).
+    *Handed over* is Surasura's answer (registered, or skipped by its own setting);
+    *waits* is what the next run hands over again (Surasura busy, a stop it lifts by
+    changing, a drop waiting for its library)."""
+    from hato import connect, state as _state
+    if found is None:
+        return None
+    kind = found.link.state
+    if kind == connect.OFFLINE or (kind in (connect.DROPS, connect.REGISTERS)
+                                   and not found.reachable):
+        return OFFLINE_LINE
+    counts = found.counts or {}
+
+    def n(name):
+        return counts.get(name) or 0
+
+    if kind == connect.REGISTERS:
+        handed = n(u"registered") + n(u"skipped")
+        waits = n(u"retry") + n(u"stopped") + n(u"drop-waiting")
+        line = u"Surasura: %d handed over" % handed
+        if waits:
+            line += u" · %d %s for Surasura" % (waits, u"waits" if waits == 1 else u"wait")
+        return line
+    if kind == connect.DROPS:
+        copied = sum(counts.values()) - n(u"drop-waiting") - n(_state.EXPIRED)
+        return u"Surasura: %d copied to its library" % copied
+    return None
+
+
+def tray_tooltip(folders, found=None):
+    u"""The whole tooltip: the folders watched, then the Surasura line when there is
+    one. -> text, at most TOOLTIP_MAX characters. ⛔ A line that would not fit is left
+    out whole, never cut mid-word by the shell's limit."""
+    text = u"hato -- watching %d folder%s" % (folders, u"" if folders == 1 else u"s")
+    line = surasura_line(found)
+    if line and len(text) + 1 + len(line) <= TOOLTIP_MAX:
+        text += u"\n" + line
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -1422,7 +1523,9 @@ def watching_pid():
 #: config.toml carrying it, and the window says so under the choice.
 #: `untimed` -- LAYER 15. Its runs READ `untimed`; 1.0.8's refuse a config.toml
 #: carrying it, and the window says so under that choice.
-CAPABILITIES = (u"retries", u"formats", u"updates", u"extract", u"untimed")
+#: `connect` -- LAYER 16 (16g). Its runs READ `surasura_connect`; 1.0.9's refuse a
+#: config.toml carrying it, and the window says so under the SURASURA switch.
+CAPABILITIES = (u"retries", u"formats", u"updates", u"extract", u"untimed", u"connect")
 
 
 def watching_capabilities():
@@ -1570,6 +1673,7 @@ __all__ = ["BUFFER_BYTES", "RETRY_COALESCE_SECONDS", "SETTLE_SECONDS",
            "main", "no_console_kwargs", "open_window",
            "pending_path", "read_pending", "write_pending",
            "parse_notifications", "pid_file_path", "run_argv", "spawn_run",
+           "surasura_line", "tray_tooltip",
            "watch_argv", "watching_pid", "write_pid_file"]
 
 

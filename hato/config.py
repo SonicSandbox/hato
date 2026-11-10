@@ -122,7 +122,27 @@ SCHEMA = {
     # `<video>.jpn.<ext>` by tsubasa, and said everywhere. 🚨 His three constraints:
     # NOT a default, NOT recommended, NOT looking for ever (`formats.UNTIMED_*`).
     "untimed": (str, u"off"),
+    # ⭐ RUNBOOK LAYER 16 (1.1.0), RULED BY SONIC 2026-10-12, fork 2 2026-10-29: the
+    # SURASURA card's one switch. `auto` (the default, NEVER WRITTEN) hands new
+    # subtitles to Surasura when Surasura is installed (its surasura.json); `off`
+    # never does. `on` stays valid in the file (a hand-written setting: hato
+    # announces itself in hato.json before Surasura exists). `hato/connect.py` is
+    # the one reader. ⚠ `surasura_dir` above is 1.0.x's: 1.1.0 READS it (refusing it
+    # would break every upgraded config) and never uses it -- Go back finds it.
+    "surasura_connect": (str, u"auto"),
+    # ⭐ RUNBOOK LAYER 16 (16k), RULED BY SONIC 2026-10-12 (*"favor Nanakoraws for
+    # japanese. This would likely best be an option for the user"*), fork 3 2026-10-29:
+    # release groups tried FIRST among files equally good in FORMAT, the first named
+    # first. Matched as Layer 15's *same provider* (`untimed.provider`): the bracketed
+    # group a name opens with, case and punctuation folded (`Nanako-Raws` = NanakoRaws).
+    # ⚠ It only ORDERS the tries: a known number still goes before a guessed one, a
+    # favourite's `.srt` still waits behind another group's `.ass`, and the timing
+    # verdict decides who wins. Empty = 1.0.9's order.
+    "favourite_groups": (list, [u"NanakoRaws"]),
 }
+
+#: ⭐ LAYER 16 -- the three values `surasura_connect` takes.
+SURASURA_CONNECT = (u"auto", u"on", u"off")
 
 #: 🚨 KEYS AN OLDER hato HAS NEVER HEARD OF -- written only once set away from
 #: their default. An unknown key is REFUSED by name (rule 2 above), in every
@@ -142,13 +162,21 @@ NEWER_THAN_1_0_3 = ("auto_update",)
 NEWER_THAN_1_0_7 = ("extract_embedded",)
 #: ⭐ And 1.0.9's (RUNBOOK LAYER 15) -- its own tuple, for the same reason.
 NEWER_THAN_1_0_8 = ("untimed",)
+#: ⭐ And 1.1.0's (RUNBOOK LAYER 16) -- its own tuple, for the same reason.
+NEWER_THAN_1_0_9 = ("surasura_connect", "favourite_groups")
+#: ⭐ LAYER 16 (16k) -- the most names `favourite_groups` holds, and the longest one.
+#: A line a person types: bounds that say so, never a list nothing could read.
+FAVOURITES_MAX = 20
+FAVOURITE_MAX_CHARS = 64
 #: Every key written only once set away from its default.
-NEWER_KEYS = NEWER_THAN_1_0_2 + NEWER_THAN_1_0_3 + NEWER_THAN_1_0_7 + NEWER_THAN_1_0_8
+NEWER_KEYS = (NEWER_THAN_1_0_2 + NEWER_THAN_1_0_3 + NEWER_THAN_1_0_7 + NEWER_THAN_1_0_8
+              + NEWER_THAN_1_0_9)
 #: ⭐ 14z (ADVERSARY 2026-09-25, C-1/C-2) -- which hato first refuses which keys,
 #: oldest first: `NEWER_THAN_x_y_z` names the keys a hato AT OR BELOW x.y.z has never
 #: heard of. ⛔ A key added here is a key *Go back* must be able to take away.
 NEWER_THAN = (((1, 0, 2), NEWER_THAN_1_0_2), ((1, 0, 3), NEWER_THAN_1_0_3),
-              ((1, 0, 7), NEWER_THAN_1_0_7), ((1, 0, 8), NEWER_THAN_1_0_8))
+              ((1, 0, 7), NEWER_THAN_1_0_7), ((1, 0, 8), NEWER_THAN_1_0_8),
+              ((1, 0, 9), NEWER_THAN_1_0_9))
 
 #: ⚠ `schedule` is HH:MM, 24-hour. A free string here would be written happily
 #: and refused later by whatever registers the task -- somewhere the person is
@@ -182,6 +210,8 @@ SECRET_WORDS = ("key", "token", "secret", "password", "auth", "credential")
 
 _TYPE_WORD = {list: "a list of folder paths", str: "a string",
               int: "a whole number", bool: "true or false"}
+#: A list key that is not a list of folders says what it IS a list of.
+_LIST_WORD = {"favourite_groups": "a list of release group names, like [\"NanakoRaws\"]"}
 
 
 def _type_ok(value, want):
@@ -222,6 +252,50 @@ def candidates_refusal(where, value):
             "folder for a day without making a single request." % (where, value))
 
 
+def check_groups(value, where):
+    u"""⭐ LAYER 16 (16k) -- favourite release groups, both roads alike. -> a tuple of
+    names, each stripped, in the order given, a name repeated (folded) kept once.
+
+    ⛔ Refused, by name: a name with nothing to match by once folded (`[]`, `-`), a
+    bracket left inside a name once the outer ones go (16z), more than FAVOURITES_MAX
+    names, a name over FAVOURITE_MAX_CHARS. Empty is allowed: it is 1.0.9's order."""
+    # ⛔ `formats.fold_group`, never `untimed`: that loads tsubasa, and the TRAY reads this
+    # file (`test_the_tray_process_never_loads_a_toolkit_or_the_pipeline_all_its_life`)
+    if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
+        raise ConfigError("%s must be %s, got %r" % (where, _LIST_WORD["favourite_groups"], value))
+    out, seen = [], set()
+    for raw in value:
+        name = raw.strip().strip(u"[]").strip()
+        key = formats.fold_group(name)
+        if not key:
+            raise ConfigError(
+                "%s: %r has no letters or digits to match a release group by -- a group "
+                "is the name in brackets a subtitle file opens with, like NanakoRaws."
+                % (where, raw))
+        if u"[" in name or u"]" in name:
+            # 🚨 16z (Z-C4): `Foo]Bar` was taken and rank read it as the group [Foo];
+            # `Ab[cd` matched nothing. Only the brackets AROUND a name are its own.
+            raise ConfigError(
+                "%s: %r has a bracket inside it -- write one group's name, like "
+                "NanakoRaws (the brackets around it may stay)." % (where, raw))
+        if len(name) > FAVOURITE_MAX_CHARS:
+            raise ConfigError("%s: %r is longer than %d characters -- a release group's "
+                              "name, not a sentence." % (where, raw, FAVOURITE_MAX_CHARS))
+        if key not in seen:
+            seen.add(key)
+            out.append(name)
+    if len(out) > FAVOURITES_MAX:
+        raise ConfigError("%s: %d groups -- at most %d. Only the first few ever decide "
+                          "anything." % (where, len(out), FAVOURITES_MAX))
+    return tuple(out)
+
+
+def groups_from_text(text):
+    u"""`NanakoRaws, Haruhana` -> [u"NanakoRaws", u"Haruhana"]: the window's one line
+    and `--set favourite_groups=...`. Commas separate; nothing typed -> []."""
+    return [part.strip() for part in (text or u"").split(u",") if part.strip()]
+
+
 def check_lang(value, where):
     """A language tag both roads must refuse alike. -> the tag, lower-cased.
 
@@ -258,7 +332,9 @@ class Config(object):
                  "candidates", "archives", "allow_ai", "recurse", "skip_embedded",
                  "extract_embedded",
                  "watch", "schedule", "surasura_dir", "prefer_format",
-                 "format_fallback", "auto_update", "untimed", "log_path", "log_keep",
+                 "format_fallback", "auto_update", "untimed", "surasura_connect",
+                 "favourite_groups",
+                 "log_path", "log_keep",
                  "path", "path_source", "file_exists", "_set")
 
     def origin(self, name):
@@ -293,6 +369,8 @@ class Config(object):
             "format_fallback": self.format_fallback,
             "auto_update": self.auto_update,
             "untimed": self.untimed,
+            "surasura_connect": self.surasura_connect,
+            "favourite_groups": list(self.favourite_groups),
             "log": {"path": self.log_path, "path_resolved": str(self.log_path_resolved),
                     "keep": self.log_keep},
             "data_root": str(paths.data_root()),
@@ -366,7 +444,7 @@ def parse(text, path=None):
         want = SCHEMA[name][0]
         if not _type_ok(value, want):
             raise ConfigError("%s: %s must be %s, got %r" % (
-                where, name, _TYPE_WORD[want], value))
+                where, name, _LIST_WORD.get(name, _TYPE_WORD[want]), value))
         values[name] = value
         set_names.add(name)
 
@@ -420,6 +498,15 @@ def parse(text, path=None):
             "subtitle track inside it (spec/RUNBOOK.md LAYER 15)."
             % (where, untimed, " or ".join("'%s'" % c for c in formats.UNTIMED_CHOICES)))
     cfg.untimed = untimed
+    connect = values["surasura_connect"]
+    if connect not in SURASURA_CONNECT:
+        raise ConfigError(
+            "%s: surasura_connect = %r must be one of %s -- whether hato hands new "
+            "subtitles to Surasura (spec/RUNBOOK.md LAYER 16)."
+            % (where, connect, " or ".join("'%s'" % c for c in SURASURA_CONNECT)))
+    cfg.surasura_connect = connect
+    cfg.favourite_groups = check_groups(values["favourite_groups"],
+                                        "%s: favourite_groups" % where)
     cfg.log_path = _absolute(log_values["path"], "log.path")
     cfg.log_keep = log_values["keep"]
     cfg._set = frozenset(set_names)
@@ -572,6 +659,8 @@ def _writable(cfg):
         "format_fallback": cfg.format_fallback,
         "auto_update": cfg.auto_update,
         "untimed": cfg.untimed,
+        "surasura_connect": cfg.surasura_connect,
+        "favourite_groups": list(cfg.favourite_groups),
     }
 
 
@@ -651,6 +740,9 @@ def coerce(name, raw):
             "--add-folder / --remove-folder and --add-skip / --remove-skip.)"
             % (name, ", ".join(sorted(SCHEMA))))
     want = SCHEMA[name][0]
+    if name == "favourite_groups":
+        # ⭐ 16k -- one line, commas between the names (the window's field writes this)
+        return groups_from_text(raw)
     if want is list:
         which = "skip" if name == "skip_folders" else "folder"
         raise ConfigError(
@@ -736,6 +828,15 @@ _GOING_BACK = {
     # hato counts as present (`.jpn.` reads as Japanese to tsubasa 0.1.9 too).
     "untimed": ({}, u"“%s” becomes “Skip it” — %%s cannot download a subtitle it "
                     u"cannot time. The ones already downloaded stay."),
+    # ⭐ RUNBOOK LAYER 16 -- the key dropped (automatic). 1.0.9 hands nothing to
+    # Surasura on its own: it copies only into a `surasura_dir`, left as it was.
+    # ⚠ 16z (Z-A8) -- and with one set, the words NAME it (`readable_by`): 1.0.9 copies
+    # every new subtitle there, flat, whatever this switch said.
+    "surasura_connect": ({}, u"“Hand new subtitles to Surasura” goes — %s has no such "
+                             u"setting"),
+    # ⭐ RUNBOOK LAYER 16 (16k) -- the key dropped: 1.0.9 tries files in its own order.
+    "favourite_groups": ({}, u"“Favourite release groups” goes — %s tries files in its own "
+                             u"order"),
 }
 
 
@@ -758,14 +859,25 @@ def readable_by(cfg, version):
     for name in unknown_to(version):
         if cfg.origin(name) == "default":
             continue                        # not in the file: nothing to refuse
-        if getattr(cfg, name) != SCHEMA[name][1]:
+        value, default = getattr(cfg, name), SCHEMA[name][1]
+        if isinstance(default, list):
+            # ⚠ 16n (R7): read as a TUPLE, defaulted as a list -- a hand-written default
+            # is no change, and Go back must not say it goes
+            value, default = list(value), list(default)
+        if value != default:
             also, said = _GOING_BACK.get(name, ({}, u"%s goes back to its default — %%s "
                                                     u"has no such setting" % name))
             if name == "untimed":
                 # ⭐ LAYER 15 -- the choice made, in the words Settings shows it in.
                 said = said % formats.untimed_words(getattr(cfg, name))
             changes.update(also)
-            words.append(said % version)
+            said = said % version
+            if name == "surasura_connect" and cfg.surasura_dir:
+                # ⚠ 16z (Z-A8) -- the RELEASED 1.0.9's copy (its `keep.surasura_copy`
+                # into `<surasura_dir>/Hato/`), named: a fact of that release, not ours
+                said += u"; it copies each new subtitle into %s instead" % os.path.join(
+                    cfg.surasura_dir, u"Hato")
+            words.append(said)
         changes[name] = SCHEMA[name][1]
     if not changes:
         return cfg, []

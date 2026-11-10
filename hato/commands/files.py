@@ -56,6 +56,9 @@ def render(entry_id, listed, client, fixtures, verbose=False):
     width = max([len(s) for s, _ in shown] + [1])
     for size, name in shown:
         out.append("  %*s  %s" % (width, size, name))
+    # ⭐ 16z Z-D3: a file the client LEFT OUT of the list is said, not silently missing.
+    for note in getattr(client, "notes", ()):
+        out.append("  note  %s" % note)
     out.append("")
     tail = _plural(client.metered, "API call")
     if fixtures is not None:
@@ -87,6 +90,8 @@ def run(args):
         return EXIT_FAILED
     if args.json:
         print(json.dumps(listed, ensure_ascii=False))
+        for note in client.notes:       # ⭐ 16z Z-D3: said, and stdout stays jimaku's list
+            sys.stderr.write("hato files: %s\n" % note)
         return EXIT_OK
     print("\n".join(render(int(args.entry_id), listed, client, fixtures, args.verbose)))
     return EXIT_OK

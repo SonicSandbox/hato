@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Explain which of a jimaku entry's files could be which video in a folder.
 
-    hato align --explain <folder> <entry-id> --files FILE.json [--movie]
+    hato align --explain <folder> <entry-id> --files FILE.json [--movie] [--anilist ID]
 
 Per release: its episode range, the offset it fits the folder at, and how well.
 Per video: the file episode each release offers for it. Then what was refused,
@@ -11,6 +11,9 @@ what was not found, and every note (spec/RUNBOOK.md 3a).
 is one. ⚠ Fetching the list live from jimaku is wired after RUNBOOK 2c; until then
 --files is required, and nothing here makes a network call. --movie takes the
 movie path (the entry's flags.movie), which a recorded file list does not carry.
+--anilist ID asks the bundled anime-relations list for that AniList id's bridge
+(LAYER 16): a run takes it from jimaku's entry, which a recorded list does not carry.
+Without it, only the entry's own names can state an offset.
 
 Exit codes: 0 it ran (a refusal or a NOT FOUND is an outcome) · 1 the input could
 not be used · 2 usage, including a missing --files.
@@ -41,6 +44,34 @@ def register(parser):
                         help="a recorded file list for the entry (required until RUNBOOK 2c)")
     parser.add_argument("--movie", action="store_true",
                         help="the entry is a movie (flags.movie): every file is a candidate")
+    add_anilist(parser)
+
+
+def add_anilist(parser):
+    parser.add_argument("--anilist", type=int, metavar="ID",
+                        help="the entry's AniList id: anime-relations may state where its "
+                             "season's numbering starts (a run reads it from jimaku's entry)")
+
+
+def bridge_of(args):
+    u"""-> (the anime-relations Bridge or None, the header's words about it)."""
+    from hato import relations
+    if args.anilist is None:
+        return None, u"anime-relations not asked (no --anilist)"
+    found = relations.for_entry(args.anilist)
+    if found is None:
+        # ⚠ 16n (A10): three cases, told apart -- "no rule" said of a list that could
+        # not be read, or of rules for the entry that disagree, was untrue
+        rules = relations.load()
+        if not rules:
+            return None, u"anime-relations: the list could not be read (AniList %d)" % args.anilist
+        if any(r.src[2] == args.anilist and r.dst[2] == args.anilist for r in rules):
+            return None, (u"anime-relations: the list's rules for AniList %d state no one "
+                          u"shift" % args.anilist)
+        return None, u"anime-relations: no rule for AniList %d" % args.anilist
+    return found, u"anime-relations: AniList %d, its %d-%s are its own %d-%d" % (
+        args.anilist, found.abs_lo, u"?" if found.abs_hi is None else u"%d" % found.abs_hi,
+        found.own_lo, found.own_hi)
 
 
 def load_files(path, entry_id):
@@ -84,11 +115,12 @@ def run(args):
     try:
         files = load_files(args.files, args.entry_id)
         videos = scan_videos(args.folder)
+        bridge, said = bridge_of(args)
         with Cache().workdir("align") as work:
-            alignment = episodes.align(files, videos, workdir=work, movie=args.movie)
+            alignment = episodes.align(files, videos, workdir=work, movie=args.movie, bridge=bridge)
     except (InputError, paths.PathError) as exc:
         sys.stderr.write(u"hato align: %s\n" % exc)
         return EXIT_FAILED
-    print(u"hato align · entry %d · %s" % (args.entry_id, os.path.abspath(args.folder)))
+    print(u"hato align · entry %d · %s · %s" % (args.entry_id, os.path.abspath(args.folder), said))
     print(episodes.explain(alignment))
     return EXIT_OK

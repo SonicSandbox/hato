@@ -113,6 +113,7 @@ NOT_PUBLISHED = {
     "_mutants.mjs":        "imports ../Workbench/app-kit, a dev-layout path -- it cannot run in a clone",
     "CLAUDE.md":           "the agents' rules for the private dev layout; points at notes that are not published",
     "hato.code-workspace": "an editor window file naming private folders",
+    "requirements-dev.txt": "the dev machines' venv recipe: it names a private engine checkout path",
 }
 
 #: ⛔ Top-level DIRECTORIES that are deliberately not published. Same shape and
@@ -135,6 +136,7 @@ NOT_PUBLISHED_DIRS = {
     ".pytest_cache": "test runner scratch",
     ".git":          "this clone has its own history, by design",
     "hato.egg-info": "build metadata",
+    ".venv":         "the dev machine's own environment, never committed",
     "release-kit":   "the release's own rehearsal scripts (stamp_rehearsal, e2e_update): they "
                      "drive the vault's paths and the PUBLISHED releases, never a clone",
 }

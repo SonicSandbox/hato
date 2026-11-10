@@ -56,7 +56,8 @@ def test_every_schema_key_is_written_so_a_person_can_read_what_is_in_force(tmp_p
         assert (u"\n%s = " % name) in text, name
     changed = config.with_changes(load_from(tmp_path), prefer_format=u"srt",
                                   format_fallback=True, auto_update=False,
-                                  extract_embedded=True, untimed=u"same_provider")
+                                  extract_embedded=True, untimed=u"same_provider",
+                                  surasura_connect=u"off", favourite_groups=[u"Haruhana"])
     text = config.dumps(changed)
     for name in config.NEWER_KEYS:
         assert (u"\n%s = " % name) in text, name
@@ -408,10 +409,90 @@ def test_going_back_writes_the_file_the_kept_version_can_read(tmp_path):
     before = path.read_bytes()
     assert config.make_readable_by(u"1.0.8", path) == [] and path.read_bytes() == before
     # ⭐ LAYER 15: 1.0.9's key is one 1.0.8 AND everything before it has never heard of.
-    assert config.unknown_to(u"1.0.7") == (u"extract_embedded", u"untimed")
-    assert config.unknown_to(u"1.0.8") == (u"untimed",)
-    assert config.unknown_to(u"1.0.9") == ()
+    # ⭐ LAYER 16: and 1.1.0's, one 1.0.9 and everything before it has never heard of.
+    assert config.unknown_to(u"1.0.7") == (u"extract_embedded", u"untimed",
+                                           u"surasura_connect", u"favourite_groups")
+    assert config.unknown_to(u"1.0.8") == (u"untimed", u"surasura_connect",
+                                           u"favourite_groups")
+    assert config.unknown_to(u"1.0.9") == (u"surasura_connect", u"favourite_groups")
+    assert config.unknown_to(u"1.1.0") == ()
     assert set(config.unknown_to(u"1.0.2")) == set(config.NEWER_KEYS)
+
+
+def test_favourite_groups_default_to_nanakoraws_and_are_written_only_once_changed(tmp_path):
+    u"""⭐ 16k. Unwritten, the default is NanakoRaws (fork 3) and the file stays one 1.0.9
+    can read; changed -- or EMPTIED, which is 1.0.9's order -- it is written and reads back."""
+    from hato import config
+    cfg = config.load(tmp_path / "config.toml")
+    assert cfg.favourite_groups == (u"NanakoRaws",)
+    assert u"favourite_groups" not in config.dumps(cfg)
+    for names in ([u"Haruhana", u"NanakoRaws"], []):
+        changed = config.with_changes(cfg, favourite_groups=names)
+        assert u"\nfavourite_groups = " in config.dumps(changed)
+        assert config.parse(config.dumps(changed)).favourite_groups == tuple(names)
+    assert config.coerce(u"favourite_groups", u" NanakoRaws ,Haruhana,, ") == [u"NanakoRaws",
+                                                                            u"Haruhana"]
+    assert config.coerce(u"favourite_groups", u"") == []
+
+
+@pytest.mark.parametrize("value, says", [
+    (u"favourite_groups = ['[]']", u"no letters or digits"),
+    (u"favourite_groups = ['-']", u"no letters or digits"),
+    (u"favourite_groups = ['%s']" % (u"x" * 65), u"longer than 64"),
+    (u"favourite_groups = [%s]" % u", ".join(u"'g%d'" % i for i in range(21)), u"at most 20"),
+    (u"favourite_groups = 'NanakoRaws'", u"a list of release group names"),
+])
+def test_a_favourite_groups_line_nothing_could_match_is_refused_by_name(value, says):
+    from hato import config
+    with pytest.raises(config.ConfigError) as raised:
+        config.parse(value)
+    assert says in str(raised.value) and u"favourite_groups" in str(raised.value), str(raised.value)
+
+
+def test_favourites_written_twice_or_bracketed_are_one_name_each():
+    from hato import config
+    cfg = config.parse(u"favourite_groups = ['[NanakoRaws]', 'Nanako-Raws', ' Haruhana ']")
+    assert cfg.favourite_groups == (u"NanakoRaws", u"Haruhana")
+
+
+def test_going_back_takes_the_favourites_away_and_says_so(tmp_path):
+    u"""⭐ 16k -- 1.0.9 REFUSES `favourite_groups`: Go back takes it out of the file (Go
+    back's map, `config._GOING_BACK`) and says what it meant."""
+    from hato import config
+    path = tmp_path / "config.toml"
+    config.save(config.with_changes(config.load(path), favourite_groups=[u"Haruhana"]), path)
+    words = config.make_readable_by(u"1.0.9", path)
+    assert u"favourite_groups" not in path.read_text(encoding="utf-8")
+    assert len(words) == 1 and u"Favourite release groups" in words[0] and u"1.0.9" in words[0], words
+    assert config.load(path).favourite_groups == (u"NanakoRaws",)    # 1.1.0 reads the default again
+
+
+def test_16n_F7_a_hand_written_default_favourite_goes_without_a_word(tmp_path):
+    u"""R7: the read value is a TUPLE, the default a list -- a hand-written default read as
+    changed, and Go back said *"Favourite release groups goes"* for nothing. The key still
+    goes (1.0.9 refuses it whatever its value); the words do not."""
+    from hato import config
+    path = tmp_path / "config.toml"
+    path.write_text(u'favourite_groups = ["NanakoRaws"]\n', encoding="utf-8")
+    words = config.make_readable_by(u"1.0.9", path)
+    assert u"favourite_groups" not in path.read_text(encoding="utf-8"), u"the key stayed for 1.0.9"
+    assert words == [], words
+
+
+@pytest.mark.parametrize("name", [u"Foo]Bar", u"Ab[cd", u"[Foo][Bar]", u"[[Foo]Bar]"])
+def test_16z_C4_a_bracket_inside_a_favourite_is_refused_in_words(name):
+    u"""Z-C4: `check_groups` took `Foo]Bar` -- which rank reads as the group [Foo] -- and
+    `Ab[cd`, which matches nothing. After the outer brackets go, a bracket left INSIDE
+    the name is refused, by name, on both roads."""
+    from hato import config
+    with pytest.raises(config.ConfigError) as raised:
+        config.check_groups([name], u"favourite_groups")
+    said = str(raised.value)
+    assert u"bracket" in said and name in said and u"favourite_groups" in said, said
+    with pytest.raises(config.ConfigError):
+        config.parse(u"favourite_groups = ['%s']" % name)
+    assert config.check_groups([u"[NanakoRaws]", u" [Haruhana] "], u"favourite_groups") == (
+        u"NanakoRaws", u"Haruhana")                                  # the control: outer ones go
 
 
 def test_both_readouts_show_every_setting_the_file_can_hold(monkeypatch, tmp_path, capsys):
@@ -562,3 +643,20 @@ def test_15_going_back_takes_the_road_away_and_says_so_first(tmp_path):
         assert words == [u"“%s” becomes “Skip it” — 1.0.8 cannot download a subtitle it "
                          u"cannot time. The ones already downloaded stay." % said], words
         assert config.load(path).untimed == u"off"
+
+
+def test_16z_A8_go_backs_words_name_the_folder_1_0_9_copies_into(tmp_path):
+    u"""⚠ 16z (Z-A8) -- Go back said *"Hand new subtitles to Surasura" goes* while 1.0.x's
+    `surasura_dir` stays in the file, and 1.0.9 copies every new subtitle, flat, into its
+    `Hato` folder. ⭐ The words name that folder; with none set they stay as they were."""
+    from hato import config
+    folder = tmp_path / "Surasura library"
+    path = tmp_path / "config.toml"
+    config.save(config.with_changes(config.load(path), surasura_connect=u"off",
+                                    surasura_dir=str(folder)), path)
+    words = config.readable_by(config.load(path), u"1.0.9")[1]
+    assert len(words) == 1 and str(folder / u"Hato") in words[0], words
+    assert words[0].startswith(u"“Hand new subtitles to Surasura” goes — 1.0.9"), words
+    config.save(config.with_changes(config.load(path), surasura_dir=u""), path)
+    words = config.readable_by(config.load(path), u"1.0.9")[1]
+    assert words == [u"“Hand new subtitles to Surasura” goes — 1.0.9 has no such setting"], words

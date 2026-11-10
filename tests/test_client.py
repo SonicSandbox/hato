@@ -386,15 +386,17 @@ BAD_URLS = [
 
 @pytest.mark.parametrize("why,url,shape_alone", BAD_URLS, ids=[b[0] for b in BAD_URLS])
 def test_a_file_whose_url_is_not_its_entrys_download_route_is_refused(online, why, url, shape_alone):
-    """DERIVED: the recorded file list, with ONE file's url changed as named."""
+    """DERIVED: the recorded file list, with ONE file's url changed as named.
+    ⚠ AMENDED 16l (the 10-04 hunt, #8): it is LEFT OUT and named in `client.notes`,
+    where it used to make the whole list unreadable; the guard still refuses it."""
     bad = dict(SAMPLE_FILE, url=url)
     listed = [bad if f is SAMPLE_FILE else f for f in RECORDED_FILES]
     s = Scripted((200, json.dumps(listed, ensure_ascii=False).encode("utf-8"),
                   dict(recorded("entries_11446_files")[0]["response_headers"])))
     c, _ = make(s)
-    with pytest.raises(jc.BadFileUrl) as exc:
-        c.files(11446)
-    assert url in str(exc.value)
+    kept = c.files(11446)
+    assert bad not in kept and len(kept) == len(RECORDED_FILES) - 1
+    assert len(c.notes) == 1 and url in c.notes[0], c.notes
     if shape_alone:
         with pytest.raises(jc.BadFileUrl):
             c.download(bad)
@@ -437,9 +439,10 @@ def test_a_listed_file_with_no_usable_name_is_refused_not_returned(online, kind,
     s = Scripted((200, json.dumps(listed, ensure_ascii=False).encode("utf-8"),
                   dict(FILES_META["response_headers"])))
     c, _ = make(s)
-    with pytest.raises(jc.BadFileName) as exc:
-        c.files(11446)
-    assert "name" in str(exc.value)
+    # ⚠ AMENDED 16l (#8): left out and named, never returned -- the rest stay readable
+    kept = c.files(11446)
+    assert bad not in kept and len(kept) == len(RECORDED_FILES) - 1
+    assert len(c.notes) == 1 and "name" in c.notes[0], c.notes
     with pytest.raises(jc.BadFileName):
         c.download(bad)
     assert len(s.calls) == 1, "a file with no name was fetched: %s" % s.calls
@@ -454,6 +457,77 @@ def test_the_name_guard_refuses_nothing_the_real_listing_holds(online):
     assert len(listed) == len(RECORDED_FILES)
     assert all(isinstance(f["name"], str) and f["name"].strip() for f in listed)
     assert issubclass(jc.BadFileName, jc.JimakuError) and issubclass(jc.BadFileUrl, jc.JimakuError)
+
+
+def test_16l_p4_a_bad_file_is_left_out_and_named_the_rest_kept_in_order(online):
+    """DERIVED: the recorded file list with file 1's url moved to another host and
+    file 2's name blanked. 🚨 2026-10-04 hunt (#8): one bad file raised for the
+    whole list. Now both are left out, named in `client.notes`, the rest kept in
+    order -- and a list where EVERY file is bad still raises."""
+    assert len(RECORDED_FILES) >= 3
+    off_host = dict(RECORDED_FILES[0], url="https://evil.example" + urlsplit(
+        RECORDED_FILES[0]["url"]).path)
+    nameless = dict(RECORDED_FILES[1], name=u"")
+    listed = [off_host, nameless] + RECORDED_FILES[2:]
+    headers = dict(FILES_META["response_headers"])
+    s = Scripted((200, json.dumps(listed, ensure_ascii=False).encode("utf-8"), headers))
+    c, _ = make(s)
+    assert c.files(11446) == RECORDED_FILES[2:]
+    assert len(c.notes) == 2
+    assert RECORDED_FILES[0]["name"] in c.notes[0] and "evil.example" in c.notes[0]
+    assert RECORDED_FILES[1]["url"] in c.notes[1] and "no usable name" in c.notes[1]
+    assert len(s.calls) == 1, "a dropped file was requested: %s" % s.calls
+
+    s = Scripted((200, json.dumps([off_host, nameless], ensure_ascii=False).encode("utf-8"),
+                  headers))
+    c, _ = make(s)
+    with pytest.raises(jc.BadFileUrl) as exc:
+        c.files(11446)
+    assert "evil.example" in str(exc.value) and c.notes == []
+
+
+# -- 2d: one bad file in an entry's list (P4, #8) ----------------------------------
+
+def _notes(client):
+    """The notes the client exposes for the caller to drain. One line to adapt to the road the fix picks."""
+    return [str(n) for n in getattr(client, "notes", [])]
+
+
+def test_16l_p4_one_bad_file_is_dropped_the_rest_come_back_in_order_and_both_are_noted(online):
+    """P4 (#8): one bad file made the whole entry's list unreadable, so every video
+    of the show became an ERROR. Two bad files in the recorded list -- one url on
+    another host, one with a blank name -- are dropped, the other files come back
+    in order, each drop is noted in words naming its file, and no dropped file is
+    ever fetched."""
+    url_bad, name_bad = 3, 7
+    listed = [dict(f) for f in RECORDED_FILES]
+    listed[url_bad]["url"] = listed[url_bad]["url"].replace("https://jimaku.cc/", "https://evil.example/", 1)
+    listed[name_bad]["name"] = ""
+    s = Scripted((200, json.dumps(listed, ensure_ascii=False).encode("utf-8"),
+                  dict(FILES_META["response_headers"])))
+    c, _ = make(s)
+    good = [f for i, f in enumerate(listed) if i not in (url_bad, name_bad)]
+    assert c.files(11446) == good
+    assert len(s.calls) == 1, "a dropped file was fetched: %s" % s.calls
+    notes = _notes(c)
+    assert len(notes) == 2, notes
+    for i in (url_bad, name_bad):
+        name, path = RECORDED_FILES[i]["name"], urlsplit(RECORDED_FILES[i]["url"]).path
+        assert any(name in n or path in n for n in notes), (name, notes)
+
+
+def test_16l_p4_every_file_bad_is_still_refused_as_before(online):
+    """P4: a list in which EVERY file is bad is still the error it was -- the
+    BadFileUrl for the bad url -- and nothing is fetched. Passes before the fix too:
+    it is the control for the row above."""
+    listed = [dict(f, url=f["url"].replace("https://jimaku.cc/", "https://evil.example/", 1))
+              for f in RECORDED_FILES]
+    s = Scripted((200, json.dumps(listed, ensure_ascii=False).encode("utf-8"),
+                  dict(FILES_META["response_headers"])))
+    c, _ = make(s)
+    with pytest.raises(jc.BadFileUrl):
+        c.files(11446)
+    assert len(s.calls) == 1, "a dropped file was fetched: %s" % s.calls
 
 
 # -- rate limits --------------------------------------------------------------------
@@ -943,6 +1017,26 @@ def test_hato_files_lists_every_recorded_name_and_size(monkeypatch, capsys):
     for f in RECORDED_FILES:
         assert "%s  %s" % (format(f["size"], ","), f["name"]) in out, f["name"]
     assert "%d files" % len(RECORDED_FILES) in out and "1 API call" in out
+
+
+def test_16z_D3_hato_files_says_a_file_it_left_out(monkeypatch, capsys):
+    u"""Z-D3: `hato files` listed the shortened list and never said a file was left out
+    of it. The note is printed with the listing; with --json it goes to stderr, so the
+    list on stdout stays exactly jimaku's."""
+    from hato.commands import files as files_cmd
+    note = u"Entry 11446: one file on its list was left out and the others were used -- x"
+
+    class Dropping(files_cmd.JimakuClient):
+        def files(self, entry_id):
+            listed = super(Dropping, self).files(entry_id)
+            self.notes.append(note)
+            return listed
+
+    monkeypatch.setattr(files_cmd, "JimakuClient", Dropping)
+    code, out, err = run_files(monkeypatch, capsys, "11446", "--fixtures", str(FIXTURES))
+    assert code == 0 and note in out, (out, err)
+    code, out, err = run_files(monkeypatch, capsys, "11446", "--fixtures", str(FIXTURES), "--json")
+    assert code == 0 and note in err and json.loads(out) == RECORDED_FILES, (out[:80], err)
 
 
 def test_hato_files_json_is_the_list_exactly_as_recorded(monkeypatch, capsys):

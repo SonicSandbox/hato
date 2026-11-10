@@ -247,7 +247,21 @@ def real_config_path():
     return Path.home() / ".config" / "hato" / "config.toml"
 
 
-def snapshot(root, config):
+def real_tools_dir():
+    """⭐ LAYER 16 -- the shared tools folder Surasura and hato meet in, IGNORING
+    `HOUSEKI_TOOLS_DIR`. ⚠ Must track `hato.connect.tools_dir()` exactly (a check
+    ties them). On this desktop it holds Sonic's REAL surasura.json."""
+    home = Path.home()
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = str(home / "Library" / "Application Support")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")
+    return Path(base) / "Houseki" / "tools"
+
+
+def snapshot(root, config, tools=None):
     """What a test run must leave exactly as it found it.
 
     Every DIRECTORY's mtime under the real root (creating, deleting or renaming
@@ -270,6 +284,14 @@ def snapshot(root, config):
     if config is not None and config.exists():
         cst = config.stat()
         snap["config"] = (cst.st_size, cst.st_mtime_ns)
+    # ⭐ LAYER 16 -- the real shared tools folder: its own mtime and each file's
+    # size and mtime. A run that wrote hato.json or touched surasura.json there
+    # would have taken over Sonic's real entry.
+    if tools is not None and tools.exists():
+        snap["tools:dir"] = tools.stat().st_mtime_ns
+        for f in os.listdir(str(tools)):
+            fst = os.stat(str(tools / f))
+            snap["tools:" + f] = (fst.st_size, fst.st_mtime_ns)
     return snap
 
 
@@ -282,6 +304,10 @@ def suite_env(temp_root, suite):
     env["HATO_CACHE"] = str(root / "data")
     env["HATO_CONFIG"] = str(root / "config.toml")
     env["TSUBASA_CACHE"] = str(root / "tsubasa")
+    # ⭐ LAYER 16 -- the shared tools folder, so no check meets Sonic's real
+    # surasura.json or writes hato.json beside it; and no advertised source tree
+    env["HOUSEKI_TOOLS_DIR"] = str(root / "houseki-tools")
+    env.pop("HATO_TOOLS_CLI", None)
     if suite.get("live"):
         env["HATO_LIVE"] = "1"
         env.pop("HATO_NO_NETWORK", None)
@@ -666,7 +692,8 @@ def main(argv=None):
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = HERE / cfg["test"]["runLogDir"] / stamp
     real_root, real_cfg = real_data_root(), real_config_path()
-    before = snapshot(real_root, real_cfg)
+    real_tools = real_tools_dir()
+    before = snapshot(real_root, real_cfg, real_tools)
     temp_root = Path(tempfile.mkdtemp(prefix="hato-run-"))
 
     results = []
@@ -690,7 +717,7 @@ def main(argv=None):
     isolation = []
     if temp_root.exists():
         isolation.append("the run's temp dir survived teardown: %s" % temp_root)
-    after = snapshot(real_root, real_cfg)
+    after = snapshot(real_root, real_cfg, real_tools)
     if after != before:
         changed = sorted(set(k for k in set(before) | set(after)
                              if before.get(k) != after.get(k)))

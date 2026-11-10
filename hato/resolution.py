@@ -100,14 +100,15 @@ _KITSU_ID = re.compile(r"[0-9]+\Z")
 # ---------------------------------------------------------------------------
 
 _ResolvedFields = namedtuple(
-    "Resolved", "entry_id entry_name movie score low_confidence source anilist_id")
+    "Resolved", "entry_id entry_name movie score low_confidence source anilist_id tmdb_id")
 
 
 class Resolved(_ResolvedFields):
     """A show's jimaku entry. Validated on construction -- the store's CHECKs say the same."""
     __slots__ = ()
 
-    def __new__(cls, entry_id, entry_name, movie, score, low_confidence, source, anilist_id=None):
+    def __new__(cls, entry_id, entry_name, movie, score, low_confidence, source, anilist_id=None,
+                tmdb_id=None):
         if type(entry_id) is not int or entry_id <= 0:
             raise ValueError("entry_id must be jimaku's positive integer id, got %r" % (entry_id,))
         if not isinstance(entry_name, str) or not entry_name.strip():
@@ -123,7 +124,8 @@ class Resolved(_ResolvedFields):
         if anilist_id is not None and (type(anilist_id) is not int or anilist_id <= 0):
             raise ValueError("anilist_id must be None or a positive int, got %r" % (anilist_id,))
         return _ResolvedFields.__new__(cls, entry_id, entry_name, movie, float(score),
-                                       low_confidence, source, anilist_id)
+                                       low_confidence, source, anilist_id,
+                                       tmdb_id if _is_tmdb(tmdb_id) else None)
 
 
 Identification = namedtuple("Identification",
@@ -337,6 +339,15 @@ def _kitsu_names(hit):
     return list(dict.fromkeys(n for n in names if isinstance(n, str) and n.strip()))
 
 
+#: ⭐ LAYER 16 (A5) -- the one shape of jimaku's `tmdb_id` hato keeps and hands on:
+#: `tv:261692`, `movie:805652`. Anything else is None.
+_TMDB = re.compile(r"^(tv|movie):[0-9]+$")
+
+
+def _is_tmdb(value):
+    return isinstance(value, str) and bool(_TMDB.match(value))
+
+
 def _positive_int(value):
     return type(value) is int and value > 0
 
@@ -348,7 +359,7 @@ def _resolved(entry, top, doubts, source, anilist_id):
         anilist_id = entry.get("anilist_id")
     return Resolved(entry["id"], names[0] if names else "entry %d" % entry["id"],
                     flags.get("movie") is True, min(max(top.score, 0.0), 1.0), bool(doubts),
-                    source, anilist_id)
+                    source, anilist_id, entry.get("tmdb_id"))
 
 
 def _plural(n, word):
@@ -453,6 +464,9 @@ _SCHEMA = """CREATE TABLE IF NOT EXISTS resolutions (
 )"""
 _COLUMNS = ("key", "entry_id", "entry_name", "movie", "score", "low_confidence", "source",
             "anilist_id", "resolved_at")
+#: ⭐ LAYER 16 -- added on open, never by a schema bump (an older hato would refuse the
+#: file, and Go back keeps one). An older hato names its columns, so it never sees it.
+_ADDED_COLUMNS = (("tmdb_id", "TEXT"),)
 _UNAVAILABLE = object()
 
 
@@ -499,13 +513,14 @@ class ResolutionCache(object):
         if not self.persistent or not self.path.is_file():
             return self._memory.get(key)
         row = self._run(lambda conn: conn.execute(
-            "SELECT entry_id, entry_name, movie, score, low_confidence, source, anilist_id "
-            "FROM resolutions WHERE key = ?", (key,)).fetchone(), write=False)
+            "SELECT entry_id, entry_name, movie, score, low_confidence, source, anilist_id, "
+            "tmdb_id FROM resolutions WHERE key = ?", (key,)).fetchone(), write=False)
         if row is _UNAVAILABLE:
             return self._memory.get(key)
         if row is None:
             return None
-        return Resolved(row[0], row[1], bool(row[2]), row[3], bool(row[4]), row[5], row[6])
+        return Resolved(row[0], row[1], bool(row[2]), row[3], bool(row[4]), row[5], row[6],
+                        row[7])
 
     def put(self, key, resolved):
         key = _checked_key(key)
@@ -514,10 +529,12 @@ class ResolutionCache(object):
         if self.persistent:
             values = (key, resolved.entry_id, resolved.entry_name, int(resolved.movie),
                       resolved.score, int(resolved.low_confidence), resolved.source,
-                      resolved.anilist_id, datetime.now(timezone.utc).isoformat(timespec="seconds"))
+                      resolved.anilist_id, datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                      resolved.tmdb_id)
+            names = _COLUMNS + tuple(n for n, _k in _ADDED_COLUMNS)
             done = self._run(lambda conn: conn.execute(
                 "INSERT OR REPLACE INTO resolutions (%s) VALUES (%s)"
-                % (", ".join(_COLUMNS), ", ".join("?" * len(_COLUMNS))), values), write=True)
+                % (", ".join(names), ", ".join("?" * len(names))), values), write=True)
             if done is not _UNAVAILABLE:
                 return
         self._memory[key] = resolved
@@ -633,6 +650,16 @@ class ResolutionCache(object):
             missing = [c for c in _COLUMNS if c not in have]
             if missing:
                 raise _Corrupt("the resolutions table has no %s" % ", ".join(missing))
+            for name, kind in _ADDED_COLUMNS:
+                if name not in have:
+                    try:
+                        conn.execute("ALTER TABLE resolutions ADD COLUMN %s %s" % (name, kind))
+                        conn.commit()
+                    except sqlite3.OperationalError:
+                        # ⚠ another process added it a moment ago ("duplicate column")
+                        if name not in set(r[1] for r in conn.execute(
+                                "PRAGMA table_info(resolutions)")):
+                            raise
         except BaseException as exc:
             conn.close()
             if type(exc) is sqlite3.DatabaseError:

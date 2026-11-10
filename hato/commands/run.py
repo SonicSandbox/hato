@@ -220,6 +220,45 @@ def build_world(args):
 # the log
 # ---------------------------------------------------------------------------
 
+def _report_fault(args, cfg, run_report, plain, exc, logged=False):
+    u"""A fault in the report AFTER a run that wrote files (#6). -> EXIT_FAILED
+
+    ⛔ The files stay and `_remember` already ran -- nothing here undoes them. But a
+    report that could not be shown is still a fault, so: ONE plain sentence on stderr
+    (a traceback on screen reads as *"the run broke"*), and the traceback where the
+    crash path puts its own -- this run's block in the log, with whatever of the
+    report did render, so the run is not missing from the log. Never raises.
+    ⛔ 16z Z-D4: ONE RUN, ONE BLOCK. `logged` -- the run's block is already in the log
+    (the fault came after, e.g. stdout gone under `hato | more`): no second block, which
+    `_trim` would count as a run. The sentence on stderr names the fault.
+    """
+    head = (u"the run finished, but its report could not be shown (%s: %s)"
+            % (type(exc).__name__, exc))
+    trace = traceback.format_exc()
+    note = None
+    if not args.no_log and not logged:
+        crashes = u"\n".join(getattr(run_report, "crashes", None) or [])
+        block = u"\n\n".join(part for part in (plain, crashes, u"hato: %s\n%s" % (head, trace))
+                             if part)
+        try:
+            note = log_text(block, cfg.log_path_resolved, cfg.log_keep)
+        except Exception as again:          # ⚠ the log WAS the fault: say so, never raise
+            note = u"the run log could not be written (%s: %s), so this run is not in it." % (
+                type(again).__name__, again)
+    if args.no_log:
+        tail = u"--no-log was given, so the details are not in hato.log"
+    elif logged:
+        tail = u"the run itself is in hato.log"
+    elif note:
+        tail = u"and the details could not be put in hato.log"
+    else:
+        tail = u"the details are in hato.log"
+    sys.stderr.write(u"hato: %s -- %s.\n" % (head, tail))
+    if note:
+        sys.stderr.write(u"hato: %s\n" % note)
+    return EXIT_FAILED
+
+
 def log_text(text, path, keep):
     u"""Append one run's block and trim the file to `keep` runs. -> note or None
 
@@ -670,29 +709,54 @@ def run(args):
         except pipeline.ConfigProblem as exc:
             return _fail(str(exc))
         except Exception as exc:                  # ⚠ a crash is a fault: say so, loudly
-            sys.stderr.write(u"hato: the run stopped on an unexpected %s: %s\n%s\n"
-                             % (type(exc).__name__, exc, traceback.format_exc()))
+            crash = (u"hato: the run stopped on an unexpected %s: %s\n%s\n"
+                     % (type(exc).__name__, exc, traceback.format_exc()))
+            sys.stderr.write(crash)
+            # 🚨 AND IN THE LOG -- this run's block IS the crash. 1.0.9's NoneType stop
+            # left a tester's store holding `state.db` and nothing else: the return
+            # came before `log_text`, so there was nothing to send (2026-10-04).
+            if not args.no_log:
+                note = log_text(crash, cfg.log_path_resolved, cfg.log_keep)
+                if note:
+                    sys.stderr.write(u"hato: %s\n" % note)
             return EXIT_FAILED
         finally:
             lock.release()
     finally:
         world.close()
 
-    plain = report.render(run_report, colour=False, verbose=args.verbose,
-                          width=report.DEFAULT_WIDTH)
-    if not args.no_log:
-        note = log_text(plain, cfg.log_path_resolved, cfg.log_keep)
-        if note:
-            sys.stderr.write(u"hato: %s\n" % note)
+    # ⚠ #6 (2026-10-04 hunt): everything from here to `stopped` ran unguarded, so a fault
+    # in the REPORT, after the run had written its files, left the screen a traceback and
+    # the log nothing. ⭐ Every piece that can fail is built FIRST, then logged once, then
+    # shown -- so a run is one block in the log whichever way it ends.
+    plain, logged = None, False
+    try:
+        plain = report.render(run_report, colour=False, verbose=args.verbose,
+                              width=report.DEFAULT_WIDTH)
+        if args.json:
+            lines = [] if args.quiet else list(report.ndjson(run_report))
+        else:
+            screen = report.render(run_report, colour=wants_colour(args),
+                                   verbose=args.verbose, width=terminal_width())
+        if not args.no_log:
+            # ⭐ A show a fault in hato ended (`pipeline._Run._guarded`): its traceback goes
+            # in this run's block -- the log's, never the screen's.
+            crashes = u"\n".join(run_report.crashes)
+            note = log_text(plain + (u"\n\n" + crashes if crashes else u""),
+                            cfg.log_path_resolved, cfg.log_keep)
+            logged = True               # ⛔ 16z Z-D4: whatever fails next, never a 2nd block
+            if note:
+                sys.stderr.write(u"hato: %s\n" % note)
 
-    if args.json:
-        if not args.quiet:
-            for line in report.ndjson(run_report):
-                sys.stdout.write(line + u"\n")
-            sys.stdout.flush()
-    else:
-        _say(args, report.render(run_report, colour=wants_colour(args),
-                                 verbose=args.verbose, width=terminal_width()))
+        if args.json:
+            if not args.quiet:
+                for line in lines:
+                    sys.stdout.write(line + u"\n")
+                sys.stdout.flush()
+        else:
+            _say(args, screen)
+    except Exception as exc:
+        return _report_fault(args, cfg, run_report, plain, exc, logged)
 
     if run_report.stopped:
         # ⚠ The ONE in-run condition that is a failure: the run was cut short

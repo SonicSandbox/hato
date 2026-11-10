@@ -641,6 +641,80 @@ def memory_summary(answer):
         videos, u"" if videos == 1 else u"s", waiting, shows, u"" if shows == 1 else u"s")
 
 
+#: ⭐ LAYER 16 (16g) -- the SURASURA card's status line, in the ruled mock's five
+#: wordings (`gui-mock/mock-connect.html`) and the switched-off one.
+CONNECT_OFF = u"Off: nothing is copied to Surasura."
+CONNECT_ABSENT = u"Surasura isn't installed on this computer, so nothing is copied."
+CONNECT_OFFLINE = (u"Surasura's library can't be reached right now",
+                   u"(a NAS or OneDrive folder?). New subtitles wait; hato tries again on "
+                   u"its next run.")
+CONNECT_TOO_NEW = (u"This Surasura is newer than this hato.",
+                   u"Update hato to hand subtitles over; nothing is copied until then.")
+CONNECT_CARDS = u"Each new subtitle is copied to its library and handed over for cards."
+CONNECT_NO_CARDS = (u"Each new subtitle is copied to its library. Cards are off in "
+                    u"Surasura (“Make cards for me”).")
+
+
+def connect_words(found):
+    u"""What the SURASURA card says under its switch. -> dict: `tone` (u"ok", u"look"
+    or None) and `lead` (the coloured words, or u""), `rest`, `path` (the drop folder,
+    or None), and `waiting` / `stuck` -- the counts a person is owed (u"" when none).
+
+    `found` is `connect.status(...)`'s Status, or None (nothing read: absent).
+    ⭐ *"decisions need a surface"* (RUNBOOK 16.1): a drop waiting, a stop, a
+    `bad-data` are COUNTED here, on the card -- nothing is a dialog. ⛔ Only while the
+    hand-off is live: switched off or uninstalled, nothing is tried again, and a count
+    of what waits would promise what nothing will do."""
+    from hato import connect
+    from hato import state as _state
+    kind = found.link.state if found is not None else connect.ABSENT
+    said = {u"tone": None, u"lead": u"", u"rest": u"", u"path": None,
+            u"waiting": u"", u"stuck": u""}
+    if kind == connect.OFF:
+        said[u"rest"] = CONNECT_OFF
+        return said
+    if kind == connect.ABSENT:
+        said[u"rest"] = CONNECT_ABSENT
+        return said
+    if kind == connect.TOO_NEW:
+        said[u"tone"], (said[u"lead"], said[u"rest"]) = u"look", CONNECT_TOO_NEW
+        return said
+    if kind == connect.OFFLINE or not found.reachable:
+        said[u"tone"], (said[u"lead"], said[u"rest"]) = u"look", CONNECT_OFFLINE
+    else:
+        version = (found.link.entry or {}).get(u"version")
+        version = version.strip()[:24] if isinstance(version, str) else u""
+        said[u"tone"] = u"ok"
+        said[u"lead"] = u"✓ Surasura %sfound." % (version + u" " if version else u"")
+        said[u"rest"] = (CONNECT_CARDS if kind == connect.REGISTERS else CONNECT_NO_CARDS)
+        said[u"path"] = found.link.folder
+    counts = found.counts or {}
+
+    def n(name):
+        value = counts.get(name)
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    # ⚠ 16z (Z-A6) -- with cards off (drops only) no run registers a retry
+    # (`Handoff.retry`): it waits for *Make cards for me*, never for *"the next run"*
+    waiting = [(n(u"drop-waiting"), u"for the library"),
+               (n(u"retry"), u"until cards are on in Surasura" if kind == connect.DROPS
+                else u"for the next run"),
+               (n(u"stopped"), u"until Surasura changes")]
+    stuck = [(n(u"bad-data"), u"Surasura couldn't read (tried again when the file "
+                               u"changes)"),
+             (n(_state.EXPIRED), u"waited %d days for the library and stopped"
+              % connect.DROP_WAIT_DAYS)]
+    said[u"waiting"] = u" · ".join(u"%d %s" % (count, words) for count, words in waiting
+                                   if count)
+    said[u"stuck"] = u" · ".join(u"%d %s" % (count, words) for count, words in stuck
+                                 if count)
+    if said[u"waiting"]:
+        said[u"waiting"] = u"Waiting: " + said[u"waiting"]
+    if said[u"stuck"]:
+        said[u"stuck"] = u"Not handed over: " + said[u"stuck"]
+    return said
+
+
 def argv_for_update(*flags):
     u"""⭐ RUNBOOK 11f -- `hato update`, the ONE implementation the window, the
     tray and a person share. -> [unicode]. `--json` always: the window reads the
@@ -1276,12 +1350,28 @@ class Run(object):
 
     @property
     def said(self):
-        u"""The first thing the child said on stderr, without its `hato:`. -> text"""
-        for line in self.notes:
-            line = (line or u"").strip()
-            if line:
-                return line[len(u"hato:"):].strip() if line.startswith(u"hato:") else line
-        return u""
+        u"""What the child said on stderr, without its `hato:`. -> text
+
+        🚨 NOT SIMPLY THE FIRST LINE (2026-10-04 hunt, bug 4): any earlier line -- a
+        dev-only `SyntaxWarning` -- hid the crash, and a crash before hato's own `except`
+        showed only `Traceback (most recent call last):`. So: hato's own *"the run
+        stopped"* line; else the last traceback's LAST line, which names the error; else
+        the first line, as ever (exit 2's usage words)."""
+        lines = [(line or u"").strip() for line in self.notes]
+        lines = [line for line in lines if line]
+        bare = lambda line: line[len(u"hato:"):].strip() if line.startswith(u"hato:") else line
+        for line in lines:
+            if line.startswith(u"hato: the run stopped"):
+                return bare(line)
+        notes = [(line or u"") for line in self.notes]
+        starts = [i for i, line in enumerate(notes)
+                  if line.startswith(u"Traceback (most recent call last)")]
+        if starts:
+            tail = [line.strip() for line in notes[starts[-1] + 1:]
+                    if line.strip() and not line[:1].isspace()]
+            if tail:
+                return tail[-1]
+        return bare(lines[0]) if lines else u""
 
     @property
     def counts(self):

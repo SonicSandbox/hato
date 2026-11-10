@@ -458,49 +458,8 @@ def _place(source, target):
 SURASURA_FOLDER = u"Hato"
 
 
-def surasura_copy(written, surasura_dir):
-    u"""Drop a copy of a finished subtitle where surasura will find it.
-
-    -> the path written, or None when the integration is off.
-
-    ⭐ THE INTEGRATION (RUNBOOK 7h) -- github.com/SonicSandbox/surasura. A
-    COPY, and only of a subtitle hato has just aligned: the file beside the
-    video stays exactly where tsubasa put it, because that is the one a player
-    loads.
-
-    ⚠ IT OVERWRITES, DELIBERATELY, and that is the opposite of every other
-    write in this module. `keep_original` and `port._copy_atomically` refuse to
-    touch a file that is already there because those live in the USER'S
-    folders. This one owns its folder: a re-aligned subtitle is a better answer
-    than the one dropped last week, and refusing would quietly leave the stale
-    copy as the one surasura reads.
-
-    🚨 TEMP-PLUS-RENAME even so. `open(path,'w')` truncates on open, and a
-    raise after that leaves a zero-byte subtitle -- which surasura would read
-    as an empty one rather than as a failure.
-    """
-    if not surasura_dir or not written:
-        return None                          # ⛔ empty means off
-    source = Path(written)
-    if not source.is_file():
-        return None
-    folder = Path(surasura_dir) / SURASURA_FOLDER
-    folder.mkdir(parents=True, exist_ok=True)
-    target = folder / source.name
-    handle, temporary = tempfile.mkstemp(prefix=TEMP_PREFIX, dir=str(folder))
-    os.close(handle)
-    try:
-        shutil.copyfile(str(source), temporary)
-        os.replace(temporary, str(target))    # ⭐ replaces; see the note above
-    except BaseException:
-        if os.path.exists(temporary):
-            os.remove(temporary)
-        raise
-    return target
-
-
 __all__ = ["SURASURA_FOLDER", "TEMP_PREFIX", "InsideScan", "SubsDirInsideScan",
            "OutDirInsideScan",
            "KeptOriginalProblem", "UntaggedOriginal", "inside", "check_subs_dir",
            "check_out_dir", "target_dir", "mirrored_dir", "download_name",
-           "remembered_file", "entry_folder", "keep_original", "surasura_copy"]
+           "remembered_file", "entry_folder", "keep_original"]

@@ -471,3 +471,87 @@ def test_hato_rank_with_a_folder_prints_exactly_the_ranking_of_that_video(tmp_pa
                       "--folder", str(folder)]) == 0
     out = capsys.readouterr().out
     assert rank.explain(rank.rank(episode_three)) in out
+
+
+def test_hato_rank_with_anilist_says_a_candidate_was_stated_by_the_list(tmp_path, capsys):
+    u"""16i. `hato rank --folder --anilist` passes the list's bridge as a run does, and a
+    candidate the list placed carries the line saying so. Haruhana alone against S2 01-10:
+    without the flag its names state nothing (two arms, the flag the only difference)."""
+    listed = tmp_path / "haruhana.json"
+    listed.write_text(json.dumps([f for f in FILES if f["name"].startswith(u"[Haruhana]")],
+                                 ensure_ascii=False), encoding="utf-8")
+    folder = tmp_path / "v"
+    folder.mkdir()
+    for n in (5, 6, 7):
+        (folder / (u"[SubsPlease] Sousou no Frieren S2 - %02d (1080p) [ABCD1234].mkv" % n)).write_bytes(b"")
+    base = ["--explain", "11446", "6", "--files", str(listed), "--folder", str(folder)]
+
+    assert _run_rank(base) == 0
+    without = capsys.readouterr().out
+    assert u"stated by" not in without and u"anime-relations not asked" in without, without
+
+    assert _run_rank(base + ["--anilist", "182255"]) == 0
+    out = capsys.readouterr().out
+    assert u"Its offset is stated by anime-relations" in out, out
+    assert u"Sousou no Frieren - 34" in out, out          # S2 06 is its 34
+
+
+
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 16 (16k) -- favourite release groups (fork 3): after the format, before
+# the language; never above a known number; empty = 1.0.9's order
+# ---------------------------------------------------------------------------
+
+def _ass_of(episode_three, group, lang=None):
+    found = [c for c in episode_three if c.group == group and tokens.subtitle_format(c.name) == "ass"
+             and (lang is None or tokens.language_class(c.name) == lang)]
+    assert found, (group, lang, [c.name for c in episode_three])
+    return found[0]
+
+
+def test_a_favourite_groups_file_is_tried_first_among_known_ass(episode_three):
+    u"""The case Sonic named: NanakoRaws' UNTAGGED `.ass` lost to Haruhana's `[JPN]` one on
+    the language step. A favourite sits BEFORE the language step, so it is first."""
+    plain = rank.rank(episode_three)
+    assert not order(plain)[0].startswith(u"[NanakoRaws]"), order(plain)[:3]
+    fav = rank.rank(episode_three, favourites=(u"NanakoRaws",))
+    first = fav.ordered[0].candidate
+    assert first.name.startswith(u"[NanakoRaws]") and tokens.subtitle_format(first.name) == "ass", \
+        order(fav)[:3]
+    assert u"[NanakoRaws] is a favourite group, tried first." in fav.ordered[1].reasons[0], \
+        fav.ordered[1].reasons
+
+
+def test_another_groups_ass_still_goes_before_a_favourites_srt():
+    u"""Fork 3's ⚖️: the `.ass` ruling (2026-09-17) stays on top -- a favourite's `.srt`
+    waits behind another group's `.ass`."""
+    srt = candidate(u"[NanakoRaws] Sousou no Frieren S2 - 03 (NTV 1080p HEVC AAC).srt", size=90000)
+    ass = candidate(u"[Haruhana] Sousou no Frieren - 31 [JPN].ass", size=20000)
+    assert order(rank.rank([srt, ass], favourites=(u"NanakoRaws",))) == [ass.name, srt.name]
+
+
+def test_a_favourite_never_lifts_a_guessed_number_above_a_known_one():
+    guess = candidate(u"[NanakoRaws] Sousou no Frieren S2 - 07 (NTV).ass", quality="position")
+    known = candidate(u"[Zeta] Sousou no Frieren - 31 [JPN].srt", quality="literal")
+    assert order(rank.rank([guess, known], favourites=(u"NanakoRaws",))) == [known.name, guess.name]
+
+
+def test_favourites_go_in_the_order_listed_and_match_however_the_name_is_written():
+    nanako = candidate(u"[Nanako-Raws] Show - 01.ass", size=10000)
+    haru = candidate(u"[haruhana] Show - 01.ass", size=20000)
+    other = candidate(u"[Zeta] Show - 01.ass", size=90000)
+    got = rank.rank([other, haru, nanako], favourites=(u"NanakoRaws", u"Haruhana"))
+    assert order(got) == [nanako.name, haru.name, other.name]
+    assert u"[Nanako-Raws] comes before [haruhana] in your favourite groups." in got.ordered[1].reasons[0]
+    assert u"[haruhana] is a favourite group, tried first." in got.ordered[2].reasons[0]
+    assert order(rank.rank([other, haru, nanako], favourites=(u"Haruhana", u"NanakoRaws"))) == [
+        haru.name, nanako.name, other.name]
+
+
+def test_no_favourites_is_1_0_9s_order(episode_three):
+    u"""Empty, and favourites naming no group on offer, both leave the order exactly as it
+    was -- and `_KEY_PARTS` still names every part (`rank()` asserts the two agree)."""
+    before = order(rank.rank(episode_three))
+    assert order(rank.rank(episode_three, favourites=())) == before
+    assert order(rank.rank(episode_three, favourites=(u"NobodyRaws",))) == before
+    assert rank._KEY_PARTS[1:4] == ("format", "favourite", "language")

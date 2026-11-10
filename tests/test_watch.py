@@ -2208,3 +2208,136 @@ def test_this_tray_says_its_runs_read_the_untimed_choice():
     1.0.8 tray says `extract` and would refuse a config.toml carrying `untimed`; the
     window's reader of the token is checked with the window's."""
     assert u"untimed" in watch.CAPABILITIES
+
+
+# ---------------------------------------------------------------------------
+# ⭐ LAYER 16 (16g) -- the tooltip's Surasura line (fork 1, ruled: W1, counts)
+# ---------------------------------------------------------------------------
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _surasura                                                  # noqa: E402
+
+
+def _found(tmp_path, monkeypatch, setting=u"auto", outcomes=(), **fields):
+    u"""`connect.status` over what is ON DISK -- surasura.json as Surasura writes it, rows
+    from the real producer (`_surasura.seed`). `fields=None` removes surasura.json."""
+    from hato import connect, paths, state
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / u"data"))
+    if outcomes:
+        _surasura.install(tmp_path, monkeypatch, register=True)
+        paths.data_root().mkdir(parents=True, exist_ok=True)
+        with state.StateDB(paths.state_db_path()) as db:
+            _surasura.seed(db, tmp_path, list(outcomes))
+    _surasura.install(tmp_path, monkeypatch, **fields)
+    return connect.status(setting)
+
+
+def test_16g_the_tooltip_line_is_fork_1s_words_with_the_counts(tmp_path, monkeypatch):
+    u"""Fork 1 (ruled 2026-10-29: W1, counts): *"Surasura: 12 handed over · 1 waits for
+    Surasura"* · *"Surasura: 12 copied to its library"* when Make cards is off ·
+    *"Surasura: library offline · tries again next run"*. The counts are the store's,
+    the latest row per video: handed over = Surasura answered (registered, or skipped
+    by its own setting); waits = what the next run hands over again."""
+    found = _found(tmp_path, monkeypatch, register=True, outcomes=(
+        u"registered", u"registered", u"skipped", u"retry", u"stopped", u"drop-waiting",
+        u"bad-data", u"expired", u"dropped"))
+    assert watch.tray_tooltip(3, found) == (u"hato -- watching 3 folders\n"
+                                            u"Surasura: 3 handed over · 3 wait for Surasura")
+    one = _found(tmp_path / u"one", monkeypatch, register=True,
+                 outcomes=(u"registered", u"retry"))
+    assert watch.surasura_line(one) == u"Surasura: 1 handed over · 1 waits for Surasura"
+    done = _found(tmp_path / u"done", monkeypatch, register=True, outcomes=(u"registered",))
+    assert watch.surasura_line(done) == u"Surasura: 1 handed over", u"no waits, no tail"
+    drops = _found(tmp_path / u"drops", monkeypatch, register=False,
+                   outcomes=(u"dropped", u"dropped", u"registered", u"drop-waiting",
+                             u"expired"))
+    assert watch.surasura_line(drops) == u"Surasura: 3 copied to its library", (
+        u"a waiting or expired drop never reached the library")
+    for at, fields in enumerate((dict(register=True, drop_folders={}),
+                                 dict(register=True, library=False))):
+        offline = _found(tmp_path / (u"offline%d" % at), monkeypatch, **fields)
+        assert watch.surasura_line(offline) == watch.OFFLINE_LINE, fields
+
+
+def test_16g_no_line_without_surasura_when_too_new_or_switched_off(tmp_path, monkeypatch):
+    u"""⛔ No line when Surasura isn't there (or its cli is gone), is too new, or the
+    switch is off -- a tray that says nothing of Surasura is 1.0.9's tray, and the first
+    line stays exactly what it was."""
+    from hato import connect
+    monkeypatch.setenv("HOUSEKI_TOOLS_DIR", str(tmp_path / u"none"))
+    shapes = [connect.status(u"auto"),
+              _found(tmp_path, monkeypatch, register=True, cli=tmp_path / u"gone.cmd"),
+              _found(tmp_path, monkeypatch, register=True, contract=2),
+              _found(tmp_path, monkeypatch, u"off", register=True, outcomes=(u"registered",)),
+              None]
+    for found in shapes:
+        assert watch.surasura_line(found) is None, found and found.link.state
+        assert watch.tray_tooltip(1, found) == u"hato -- watching 1 folder"
+
+
+def test_16g_the_tooltip_fits_windows_127_characters_and_never_cuts_a_line(tmp_path,
+                                                                            monkeypatch):
+    u"""Windows' tooltip field is 128 WCHARs with the nul (`tray.py`): the whole tooltip
+    stays within 127. ⛔ A line that would not fit is left out WHOLE -- the shell's own
+    cut would end it mid-number."""
+    from hato import connect
+    real = _found(tmp_path, monkeypatch, register=True)
+    huge = connect.Status(real.link, {u"registered": 10 ** 40, u"retry": 10 ** 40}, True)
+    for folders, found in ((999, real), (1, huge), (10 ** 6, huge)):
+        tip = watch.tray_tooltip(folders, found)
+        assert len(tip) <= watch.TOOLTIP_MAX, (len(tip), tip)
+        line = watch.surasura_line(found)
+        assert tip.endswith(line) or u"\n" not in tip, tip
+    assert u"\n" in watch.tray_tooltip(999, real), u"a real line fits beside 999 folders"
+
+
+def test_16g_the_tray_follows_the_switch_and_surasura_and_reads_only_when_moved(
+        tmp_path, monkeypatch):
+    u"""The tray's line follows what moves it -- the switch saved in Settings, Surasura
+    uninstalled -- through the real config reader. ⛔ A tick with nothing moved reads
+    nothing: two `stat`s, never surasura.json and the store."""
+    a = tmp_path / u"A"
+    a.mkdir()
+    world = RealConfigWorld(tmp_path, monkeypatch, [a])
+    _found(tmp_path, monkeypatch, register=True, outcomes=(u"registered",))
+    reads = []
+    real = watch.surasura_status
+    monkeypatch.setattr(watch, u"surasura_status",
+                        lambda cfg: reads.append(1) or real(cfg))
+    seen = {}
+
+    def script(tick):
+        start = len(reads)
+        tick()
+        tick()
+        seen[u"idle"] = len(reads) - start
+        world.config.write_text(u"folders = [%s]\nsurasura_connect = \"off\"\n"
+                                % json_path(a), encoding="utf-8")
+        tick()
+        seen[u"off"] = world.tooltips[-1]
+        world.write([a])
+        tick()
+        seen[u"on"] = world.tooltips[-1]
+        (tmp_path / u"houseki-tools" / u"surasura.json").unlink()
+        tick()
+        seen[u"gone"] = world.tooltips[-1]
+
+    assert world.run(script) == 0
+    assert world.tooltips[0] == u"hato -- watching 1 folder\nSurasura: 1 handed over", (
+        world.tooltips[0])
+    assert seen[u"idle"] == 0, u"a tick with nothing moved read Surasura %d times" % seen[u"idle"]
+    assert seen[u"off"] == u"hato -- watching 1 folder", seen
+    assert seen[u"on"] == u"hato -- watching 1 folder\nSurasura: 1 handed over", seen
+    assert seen[u"gone"] == u"hato -- watching 1 folder", seen
+
+
+def json_path(path):
+    import json
+    return json.dumps(str(path))
+
+
+def test_this_tray_says_its_runs_read_the_surasura_switch():
+    u"""⭐ LAYER 16 -- the same rule again: a tray whose runs read `surasura_connect` says
+    so. A 1.0.9 tray says `untimed` and would refuse a config.toml carrying it."""
+    assert u"connect" in watch.CAPABILITIES

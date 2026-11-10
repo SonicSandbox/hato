@@ -71,6 +71,9 @@ else:
     os.environ["HATO_CACHE"] = str(TEST_ROOT / "data")
     os.environ["HATO_CONFIG"] = str(TEST_ROOT / "config.toml")
     os.environ["TSUBASA_CACHE"] = str(TEST_ROOT / "tsubasa")
+    # ⭐ LAYER 16 -- the shared tools folder Surasura's real surasura.json lives in
+    os.environ["HOUSEKI_TOOLS_DIR"] = str(TEST_ROOT / "houseki-tools")
+    os.environ.pop("HATO_TOOLS_CLI", None)
     if not LIVE:
         os.environ.pop("HATO_JIMAKU_KEY", None)
         os.environ["HATO_KEYFILE"] = str(TEST_ROOT / "no-such-key.txt")

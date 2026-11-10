@@ -536,6 +536,10 @@ QPushButton:disabled { background: %(RAISED)s; color: %(INK_FAINT)s;
 #cautionic  { font-size: 12px; color: %(REFUSED_INK)s; background: transparent; }
 #cautionwhy { font-size: 11px; color: %(INK_DIM)s; background: transparent; }
 #code  { font-size: 12px; color: %(INK_DIM)s; }
+/* ⭐ LAYER 16 (16g) -- the SURASURA card's status line: the mock's `.status`, 12 px in
+ * the secondary ink (5.38 on the card), never the hint's 2.91 -- it is what the switch
+ * DID, not an aside. Its lead is coloured inline (OK / LOOK). */
+#connectsay { font-size: 12px; color: %(INK_DIM)s; background: transparent; }
 #dotok { font-size: 12px; color: %(OK)s; }
 #stale {
     background: %(CARD_ON)s;

@@ -490,11 +490,13 @@ def test_a_card_closed_before_it_is_up_never_shows(monkeypatch):
     assert not shown.alive() and shown.hwnd is None
 
 
-_CHILD = u"""import sys, time
+_CHILD = u"""import os, sys, time
 sys.path.insert(0, %r)
 from hato import splash
 card = splash.show(u"9.9.9")
-print("up" if card.hwnd else "no", flush=True)
+# its OWN pid and its parent's: from a venv's python.exe, Popen().pid is the
+# LAUNCHER's, and the interpreter that draws is the launcher's child
+print(("up %%d %%d" %% (os.getpid(), os.getppid())) if card.hwnd else "no", flush=True)
 time.sleep(30)
 """
 
@@ -510,9 +512,12 @@ def test_a_splash_is_this_updaters_only_when_it_or_its_child_drew_it(tmp_path):
     script.write_text(_CHILD % os.path.dirname(HERE), encoding="utf-8")
     child = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE)
     try:
-        assert child.stdout.readline().strip() == b"up", u"the control: no splash drawn"
-        assert splash.on_screen(of=child.pid), u"the child's own splash is not its own"
-        assert splash.on_screen(of=os.getpid()), u"a splash my child drew is not mine"
+        said = child.stdout.readline().split()
+        assert said[:1] == [b"up"], u"the control: no splash drawn"
+        drew, parent = int(said[1]), int(said[2])
+        assert parent in (child.pid, os.getpid()), (parent, child.pid, os.getpid())
+        assert splash.on_screen(of=drew), u"the child's own splash is not its own"
+        assert splash.on_screen(of=parent), u"a splash my child drew is not mine"
         assert not splash.on_screen(of=4), u"another process's splash counted"
     finally:
         child.terminate()

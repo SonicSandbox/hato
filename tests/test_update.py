@@ -1827,6 +1827,117 @@ def test_auto_writes_nothing_when_there_is_nothing_to_do(auto):
     assert auto[u"checks"] == 1 and after == before, u"an up-to-date day was logged"
 
 
+# ---------------------------------------------------------------------------
+# LAYER 16 (16j) -- `--auto` also refreshes the anime-relations list: after its own
+# check, never in a run, never from --stage / --apply / --rollback. ⚠ 16z (Z-C6): `--auto`
+# ONLY -- the checks below ran `--check`, which the window waits on, and refreshes no more
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def refreshes(monkeypatch, tmp_path, capsys):
+    from hato import relations, runlock
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    monkeypatch.setattr(update, "check", lambda *a, **k: update.Decision(update.NONE, u"0.0.1"))
+    world = {u"calls": [], u"in_run": False, u"lock": runlock.FREE}
+
+    def refresh(now, *a, **k):
+        world[u"calls"].append((now, capsys.readouterr().out))
+        return u"not-due"
+
+    monkeypatch.setattr(relations, "refresh", refresh)
+    # ⚠ 16n: the lock's THREE answers (`lock_state`), which `run_in_flight` reads too
+    monkeypatch.setattr(runlock, "lock_state",
+                        lambda *a, **k: runlock.HELD if world[u"in_run"] else world[u"lock"])
+    return world
+
+
+def test_the_check_refreshes_the_list_after_its_own_answer(refreshes):
+    u"""⚠ 16z (Z-C6): `--auto`'s check, not `--check`'s -- off the frozen build `--auto` says
+    nothing and asks nothing, and the list is refreshed all the same (the order against a
+    real check: `test_16z_C6_auto_refreshes_the_list_after_its_own_check`)."""
+    from hato.commands import update as command
+    assert command.run(_args(auto=True), now=123.0) == 0
+    assert refreshes[u"calls"] == [(123.0, u"")], refreshes[u"calls"]
+
+
+def test_the_list_is_never_refreshed_while_a_run_holds_the_lock(refreshes):
+    from hato.commands import update as command
+    refreshes[u"in_run"] = True
+    assert command.run(_args(auto=True), now=123.0) == 0           # ⚠ 16z: `--auto`'s road
+    assert refreshes[u"calls"] == []
+
+
+def test_staging_and_installing_never_refresh_the_list(refreshes, monkeypatch):
+    from hato.commands import update as command
+    monkeypatch.setattr(command, "_apply", lambda args: 0)
+    for flag in (u"stage", u"apply", u"rollback"):
+        command.run(_args(**{flag: True}), now=123.0)
+    assert refreshes[u"calls"] == []
+
+
+def test_16n_F4_if_due_answered_from_memory_refreshes_nothing(refreshes, monkeypatch):
+    u"""R4: `--if-due` promises *"otherwise the last answer, no network"* -- the list's GET
+    broke it. Two arms: not due -> no refresh; due -> the check asks, and ⚠ 16z (Z-C6): no
+    refresh either -- the window's `--check` never refreshes; `--auto` does."""
+    from hato.commands import update as command
+    _running(monkeypatch)
+    update.save_state({u"checked_at": 1000.0, u"decision": update.Decision(
+        update.TELL, u"1.0.5", update.SOURCE).as_dict()})
+    assert command.run(_args(check=True, if_due=True, json=True), now=1000.0 + 3600) == 0
+    assert refreshes[u"calls"] == [], u"an answer from memory refreshed the list"
+    assert command.run(_args(check=True, if_due=True, json=True), now=1000.0 + 2 * 86400) == 0
+    assert refreshes[u"calls"] == [], u"the window's due check refreshed the list"
+    assert command.run(_args(auto=True), now=1000.0 + 2 * 86400) == 0
+    assert len(refreshes[u"calls"]) == 1, u"`--auto` never refreshed the list"
+
+
+@pytest.mark.parametrize("raised", [RuntimeError, KeyboardInterrupt], ids=["error", "ctrl-c"])
+def test_16n_F5_a_check_that_raised_refreshes_nothing(refreshes, monkeypatch, raised):
+    u"""R5: the refresh ran in `finally` -- after an exception or Ctrl-C in the check, a
+    network GET still started. Only after a normal answer."""
+    from hato.commands import update as command
+
+    def broken(args, now):
+        raise raised(u"the check broke")
+
+    monkeypatch.setattr(command, "_run", broken)
+    with pytest.raises(raised):
+        command.run(_args(auto=True), now=123.0)                    # ⚠ 16z: `--auto`'s road
+    assert refreshes[u"calls"] == [], u"a check that raised went on to the network"
+
+
+def test_16n_F6_an_unusable_run_lock_is_not_now(refreshes):
+    u"""R6: an UNUSABLE lock (unreadable, a folder where it goes) is not "in a run" -- but
+    it is not free either: unsure is not now."""
+    from hato import runlock
+    from hato.commands import update as command
+    refreshes[u"lock"] = runlock.UNUSABLE
+    assert command.run(_args(auto=True), now=123.0) == 0           # ⚠ 16z: `--auto`'s road
+    assert refreshes[u"calls"] == [], u"the list was refreshed past an unusable lock"
+
+
+@pytest.mark.parametrize("flags", [dict(check=True, json=True), dict(check=True, if_due=True),
+                                   dict(), dict(json=True)],
+                         ids=[u"window-check-now", u"window-if-due", u"bare", u"bare-json"])
+def test_16z_C6_the_windows_check_and_a_bare_update_never_refresh_the_list(refreshes, flags):
+    u"""Z-C6: the window's *Check now* reads its child at EXIT -- so it waited for the weekly
+    list's download too. The refresh rides `--auto` only (the tray's hourly child and the
+    daily run's); `--check` and a bare `hato update` ask about hato, nothing else."""
+    from hato.commands import update as command
+    assert command.run(_args(**flags), now=3 * 86400.0) == 0
+    assert refreshes[u"calls"] == [], u"%s refreshed the list" % flags
+
+
+def test_16z_C6_auto_refreshes_the_list_after_its_own_check(refreshes, auto, monkeypatch):
+    u"""Z-C6, the road that stays: `--auto` refreshes, AFTER its own check."""
+    from hato import relations
+    order = []
+    monkeypatch.setattr(relations, "refresh",
+                        lambda now, *a, **k: order.append((now, auto[u"checks"])) or u"not-due")
+    auto[u"run"](now=1000000.0)
+    assert order == [(1000000.0, 1)], order
+
+
 def test_a_staging_failure_is_said_and_written_to_the_log(capsys, monkeypatch):
     from hato import paths
     from hato.commands import update as command
@@ -1940,3 +2051,63 @@ def test_apply_hands_off_only_what_this_copy_prepared(capsys, monkeypatch, tmp_p
     assert u"prepared by hato 0.0.1" in _said(capsys)[u"reason"]
     assert [c for c in calls if isinstance(c, list)] == [], u"a swapper was started"
 
+
+
+# ---------------------------------------------------------------------------
+# 16z -- Go back to 1.0.9 and Surasura Connect (ADVERSARY-2026-10-31, Z-A3, Z-A7)
+# ---------------------------------------------------------------------------
+
+def test_16z_A3_go_back_says_1_0_9s_clear_would_forget_what_hato_handed_to_surasura(
+        monkeypatch, tmp_path):
+    u"""⚠ 16z (Z-A3) -- 1.0.9's *Clear hato's memory* empties EVERY table, `pairings` and
+    `meta` too (no 1.0.9 can be changed): a new `complete_since`, and Surasura asking again
+    about what it already has. ⭐ Go back SAYS so, before the press -- only when the store
+    holds pairings, and never for a version that keeps them."""
+    import _surasura
+    from hato import state
+    monkeypatch.setenv("HATO_CONFIG", str(tmp_path / "config.toml"))
+    db_path = str(tmp_path / "state.db")
+    with state.StateDB(db_path):
+        pass
+    said = u"“Clear hato's memory” in 1.0.9 also forgets"
+    assert not any(said in w for w in update.going_back_words(u"1.0.9", db_path=db_path)), (
+        u"no pairing, nothing to forget")
+    _surasura.install(tmp_path, monkeypatch, register=True)
+    with state.StateDB(db_path) as db:
+        _surasura.seed(db, tmp_path, [u"registered"])
+    words = update.going_back_words(u"1.0.9", db_path=db_path)
+    assert any(said in w and u"Surasura" in w for w in words), words
+    assert not any(u"Clear hato" in w for w in update.going_back_words(u"1.1.0",
+                                                                        db_path=db_path))
+
+
+def test_16z_A7_go_back_rewrites_hato_json_with_no_verbs_and_its_cli_kept(monkeypatch,
+                                                                           tmp_path):
+    u"""⚠ 16z (Z-A7) -- after Go back, hato.json still offered `pairings` for a 1.0.9 cli
+    that has no such verb. ⭐ The press rewrites it as switched-off does (`verbs: []`, the
+    `cli` KEPT: Surasura drops an entry with none), through the ONE writer
+    (`connect.write_hato_json`); asking what Go back would change writes nothing."""
+    import _surasura
+    import hato
+    from hato import connect
+    monkeypatch.setenv("HATO_CONFIG", str(tmp_path / "config.toml"))
+    monkeypatch.setattr(hato, "__version__", u"1.1.0")      # the release that goes back
+    _surasura.install(tmp_path, monkeypatch, register=True)
+    cli = str(tmp_path / "hato-cli.exe")
+    monkeypatch.setenv(connect.TOOLS_CLI_ENV, cli)
+    assert connect.write_hato_json(u"auto")
+    path = os.path.join(connect.tools_dir(), u"hato.json")
+
+    def entry():
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+
+    assert entry()["verbs"] == [u"pairings"] and entry()["version"] == u"1.1.0"
+    update.going_back_words(u"1.0.9", db_path=str(tmp_path / "none.db"))
+    assert entry()["verbs"] == [u"pairings"], u"asking what Go back would change wrote it"
+    update.settings_for_going_back(u"1.1.0", db_path=str(tmp_path / "none.db"))
+    assert entry()["verbs"] == [u"pairings"], u"a version that has the verb lost it"
+    update.settings_for_going_back(u"1.0.9", db_path=str(tmp_path / "none.db"))
+    back = entry()
+    assert back["verbs"] == [] and back["cli"] == cli, back
+    assert back["version"] == u"1.0.9", u"hato.json names the version that runs now"

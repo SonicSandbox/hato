@@ -75,6 +75,7 @@ DB costs a skipped fetch, never an overwrite.
 """
 import os
 import time
+import traceback
 from collections import OrderedDict
 from datetime import timedelta
 
@@ -82,6 +83,8 @@ import tsubasa
 
 from hato import archives, cache as _cache, client as _client, episodes, formats, \
     keep, paths, port, present, rank, tokens
+from hato import connect
+from hato import relations as _relations
 from hato import untimed as _untimed
 from hato.cache import Cache
 from hato.resolution import Resolved, cache_key, identify
@@ -157,8 +160,8 @@ class Settings(object):
     __slots__ = ("folders", "skip_folders", "lang", "out", "subs_dir",
                  "candidates", "archives",
                  "allow_ai", "recurse", "force", "dry_run", "skip_embedded",
-                 "surasura_dir", "retry_now", "only", "prefer_format",
-                 "format_fallback", "extract_embedded", "untimed")
+                 "surasura_connect", "retry_now", "only", "prefer_format",
+                 "format_fallback", "extract_embedded", "untimed", "favourite_groups")
 
     def __init__(self, folders, lang=u"ja", out=None, subs_dir=None, candidates=3,
                  # ⚠ `archives=False`, matching `config.py`'s schema. It was True
@@ -174,13 +177,17 @@ class Settings(object):
                  # ON against the ruling and only the CLI road obeyed it.
                  # ⛔ Never mutated: the line below copies it into a tuple.
                  dry_run=False, skip_embedded=True, skip_folders=[],
-                 surasura_dir="", retry_now=False, only=(),
+                 surasura_connect=u"auto", retry_now=False, only=(),
                  # ⭐ 9a -- `config.py`'s defaults, as the guard above requires.
                  prefer_format=formats.DEFAULT_PREFERENCE, format_fallback=False,
                  # ⭐ 14c -- and its default too.
                  extract_embedded=False,
                  # ⭐ LAYER 15 -- and its default: OFF (his first constraint).
-                 untimed=formats.UNTIMED_OFF):
+                 untimed=formats.UNTIMED_OFF,
+                 # ⭐ 16k -- matching `config.py`'s default EXACTLY, a list as the schema's
+                 # is (`test_settings_defaults_match_configs_documented_schema` compares
+                 # them; a tuple was red there). Only read, never mutated: copied below.
+                 favourite_groups=[u"NanakoRaws"]):
         self.folders = tuple(os.path.abspath(os.fspath(f)) for f in folders)
         # ⭐ RUNBOOK 7e. Subtrees carved OUT of `folders` -- Sonic: *"someone
         # might say 'desktop' and then not want a certain folder checked on
@@ -206,11 +213,14 @@ class Settings(object):
         # becomes the REFERENCE tsubasa times the download against: the best reference
         # there is, because it is the same rip.
         self.skip_embedded = skip_embedded
-        # ⭐ RUNBOOK 7h. Empty means OFF, which is the default -- most people do
-        # not run surasura, and a run that quietly wrote files somewhere new
-        # would be a surprise rather than a feature.
-        self.surasura_dir = (os.path.abspath(os.fspath(surasura_dir))
-                             if surasura_dir else u"")
+        # ⭐ LAYER 16 (1.1.0) -- the hand-off to Surasura (`hato/connect.py`). `auto`
+        # hands kept files over only when Surasura is installed (its surasura.json
+        # names the folder): ⛔ no folder of hato's own any more (Sonic, 2026-10-12:
+        # *"you do not need to ever pick a location for surasura anymore"*).
+        if surasura_connect not in (u"auto", u"on", u"off"):
+            raise ValueError(u"surasura_connect must be auto, on or off, got %r"
+                             % (surasura_connect,))
+        self.surasura_connect = surasura_connect
         # ⭐ RUNBOOK 8e -- *Look again now* on one row (D3). `retry_now` ignores
         # the WAITING PERIOD and nothing else: a blacklist still stands and a file
         # already refused for the video is still never downloaded again -- which
@@ -235,6 +245,9 @@ class Settings(object):
             raise ValueError(u"untimed must be one of %s, got %r"
                              % (u", ".join(formats.UNTIMED_CHOICES), untimed))
         self.untimed = untimed
+        # ⭐ LAYER 16 (16k) -- release groups tried first among files of one format
+        # (`rank.rank(favourites=)`); it orders the tries, the timing still decides.
+        self.favourite_groups = tuple(favourite_groups or ())
 
     @classmethod
     def from_config(cls, cfg, **given):
@@ -265,13 +278,14 @@ class Settings(object):
                    force=bool(given.get("force")),
                    dry_run=bool(given.get("dry_run")),
                    skip_embedded=pick("skip_embedded", cfg.skip_embedded),
-                   surasura_dir=pick("surasura_dir", cfg.surasura_dir),
+                   surasura_connect=pick("surasura_connect", cfg.surasura_connect),
                    retry_now=bool(given.get("retry_now")),
                    only=given.get("only") or (),
                    prefer_format=pick("prefer_format", cfg.prefer_format),
                    format_fallback=pick("format_fallback", cfg.format_fallback),
                    extract_embedded=pick("extract_embedded", cfg.extract_embedded),
-                   untimed=pick("untimed", cfg.untimed))
+                   untimed=pick("untimed", cfg.untimed),
+                   favourite_groups=pick("favourite_groups", cfg.favourite_groups))
 
     def __repr__(self):
         return "<Settings %d folder(s), lang=%s%s%s>" % (
@@ -448,7 +462,7 @@ class RunReport(object):
     u"""Everything one run decided. ⛔ Prints nothing; 5a renders it."""
 
     __slots__ = ("settings", "shows", "results", "api_calls", "bytes_downloaded",
-                 "seconds", "notes", "stopped")
+                 "seconds", "notes", "stopped", "crashes")
 
     def __init__(self, settings):
         self.settings = settings
@@ -461,6 +475,9 @@ class RunReport(object):
         #: 🚨 The sentence that ended the run early (a 401, an unreachable
         #: server), or None. Videos after it were never looked at.
         self.stopped = None
+        #: ⭐ 2026-10-04 -- one text per show a fault in hato ended (`_Run._guarded`):
+        #: its line and its traceback, for hato.log. ⛔ Not on the wire, not printed.
+        self.crashes = []
 
     def counts(self):
         u"""outcome -> how many. ⚠ Skips are counted by their KIND, because
@@ -551,6 +568,16 @@ class _Run(object):
                        else getattr(tsubasa, u"place_subtitle", None))
         self.clock = clock if clock is not None else time.time
         self.report = RunReport(settings)
+        #: ⭐ LAYER 16 -- the hand-off to Surasura, read ONCE per run (`connect.refresh`
+        #: keeps hato.json in step). ⛔ None on a dry run: a plan hands nothing over.
+        self.handoff = None
+        if not settings.dry_run:
+            try:
+                link = connect.refresh(settings.surasura_connect)
+                self.handoff = connect.Handoff(db, settings.surasura_connect,
+                                               subs_dir=settings.subs_dir, link=link)
+            except Exception as exc:                 # noqa: BLE001 -- never why a run fails
+                self.report.notes.append(u"Surasura could not be reached: %s" % exc)
         try:
             self.look = present.Presence(settings.lang)
         except present.LanguageUnknown as exc:
@@ -563,6 +590,10 @@ class _Run(object):
             raise ConfigProblem(str(exc))
         self.lang = self.look.lang
         self._files = {}            # entry id -> [file dict], one listing per run
+        #: ⭐ 16z Z-D3 -- entry id -> [note] for the files its listing LEFT OUT, kept with
+        #: the cached list: every show that uses the list says what it lacks.
+        self._file_notes = {}
+        self._show_file_notes = []  # the notes of every list THIS show used (`_guarded`)
         self._relisted = set()      # entry ids whose stale listing was refreshed
         self._hashes = {}           # path -> video hash, so 128 KiB is read ONCE
         self._clashes = {}          # video key -> why two videos target one file
@@ -635,9 +666,14 @@ class _Run(object):
             self.progress(u"found", shows=len(shows),
                           videos=sum(len(s.videos) for s in shows))
             for show in shows:
-                self._show(show)
+                self._guarded(show)
         except _Stop as stop:
             self.report.stopped = str(stop)
+        if self.handoff is not None:
+            # ⭐ LAYER 16 -- what waited (an offline library, a busy Surasura): one try
+            # each, oldest first, after this run's own files (A4)
+            self.handoff.retry()
+            self.report.notes.extend(self.handoff.notes)
         self.report.api_calls = self.client.metered - before
         self.report.bytes_downloaded = sum(r.bytes_downloaded for r in self.report.results)
         self.report.seconds = self.clock() - started
@@ -811,6 +847,66 @@ class _Run(object):
 
     # -- one show -----------------------------------------------------------
 
+    def _guarded(self, show):
+        u"""`_show`, where a fault in hato ends THAT show and not the run.
+
+        🚨 2026-10-04 hunt (bug 2): one show's crash ended the whole run, and the window
+        showed ZERO rows -- for shows already done too, and every later run stopped at
+        the same show. That is what turned 1.0.9's bracket bug into *"hato doesn't
+        work"*. Ruled by Sonic, 2026-10-04.
+
+        ⛔ `_Stop` IS A PLAIN `Exception`: a bare `except Exception` would swallow the
+        401 and the rate-limit stop, and a rejected request still spends quota
+        (LEDGER-HOT: never retry past a 401). Those, the stoppers raised raw, and a
+        `ConfigProblem` still end the run exactly as before.
+        """
+        try:
+            self._show(show)
+        except (_Stop, ConfigProblem) + _STOPPERS:
+            raise
+        except Exception as exc:                  # noqa: BLE001 -- one show's fault, said
+            self._crashed(show, exc, traceback.format_exc())
+        finally:
+            # ⭐ 16l P4 -- a file `client.files()` LEFT OUT of a list is said on the
+            # show that used the list (every listing -- first, escalated, refreshed --
+            # happens inside `_show`). 🚨 16z Z-D3: it was drained from the client by
+            # the FIRST show, and a second show on the same entry used the same cached,
+            # shortened list in silence. `_entry_files` now keeps the notes with the
+            # list and hands them to each show that asks; a refreshed list that drops
+            # the same file again adds nothing.
+            for note in self._show_file_notes:
+                if note not in show.notes:
+                    show.notes.append(note)
+            del self._show_file_notes[:]
+
+    def _crashed(self, show, exc, trace):
+        u"""ERROR rows for the show's videos that have NO ROW YET. -> None
+
+        ⛔ Never two rows for one video: a video decided at the gate before the fault
+        keeps its row. ⛔ NOTHING RECORDED in the state DB -- no refusal, no negative:
+        a fault in hato says nothing about the video or its subtitles, so the next run
+        looks again. ⭐ The traceback goes to hato.log (`report.crashes`, written by
+        `hato run`), never on screen."""
+        what = u"%s: %s" % (type(exc).__name__, exc)
+        self.report.crashes.append(u"hato: %s stopped on an unexpected %s\n%s"
+                                   % (show.title, what, trace))
+        self.report.notes.append(
+            u"%s stopped on an unexpected %s -- a fault in hato. Its videos are ERROR "
+            u"rows, the other shows went on, and the details are in hato.log."
+            % (show.title, what))
+        why = (u"hato stopped looking at this show on an unexpected %s -- a fault in hato, "
+               u"not in the video. The other shows went on; the next run looks at this one "
+               u"again, and hato.log has the details." % what)
+        wanted = set(_key(v) for v in self.s.only) if self.s.only else None
+        have = set(_key(r.video) for r in show.results)
+        for video, _root in show.videos:
+            key = _key(video.path)
+            if key in have or (wanted is not None and key not in wanted):
+                continue
+            self._keep_result(show, VideoResult(
+                video, ERROR, why,
+                jimaku_entry=show.resolved.entry_id if show.resolved else None))
+
     def _show(self, show):
         needing = []
         # ⭐ RUNBOOK 8e -- `only`: the run was asked about particular videos (the
@@ -961,24 +1057,37 @@ class _Run(object):
         # (2026-09-18), because the fixture behind them only covers videos that
         # need fetching.
         self.progress(u"result", result=result)
-        # ⭐ THE surasura DROP (RUNBOOK 7h), from the ONE funnel every outcome
-        # passes through -- there are two separate success paths (a fresh
-        # download and a re-sync from a kept original) and copying in either
-        # one alone is the seam defect this project keeps paying for.
-        # ⛔ `result.skip` EXCLUDES a subtitle that was already there. A PRESENT
-        # row carries an `output_path` too, and copying those would ship the
-        # whole library on every run instead of *"each successful run's
-        # subtitles"*.
-        if self.s.surasura_dir and result.wrote and not result.skip:
-            try:
-                keep.surasura_copy(result.output_path, self.s.surasura_dir)
-            except OSError as exc:
-                # ⛔ NOT a failed video. The subtitle beside the video is
-                # written and correct; a full disk or a missing drive on the
-                # INTEGRATION's folder must not turn a success into an error.
-                self.report.notes.append(
-                    u"the surasura copy of %s could not be written: %s"
-                    % (os.path.basename(result.output_path or u""), exc))
+        # ⭐ THE HAND-OFF TO SURASURA (LAYER 16; 1.0.x's flat copy, RUNBOOK 7h, before
+        # it), from the ONE funnel every outcome passes through -- a fresh download,
+        # a re-sync, 14c and Layer 15 each have their own success path, and handing
+        # over in one alone is the seam defect this project keeps paying for.
+        # ⛔ `result.skip` EXCLUDES a subtitle that was already there: a PRESENT row
+        # carries an `output_path` too. ⛔ A failed hand-off is a NOTE (`Handoff`
+        # never raises): the subtitle beside the video is written and correct.
+        if self.handoff is not None and result.wrote and not result.skip:
+            self._hand_off(show, result)
+
+    def _hand_off(self, show, result):
+        u"""⭐ LAYER 16 -- one kept file to Surasura, its record built FROM THE ROAD
+        (`connect.verdict_of`): never `timed` for a file tsubasa did not time."""
+        verdict, tier = connect.verdict_of(result)
+        resolved = show.resolved if result.taken_from is None else None
+        taken = result.taken_from or {}
+        self.handoff.keep(
+            video=result.video, subtitle_path=result.output_path, verdict=verdict,
+            untimed_tier=tier, timing=connect.timing_of(result.tsubasa, verdict),
+            series=connect.series_name(
+                kept_path=result.kept_path, subs_dir=self.s.subs_dir,
+                entry_name=resolved.entry_name if resolved else None, video=result.video),
+            show=({u"title": resolved.entry_name, u"season": result.season,
+                   u"episode": result.episode, u"movie": bool(resolved.movie)}
+                  if resolved else None),
+            jimaku_entry_id=resolved.entry_id if resolved else None,
+            anilist_id=resolved.anilist_id if resolved else None,
+            tmdb_id=resolved.tmdb_id if resolved else None,
+            source_provider=u"video-track" if result.taken_from else u"jimaku",
+            source_name=(taken.get(u"name") or u"track %s" % taken.get(u"track", u"?")
+                         if result.taken_from else result.jimaku_filename))
 
     def _forget(self, show, why):
         u"""Drop this show's cached resolution. `why` is the sentence for the report.
@@ -1459,14 +1568,15 @@ class _Run(object):
         # a wait's words are true of the files the choice takes: another provider's `.srt`
         # made a false 9a wait, and the provider's own `.srt` read *"nothing from"* it.
         takes = _untimed.allowed(self.s.untimed)
-        fits = [c for c in alignment.per_video.get(path) or () if c.quality in _untimed.FITS]
+        fits = [c for c in alignment.per_video.get(path) or () if _untimed.placeable(c)]
         fits.extend(self._named_exactly(video, alignment, fits))
         mine = [c for c in fits if _untimed.tier(video.name, c.file["name"]) in takes]
         if not mine:
             return self._road_wait(video, self._nothing_to_place(video), entry,
                                    newest_offered=newest)
         ranking = rank.rank(mine, allow_ai=self.s.allow_ai, seen_groups=frozenset(),
-                            prefer=self.s.prefer_format, fallback=self.s.format_fallback)
+                            prefer=self.s.prefer_format, fallback=self.s.format_fallback,
+                            favourites=self.s.favourite_groups)
         ranked = [r.candidate for r in ranking.ordered]
         if not ranked:
             # ⭐ 9a on this road: the files the choice takes are there, in a format the
@@ -1795,9 +1905,14 @@ class _Run(object):
         # ⭐ Keep the runners-up. They cost nothing here -- the search already
         # scored them -- and they are the only thing that lets `_escalate` move
         # past an entry that turns out to hold none of this folder's episodes.
+        # 🚨 JIMAKU'S OWN ENTRIES ONLY -- `type(c.id) is int`. A show found through Kitsu
+        # carries Kitsu's candidates, ids like '49240': never equal to the int entry id,
+        # so Kitsu's own pick was tried FIRST, as a jimaku entry -- a metered call for an
+        # unrelated show, or a `Resolved` ValueError that ended the run (2026-10-04 hunt).
         if ident.resolved is not None:
             show.alternates = [c for c in ident.candidates
-                               if c.accepted and c.id != ident.resolved.entry_id]
+                               if c.accepted and type(c.id) is int
+                               and c.id != ident.resolved.entry_id]
         return True
 
     def _entry_files(self, entry_id, stale=False):
@@ -1812,18 +1927,28 @@ class _Run(object):
                 return None
             self._relisted.add(entry_id)
         elif entry_id in self._files:
+            self._show_file_notes.extend(self._file_notes.get(entry_id, ()))
             return self._files[entry_id]
         try:
             listed = self.client.files(entry_id)
         except _STOPPERS as exc:
             raise _Stop(str(exc))
+        # ⚠ getattr: the pipeline's test clients carry no `notes`. Drained, so a note
+        # belongs to the one listing that made it (16l P4).
+        dropped = getattr(self.client, "notes", None)
+        notes = list(dropped or ())
+        if dropped:
+            del dropped[:]
         self._files[entry_id] = listed
+        self._file_notes[entry_id] = notes
+        self._show_file_notes.extend(notes)
         return listed
 
     def _align(self, show, files, videos):
         with self.cache.workdir(u"align") as work:
             alignment = episodes.align(files, videos, workdir=work,
-                                       movie=bool(show.resolved.movie))
+                                       movie=bool(show.resolved.movie),
+                                       bridge=_relations.for_entry(show.resolved.anilist_id))
         show.notes.extend(alignment.notes)
         return alignment
 
@@ -2159,7 +2284,8 @@ class _Run(object):
         ranking = rank.rank(offered, allow_ai=self.s.allow_ai,
                             seen_groups=frozenset(seen_groups),
                             prefer=self.s.prefer_format,
-                            fallback=self.s.format_fallback)
+                            fallback=self.s.format_fallback,
+                            favourites=self.s.favourite_groups)
         ranked = [r.candidate for r in ranking.ordered]
         if not ranked:
             return self._not_found(video, _unranked_reason(ranking, entry,

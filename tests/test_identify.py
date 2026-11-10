@@ -531,7 +531,10 @@ def test_the_store_schema_refuses_what_the_accessor_refuses(tmp_path):
     raw = sqlite3.connect(str(path))
     try:
         with pytest.raises(sqlite3.IntegrityError):
-            raw.execute("INSERT INTO resolutions VALUES ('k', 7, 'x', 0, 0.5, 0, 'guessed', NULL, 'now')")
+            # ⚠ the columns NAMED, as every hato writes them: 1.1.0 adds `tmdb_id`
+            raw.execute("INSERT INTO resolutions (key, entry_id, entry_name, movie, score, "
+                        "low_confidence, source, anilist_id, resolved_at) "
+                        "VALUES ('k', 7, 'x', 0, 0.5, 0, 'guessed', NULL, 'now')")
     finally:
         raw.close()
 

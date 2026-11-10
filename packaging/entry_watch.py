@@ -17,9 +17,20 @@ attached for its whole life is the one packaging detail every user can see.
 frozen; the window spawns it by that name. The name is a contract, not a
 preference.
 """
+import os
 import sys
 
-from hato.watch import main
+# 🚨 16l P1 -- BEFORE ANYTHING ELSE. Double-clicked, a `console=False` exe gets
+# no handles and Python sets `sys.stdout` / `sys.stderr` to None; the first
+# bare `sys.stderr.write` anywhere below then raises AttributeError, with
+# nowhere to say so. ⭐ devnull in place of a None stream; ⛔ a stream that
+# exists (a console, a pipe, a test's capture) is left alone.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+from hato.watch import main  # noqa: E402 -- after the streams, on purpose
 
 if __name__ == "__main__":
     sys.exit(main())

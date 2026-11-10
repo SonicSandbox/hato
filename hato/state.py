@@ -53,6 +53,7 @@ a fresh one started; one that cannot be moved, cannot be opened, or was written
 by a newer hato leaves this run with an in-memory DB. Each says so, in one
 sentence, in `.notes`.
 """
+import json
 import os
 import sqlite3
 from collections import namedtuple
@@ -200,6 +201,143 @@ _SCHEMA = (
         note         TEXT NOT NULL DEFAULT ''
     )""",
 )
+
+# ⭐ LAYER 16 (1.1.0) -- WHAT hato TOLD SURASURA, in tables of their own. ⛔ Added on
+# open (`_add_tables`), never by a schema bump: a bump makes 1.0.9 -- the version Go
+# back keeps -- refuse the whole file. And TABLES, not new attempt rows, so the
+# present-check, `problems`, Layer 15's waits and 1.0.9 read nothing new.
+#: The states a pairing row is in (`hato/connect.py` says what moves it).
+PAIRING_STATES = ("drop-waiting", "dropped", "registered", "skipped", "retry", "stopped",
+                  "bad-data")
+_PAIRINGS_SCHEMA = (
+    # One APPEND-ONLY row per change; the latest per (content_key, language) decides.
+    # `record` is the pairing record v1 as canonical JSON (sorted keys, compact) --
+    # with `library_path` null only while its drop waits. ⛔ The media folder decides
+    # whether a subtitle exists; this table decides only what hato told Surasura.
+    """CREATE TABLE IF NOT EXISTS pairings (
+        id             INTEGER PRIMARY KEY,
+        content_key    TEXT    NOT NULL CHECK (length(content_key) > 0),
+        language       TEXT    NOT NULL CHECK (length(language) > 0),
+        record         TEXT    NOT NULL CHECK (length(record) > 0),
+        state          TEXT    NOT NULL CHECK (state IN ('drop-waiting', 'dropped',
+                       'registered', 'skipped', 'retry', 'stopped', 'bad-data')),
+        file_id        INTEGER,
+        registered_at  TEXT,
+        last_code      TEXT,
+        gate           TEXT,
+        written_at     TEXT    NOT NULL
+    )""",
+    """CREATE INDEX IF NOT EXISTS pairings_by_video ON pairings (content_key, language)""",
+    """CREATE TABLE IF NOT EXISTS meta (
+        key    TEXT NOT NULL PRIMARY KEY CHECK (length(key) > 0),
+        value  TEXT NOT NULL
+    )""",
+)
+#: Tables `clear()` never empties (it says why).
+_KEPT_ON_CLEAR = ("pairings", "meta")
+#: A pairing row, as read back. `record` is the parsed dict.
+Pairing = namedtuple("Pairing", "id content_key language record state file_id "
+                                "registered_at last_code gate written_at")
+_PAIRING_SELECT = ", ".join(Pairing._fields)
+_LATEST_PAIRINGS = """
+    SELECT %s FROM pairings
+    WHERE id IN (SELECT max(id) FROM pairings GROUP BY content_key, language)""" % _PAIRING_SELECT
+
+
+def read_pairings(path=None, lang=None):
+    """⭐ LAYER 16 -- `hato-cli pairings`'s read: (the latest row per video and language,
+    oldest first, each with its latest `registered` row's (file_id, at) or None,
+    complete_since). ⚠ 16z (Z-A4) -- a registered row OF THE SAME `library_path` only: a
+    file_id Surasura gave the copy under another series is not this copy's. ⛔ READ-ONLY (`mode=ro`): no run lock, no table added, no row
+    written -- a run in progress never makes Surasura's 60 s wait, and a store no
+    1.1.0 has opened answers ([], None). Raises sqlite3.Error / OSError when the file
+    is there and unreadable (the command's exit 1)."""
+    conn = _read_only(path)
+    if conn is None:
+        return [], None
+    try:
+        tables = set(r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"))
+        if "pairings" not in tables:
+            return [], None
+        since = None
+        if "meta" in tables:
+            row = conn.execute("SELECT value FROM meta WHERE key = 'complete_since'").fetchone()
+            since = row[0] if row else None
+        where = " AND language = ?" if lang else ""
+        args = (lang,) if lang else ()
+        latest = conn.execute(
+            "SELECT %s FROM pairings WHERE id IN (SELECT max(id) FROM pairings WHERE 1=1%s "
+            "GROUP BY content_key, language) ORDER BY id" % (_PAIRING_SELECT, where), args).fetchall()
+        registered = {}
+        for key, language, record, file_id, at in conn.execute(
+                "SELECT content_key, language, record, file_id, registered_at FROM pairings "
+                "WHERE state = 'registered'%s ORDER BY id" % where, args):
+            registered[(key, language, _library_key(json.loads(record)))] = (file_id, at)
+        out = []
+        for row in latest:
+            p = Pairing(row[0], row[1], row[2], json.loads(row[3]), *row[4:])
+            out.append((p, registered.get((p.content_key, p.language,
+                                           _library_key(p.record)))))
+        return out, since
+    finally:
+        conn.close()
+
+
+def _library_key(record):
+    """A record's `library_path` as one path compares (case and separators folded), or
+    None when its drop still waits."""
+    found = record.get("library_path") if isinstance(record, dict) else None
+    return os.path.normcase(os.path.abspath(found)) if found else None
+
+
+def _read_only(path=None):
+    """The store opened READ-ONLY (`mode=ro`), or None when there is no file. ⛔ Never
+    adds a table or a row: the readers below must not be what changes the store."""
+    path = Path(path) if path is not None else paths.state_db_path()
+    if not path.is_file():
+        return None
+    uri = "file:%s?mode=ro" % path.resolve().as_posix().replace("?", "%3f").replace("#", "%23")
+    return sqlite3.connect(uri, uri=True, timeout=_BUSY_SECONDS)
+
+
+#: ⭐ 16g -- a drop that waited DROP_WAIT_DAYS for an offline library and stopped
+#: (`connect.Handoff._retry_one`): its own count, never "stopped" -- it never reached
+#: the library, and nothing Surasura changes brings it back.
+EXPIRED = "expired"
+
+
+def pairing_counts(path=None, lang="ja"):
+    """⭐ LAYER 16 (16g) -- the window's card and the tray's line: the latest row per
+    video in `lang`, counted by state. -> {state: n} for every PAIRING_STATES and
+    EXPIRED, 0 when none. ⛔ READ-ONLY, as `read_pairings`: no lock, nothing written;
+    a store no 1.1.0 has opened counts nothing. Raises sqlite3.Error / OSError when
+    the file is there and unreadable (the caller says nothing rather than a guess)."""
+    counts = dict((name, 0) for name in PAIRING_STATES + (EXPIRED,))
+    conn = _read_only(path)
+    if conn is None:
+        return counts
+    try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                            "AND name = 'pairings'").fetchone():
+            return counts
+        for state, expired, n in conn.execute(
+                "SELECT state, last_code = 'drop-expired', count(*) FROM pairings "
+                "WHERE id IN (SELECT max(id) FROM pairings WHERE language = ? "
+                "GROUP BY content_key, language) GROUP BY 1, 2", (lang,)):
+            name = EXPIRED if state == "stopped" and expired else state
+            if name in counts:
+                counts[name] += n
+        return counts
+    finally:
+        conn.close()
+
+
+def canonical(record):
+    """⭐ LAYER 16 -- a record as canonical JSON: sorted keys, compact, UTF-8 text.
+    The same record always gives the same bytes (Surasura compares records)."""
+    return json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
 
 _SELECT = ", ".join(Attempt._fields)
 _INSERT = "INSERT INTO attempts (%s) VALUES (%s)" % (
@@ -448,6 +586,7 @@ class StateDB(object):
                     pass
                 raise
         self._add_columns(conn)
+        self._add_tables(conn, self._now)
         for table, wanted in (("attempts", Attempt._fields), ("present", _PRESENT_COLUMNS),
                               ("blacklist", _BLACKLIST_COLUMNS)):
             have = set(row[1] for row in conn.execute("PRAGMA table_info(%s)" % table))
@@ -482,6 +621,41 @@ class StateDB(object):
         try:
             for name, kind in missing():
                 conn.execute("ALTER TABLE attempts ADD COLUMN %s %s" % (name, kind))
+            conn.execute("COMMIT")
+        except BaseException:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+
+    @staticmethod
+    def _add_tables(conn, now):
+        """⭐ LAYER 16 -- the `pairings` and `meta` tables on a file that predates them,
+        and `complete_since`: written ONCE, the first time a 1.1.0 opens the store,
+        never moved (Surasura counts drop-folder files older than it with no pairing).
+        ⚠ Re-read inside `BEGIN IMMEDIATE`, as `_add_columns` does, for the same race."""
+        def have():
+            return set(r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"))
+
+        def stamped():
+            return "meta" in have() and conn.execute(
+                "SELECT 1 FROM meta WHERE key = 'complete_since'").fetchone() is not None
+
+        if {"pairings", "meta"} <= have() and stamped():
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in _PAIRINGS_SCHEMA:
+                conn.execute(statement)
+            if not stamped():
+                try:
+                    moment = now().astimezone(timezone.utc)
+                except (TypeError, ValueError, AttributeError):
+                    moment = _utcnow()
+                conn.execute("INSERT INTO meta (key, value) VALUES ('complete_since', ?)",
+                             (moment.strftime("%Y-%m-%dT%H:%M:%SZ"),))
             conn.execute("COMMIT")
         except BaseException:
             try:
@@ -1081,7 +1255,11 @@ class StateDB(object):
                 names = [r[0] for r in conn.execute(
                     "SELECT name FROM sqlite_master WHERE type = 'table' "
                     "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-                chosen = [n for n in names if blacklist or n != "blacklist"]
+                # ⭐ LAYER 16 -- and never `pairings` / `meta`: what hato TOLD Surasura
+                # is not memory that prevents work. Cleared, Surasura's back-fill
+                # would read every drop as unpaired and `complete_since` would move.
+                chosen = [n for n in names if (blacklist or n != "blacklist")
+                          and n not in _KEPT_ON_CLEAR]
                 counts = dict((n, conn.execute('SELECT count(*) FROM "%s"' % n).fetchone()[0])
                               for n in chosen)
                 videos = (conn.execute("SELECT count(DISTINCT video_hash) FROM attempts")
@@ -1098,6 +1276,65 @@ class StateDB(object):
                 raise
             return {"tables": counts, "videos": videos}
         return self._run(op)
+
+    # -- ⭐ LAYER 16: what hato told Surasura ------------------------------------------
+
+    def add_pairing(self, record, state, *, file_id=None, registered_at=None,
+                    last_code=None, gate=None):
+        """Append one pairing row. -> the row id. ⛔ Append-only: nothing is updated,
+        so what hato told Surasura, and when, is never rewritten."""
+        if state not in PAIRING_STATES:
+            raise ValueError("a pairing's state must be one of %s, got %r"
+                             % (", ".join(PAIRING_STATES), state))
+        if not isinstance(record, dict):
+            raise ValueError("a pairing record is a dict, got %r" % (type(record).__name__,))
+        key, lang = record.get("content_key"), record.get("language")
+        _required("content_key", key)
+        _required("language", lang)
+        text = canonical(record)
+        written = _stamp(self._clock())
+        return self._run(lambda conn: conn.execute(
+            "INSERT INTO pairings (content_key, language, record, state, file_id, "
+            "registered_at, last_code, gate, written_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (key, lang, text, state, file_id, registered_at, last_code, gate,
+             written)).lastrowid)
+
+    @staticmethod
+    def _pairing(row):
+        return Pairing(row[0], row[1], row[2], json.loads(row[3]), *row[4:])
+
+    def latest_pairing(self, content_key, lang):
+        """The latest pairing row for one video and language. -> Pairing or None"""
+        row = self._run(lambda conn: conn.execute(
+            "SELECT %s FROM pairings WHERE content_key = ? AND language = ? "
+            "ORDER BY id DESC LIMIT 1" % _PAIRING_SELECT, (content_key, lang)).fetchone())
+        return self._pairing(row) if row else None
+
+    def pairing_at(self, library_path):
+        """The latest pairing whose record's `library_path` is this path, of any video.
+        -> Pairing or None. ⭐ Edge 8: a drop replaces a file only when it is THIS
+        video's earlier drop."""
+        want = os.path.normcase(os.path.abspath(library_path))
+        for row in self._run(lambda conn: conn.execute(
+                "SELECT %s FROM pairings ORDER BY id DESC" % _PAIRING_SELECT).fetchall()):
+            got = json.loads(row[3]).get("library_path")
+            if got and os.path.normcase(os.path.abspath(got)) == want:
+                return self._pairing(row)
+        return None
+
+    def pairings(self, lang=None, states=None):
+        """The latest row per (video x language), oldest first. -> [Pairing]"""
+        rows = self._run(lambda conn: conn.execute(
+            _LATEST_PAIRINGS + " ORDER BY id").fetchall())
+        out = [self._pairing(r) for r in rows]
+        return [p for p in out if (lang is None or p.language == lang)
+                and (states is None or p.state in states)]
+
+    def complete_since(self):
+        """When this store first met a 1.1.0 (ISO UTC), or None."""
+        row = self._run(lambda conn: conn.execute(
+            "SELECT value FROM meta WHERE key = 'complete_since'").fetchone())
+        return row[0] if row else None
 
     def stats(self):
         """-> row counts by outcome, the backfilled count, and the next retry dates."""

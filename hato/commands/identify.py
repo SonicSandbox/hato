@@ -147,6 +147,8 @@ def run(args):
             info, = read_names([name], work)
     except (paths.PathError, OSError) as exc:
         return _fail(args, "could not read the name %r: %s" % (name, exc))
+    if info.unread:                     # ⛔ 16z Z-D1: never read from a shortened name
+        return _fail(args, "could not read %r: %s" % (name, info.unread))
     if info.skipped:
         return _fail(args, "tsubasa's parser skipped %r: %s" % (name, info.skipped))
     if not info.title:

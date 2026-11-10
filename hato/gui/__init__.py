@@ -57,7 +57,10 @@ def main(argv=None):
         # would send somebody to fix a package that is already there.
         if u"PyQt6" not in str(exc):
             raise
-        import sys
-        sys.stderr.write(NO_QT + u"\n")
+        # 🚨 16l P1 -- the frozen window may have NO `sys.stderr` (None), and a
+        # bare write raised AttributeError while saying why it could not open.
+        # ⭐ `watch.complain` copes with None and writes hato.log; ⛔ no Qt there.
+        from hato import watch as _watch
+        _watch.complain(NO_QT + u"\n", who=u"window")
         return 2
     return _main(argv)
