@@ -154,3 +154,101 @@ def test_the_hand_off_against_a_real_surasura_3_0(tmp_path, monkeypatch):
     assert summary["new"] >= 1 and summary["refused"] == [], summary
     assert [os.path.basename(p) for p in summary["unpaired"]] == [old.name], summary
     assert summary["need"] in ("raised", "kept"), summary
+
+
+# -- LAYER 17 (Hato-FIND): Surasura's OWN finder against this hato -------------------------------
+
+FIND = BASE / u"find-e2e"
+FIXTURES = Path(__file__).resolve().parent / u"fixtures"
+
+
+def _mkv(path, title):
+    u"""A real, tiny Matroska file with an English text track (the reference a download is
+    timed against) -- so hato's real reader says *fetch* and the run searches for it."""
+    import shutil
+    ffmpeg = shutil.which(u"ffmpeg")
+    if ffmpeg is None:
+        pytest.skip(u"ffmpeg is not on PATH: no real video to hand Surasura")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    srt = path.parent / u"_en.srt"
+    srt.write_text(u"1\n00:00:01,000 --> 00:00:03,000\nHello there.\n", encoding="utf-8")
+    subprocess.run([ffmpeg, u"-loglevel", u"error", u"-y", u"-f", u"lavfi", u"-i",
+                    u"color=c=black:s=160x120:d=8", u"-f", u"lavfi", u"-i",
+                    u"anullsrc=r=48000:cl=mono", u"-i", str(srt), u"-t", u"8", u"-map", u"0",
+                    u"-map", u"1", u"-map", u"2", u"-c:v", u"libx264", u"-preset", u"ultrafast",
+                    u"-c:a", u"aac", u"-c:s", u"srt", u"-metadata:s:s:0", u"language=eng",
+                    u"-metadata", u"title=%s" % title, str(path)], check=True, timeout=120)
+    srt.unlink()
+    old = time.time() - 120                    # settled: older than Surasura's half-written wait
+    os.utime(str(path), (old, old))
+    return path
+
+
+def test_17_surasuras_own_finder_against_this_hato(monkeypatch):
+    u"""⭐ H1-H8 END TO END: Surasura 3.0-dev's `no_subs.find` -- its gate on `find` in
+    hato.json, its list file, its command line, its NDJSON reader, its retry dates -- against
+    THIS hato, started through a `hato-cli` wrapper in an isolated world: its own data root
+    and config, no key, no network (`HATO_NO_NETWORK`), jimaku answered from the recorded
+    fixtures (`--fixtures`: hato's network rule). ⛔ Never Sonic's library or hato.
+
+    The scratch library: `frieren S2 - 24.mkv` (jimaku has no episode 24: NOT_FOUND, with
+    its retry date) and `Extras/frieren S2 - 26.mkv` in a folder hato's config SKIPS (left
+    out: its ERROR row, never a run that failed whole). hato's `write_beside_video` is off,
+    and Surasura reads it through `hato-cli config --show --json`."""
+    import shutil
+    if FIND.exists():
+        shutil.rmtree(str(FIND))
+    library = FIND / u"library"
+    show = library / u"Frieren S2"
+    late = _mkv(show / u"frieren S2 - 24.mkv", u"ep24")
+    skipped = _mkv(show / u"Extras" / u"frieren S2 - 26.mkv", u"ep26")
+    home = FIND / u"hato"
+    home.mkdir(parents=True)
+    (home / u"config.toml").write_text(
+        u"write_beside_video = false\nskip_folders = [%s]\n" % json.dumps(str(skipped.parent)),
+        encoding="utf-8")
+    wrapper = FIND / u"hato-cli-find.cmd"
+    py = Path(sys.executable)
+    repo = Path(__file__).resolve().parents[1]
+    wrapper.write_bytes((
+        u"@echo off\r\n"
+        u"set \"PYTHONPATH=%s\"\r\nset \"PYTHONUTF8=1\"\r\nset \"HATO_NO_NETWORK=1\"\r\n"
+        u"set \"HATO_CACHE=%s\"\r\nset \"HATO_CONFIG=%s\"\r\nset \"HATO_KEYFILE=%s\"\r\n"
+        u"set \"HOUSEKI_TOOLS_DIR=%s\"\r\nset \"HATO_TOOLS_CLI=%%~f0\"\r\n"
+        u"if /I \"%%~1\"==\"config\" goto plain\r\n"
+        u"\"%s\" -m hato %%* --fixtures \"%s\"\r\nexit /b %%ERRORLEVEL%%\r\n"
+        u":plain\r\n\"%s\" -m hato %%*\r\n" % (
+            repo, home / u"data", home / u"config.toml", home / u"no-key.txt", TOOLS,
+            py, FIXTURES, py)).encode("ascii"))
+
+    _scratch(u"make_root.py", u"--fresh", u"--connect", u"on")
+    monkeypatch.setenv("HOUSEKI_TOOLS_DIR", str(TOOLS))
+    monkeypatch.setenv(connect.TOOLS_CLI_ENV, str(wrapper))
+    # ⛔ THE CONTROL ARM FIRST: 1.1.0's entry (`pairings` only) -- Surasura sends it nothing
+    monkeypatch.setattr(connect, u"VERBS", [u"pairings"])
+    assert connect.write_hato_json(u"auto"), u"hato.json was not written"
+    said = json.loads(_scratch(u"surasura_find.py", str(library)).strip().splitlines()[-1])
+    assert said[u"find"] == {u"off": True} and said[u"hato_finds"] is None, said
+    assert not (home / u"data" / u"hato.log").exists(), u"a hato with no `find` was started"
+    monkeypatch.undo()
+    monkeypatch.setenv("HOUSEKI_TOOLS_DIR", str(TOOLS))
+    monkeypatch.setenv(connect.TOOLS_CLI_ENV, str(wrapper))
+    assert connect.write_hato_json(u"auto"), u"hato.json was not written"
+    with open(str(TOOLS / u"hato.json"), encoding="utf-8") as handle:
+        assert json.load(handle)[u"verbs"] == list(connect.VERBS)
+
+    said = json.loads(_scratch(u"surasura_find.py", str(library)).strip().splitlines()[-1])
+    assert os.path.normcase(said[u"hato_finds"] or u"") == os.path.normcase(str(wrapper)), said
+    assert sorted(os.path.normcase(v) for _r, v in said[u"waiting"]) == sorted(
+        os.path.normcase(str(p)) for p in (late, skipped)), said[u"waiting"]
+    found = said[u"find"]
+    assert (found[u"asked"], found[u"not_found"], found[u"failed"]) == (2, 1, 0), found
+    outcomes = sorted(r[u"outcome"] for r in said[u"state"][u"hato"].values())
+    assert outcomes == [u"ERROR", u"NOT_FOUND"], said[u"state"]
+    record = [r for r in said[u"state"][u"hato"].values() if r[u"outcome"] == u"NOT_FOUND"][0]
+    assert record[u"retry_at"] > time.time() + 3600, record          # hato's own date, ahead
+    assert not said[u"state"].get(u"offline_until"), u"Surasura read the run as failed whole"
+    late_rel = [r for r, v in said[u"waiting"] if os.path.normcase(v) == os.path.normcase(str(late))][0]
+    assert said[u"notes"][late_rel] and said[u"notes"][late_rel][0], said[u"notes"]
+    assert said[u"beside_on"] is False, u"Surasura did not read write_beside_video off"
+    assert sorted(os.listdir(str(show))) == [u"Extras", late.name], u"something was written beside"

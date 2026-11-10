@@ -181,7 +181,8 @@ def test_from_source_hato_json_is_written_only_when_HATO_TOOLS_CLI_names_a_cli(
     monkeypatch.setenv(connect.TOOLS_CLI_ENV, cli)
     assert connect.write_hato_json("auto") is True
     entry = _hato_json(tools)
-    assert (entry["cli"], entry["app"], entry["verbs"]) == (cli, None, ["pairings"])
+    # ⭐ LAYER 17 -- `find` beside `pairings` (09-hato-layer.md §7)
+    assert (entry["cli"], entry["app"], entry["verbs"]) == (cli, None, ["pairings", "find"])
     assert (entry["schema"], entry["contract"], entry["tool"]) == (1, 1, "hato")
 
 
@@ -218,7 +219,7 @@ def test_nothing_is_written_with_no_surasura_unless_the_setting_is_a_written_on(
     assert connect.write_hato_json("off") is False
     assert not (tools / u"hato.json").exists()
     assert connect.write_hato_json("on") is True
-    assert _hato_json(tools)["verbs"] == ["pairings"]
+    assert _hato_json(tools)["verbs"] == ["pairings", "find"]
 
 
 def test_hato_json_is_utf8_not_escaped_and_leaves_no_temp(tools, tmp_path, monkeypatch):
@@ -1184,3 +1185,32 @@ def test_16z_A5_a_stop_holds_the_next_run_and_a_pick_until_surasura_changes(
     _handoff(db, connect.state("auto"), answers=[_ok(), _ok()], calls=calls).retry()
     assert len(calls) == 3, u"a new `updated` did not lift the stop"
     assert [p.state for p in db.pairings(u"ja")] == ["registered", "registered"]
+
+
+# -- LAYER 17 (H6): a held copy never takes hato.json from the person's own hato -----------------
+
+def test_17_a_held_copy_never_takes_the_entry_from_a_hato_the_person_runs(
+        tools, tmp_path, monkeypatch):
+    u"""⭐ H6 -- Surasura's own copy and a hato the person installed would each rewrite
+    hato.json on every run, and Surasura would ask whichever wrote last. ⛔ A held copy
+    writes the entry only when it is absent, its own, or names a `cli` that is gone; the
+    person's own copy always may (theirs wins)."""
+    from hato import paths
+    _surasura(tools, tmp_path)
+    theirs = _cli(tmp_path, u"theirs-hato-cli.cmd")
+    monkeypatch.setenv(connect.TOOLS_CLI_ENV, theirs)
+    assert connect.write_hato_json("auto") is True                 # the person's own hato
+    held = _cli(tmp_path, u"held-hato-cli.cmd")
+    monkeypatch.setenv(connect.TOOLS_CLI_ENV, held)
+    monkeypatch.setenv(paths.HELD_ENV, u"surasura")
+    assert connect.write_hato_json("auto") is False
+    assert _hato_json(tools)["cli"] == theirs
+    os.remove(theirs)                                               # theirs uninstalled
+    assert connect.write_hato_json("auto") is True
+    assert _hato_json(tools)["cli"] == held
+    assert connect.write_hato_json("off") is True, u"its OWN entry stays its to change"
+    monkeypatch.delenv(paths.HELD_ENV)
+    theirs = _cli(tmp_path, u"theirs-hato-cli.cmd")
+    monkeypatch.setenv(connect.TOOLS_CLI_ENV, theirs)
+    assert connect.write_hato_json("auto") is True, u"the person's own copy always may"
+    assert _hato_json(tools)["cli"] == theirs

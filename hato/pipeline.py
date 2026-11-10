@@ -161,7 +161,8 @@ class Settings(object):
                  "candidates", "archives",
                  "allow_ai", "recurse", "force", "dry_run", "skip_embedded",
                  "surasura_connect", "retry_now", "only", "prefer_format",
-                 "format_fallback", "extract_embedded", "untimed", "favourite_groups")
+                 "format_fallback", "extract_embedded", "untimed", "favourite_groups",
+                 "write_beside_video")
 
     def __init__(self, folders, lang=u"ja", out=None, subs_dir=None, candidates=3,
                  # ⚠ `archives=False`, matching `config.py`'s schema. It was True
@@ -187,7 +188,9 @@ class Settings(object):
                  # ⭐ 16k -- matching `config.py`'s default EXACTLY, a list as the schema's
                  # is (`test_settings_defaults_match_configs_documented_schema` compares
                  # them; a tuple was red there). Only read, never mutated: copied below.
-                 favourite_groups=[u"NanakoRaws"]):
+                 favourite_groups=[u"NanakoRaws"],
+                 # ⭐ LAYER 17 -- and its default: beside the video, as ever.
+                 write_beside_video=True):
         self.folders = tuple(os.path.abspath(os.fspath(f)) for f in folders)
         # ⭐ RUNBOOK 7e. Subtrees carved OUT of `folders` -- Sonic: *"someone
         # might say 'desktop' and then not want a certain folder checked on
@@ -248,6 +251,9 @@ class Settings(object):
         # ⭐ LAYER 16 (16k) -- release groups tried first among files of one format
         # (`rank.rank(favourites=)`); it orders the tries, the timing still decides.
         self.favourite_groups = tuple(favourite_groups or ())
+        # ⭐ LAYER 17 (SRC-7) -- off: the finished file goes to hato's own folder, never
+        # beside the video (`keep.target_dir(beside=)`); `out` wins over it.
+        self.write_beside_video = bool(write_beside_video)
 
     @classmethod
     def from_config(cls, cfg, **given):
@@ -285,7 +291,8 @@ class Settings(object):
                    format_fallback=pick("format_fallback", cfg.format_fallback),
                    extract_embedded=pick("extract_embedded", cfg.extract_embedded),
                    untimed=pick("untimed", cfg.untimed),
-                   favourite_groups=pick("favourite_groups", cfg.favourite_groups))
+                   favourite_groups=pick("favourite_groups", cfg.favourite_groups),
+                   write_beside_video=pick("write_beside_video", cfg.write_beside_video))
 
     def __repr__(self):
         return "<Settings %d folder(s), lang=%s%s%s>" % (
@@ -656,6 +663,9 @@ class _Run(object):
         try:
             keep.check_subs_dir(self.s.subs_dir, self.s.folders)
             keep.check_out_dir(self.s.out, self.s.folders)
+            if keep.also_beside(self.s.out, self.s.write_beside_video):
+                # ⭐ LAYER 17 -- hato's own folder is an `--out` by another name
+                keep.check_out_dir(str(paths.own_subs_dir()), self.s.folders)
         except keep.InsideScan as exc:
             # ⚠ One exception for 5a to catch, with the message kept whole. The
             # BASE class, so a third folder gaining the rule is caught here too.
@@ -679,6 +689,13 @@ class _Run(object):
         self.report.seconds = self.clock() - started
         self.report.notes.extend(self.db.notes)
         self.report.notes.extend(getattr(self.resolutions, "notes", ()) or ())
+        if keep.also_beside(self.s.out, self.s.write_beside_video) and any(
+                r.wrote and not r.skip for r in self.report.results):
+            # ⭐ LAYER 17 -- a choice made on the person's behalf has a surface
+            # (LEDGER-HOT, Sonic 2026-09-22): where the files went, every run that wrote one
+            self.report.notes.append(
+                u"Subtitles are saved in %s, not beside the videos (write_beside_video "
+                u"is off)." % paths.own_subs_dir())
         return self.report
 
     # -- discovery ----------------------------------------------------------
@@ -820,7 +837,7 @@ class _Run(object):
             for video, root in show.videos:
                 path = str(video.path)
                 try:
-                    folder = keep.target_dir(path, root, self.s.out)
+                    folder = keep.target_dir(path, root, self.s.out, self.s.write_beside_video)
                 except ValueError:
                     continue                # ⚠ `_gate` reports this one as an ERROR
                 key = (os.path.normcase(os.path.abspath(os.fspath(folder))),
@@ -1127,11 +1144,16 @@ class _Run(object):
             # name, and this is not a verdict on any subtitle.
             return VideoResult(video, REFUSED, clash)
         try:
-            folder = keep.target_dir(path, root, self.s.out)
+            folder = keep.target_dir(path, root, self.s.out, self.s.write_beside_video)
         except ValueError as exc:
             return VideoResult(video, ERROR, str(exc))
 
         found = self.look.find(path, folder)
+        if found is None and keep.also_beside(self.s.out, self.s.write_beside_video):
+            # ⭐ LAYER 17 -- with `write_beside_video` off, a subtitle already BESIDE the
+            # video (an earlier hato's, or the person's own) is still its subtitle:
+            # switching the setting off must never fetch the whole library again.
+            found = self.look.find(path)
         if found is not None:
             # ⛔ NOT overridden by --force: the filesystem is canonical for
             # "does a subtitle exist", and --force overrules the DB, not the disk.
@@ -1592,7 +1614,7 @@ class _Run(object):
             return self._road_wait(video, self._nothing_to_place(video), entry,
                                    newest_offered=newest)
         cap = self.s.candidates
-        folder = keep.target_dir(path, root, self.s.out)
+        folder = keep.target_dir(path, root, self.s.out, self.s.write_beside_video)
         if self.s.dry_run:
             tier_, top = tiered[0]
             return VideoResult(
@@ -2435,7 +2457,8 @@ class _Run(object):
 
     def _hand_over(self, video, root, subtitle):
         u"""⭐ THE ONE PLACE A FILE IS WRITTEN, and tsubasa is what writes it."""
-        out_dir = keep.target_dir(str(video.path), root, self.s.out) if self.s.out else None
+        out_dir = (keep.target_dir(str(video.path), root, self.s.out, self.s.write_beside_video)
+                   if self.s.out or not self.s.write_beside_video else None)
         return port.sync(str(video.path), str(subtitle), write=True,
                          out_dir=out_dir, engine=self.engine)
 

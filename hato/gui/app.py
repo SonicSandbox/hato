@@ -1000,6 +1000,19 @@ def candidate_path(attempt):
     return tsu.get(u"subtitle") or attempt.get(u"path") or None
 
 
+def own_tray_capabilities():
+    u"""The capabilities of the tray this copy could restart -> a set, or None.
+
+    ⛔ LAYER 17 (A17-4): a copy another program holds (`paths.held_by`) has no tray of
+    its own, so it offers no *Restart the tray* -- the press would stop a tray it cannot
+    put back. Otherwise `watch.watching_capabilities()`, unchanged."""
+    from hato import paths as _paths
+    from hato import watch as _watch
+    if _paths.held_by():
+        return None
+    return _watch.watching_capabilities()
+
+
 def tray_cost(frozen=None):
     u"""What the tray costs, for the build this window IS. -> (short, detail)
 
@@ -4175,6 +4188,17 @@ class HatoWindow(Styled):
         body.addWidget(retry)
 
         body.addWidget(hrule(card))
+        # ⭐ LAYER 17 (A17-4) -- A COPY ANOTHER PROGRAM HOLDS (`paths.held_by`) OFFERS NO
+        # TRAY: its tray exits at once and it never starts with Windows (H6), so the tick
+        # and the switch would be controls that do nothing. ⛔ They vanish, and the card
+        # says why, the way the startup switch vanishes off Windows.
+        from hato import paths as _paths
+        holder = _paths.held_by()
+        if holder:
+            body.addWidget(paragraph(
+                u"This copy of hato is kept by %s, which runs it when it needs it — it "
+                u"does not sit in the tray or start with Windows." % holder, card))
+            return card
         watch = QWidget(card)
         line = QHBoxLayout(watch)
         line.setContentsMargins(0, 0, 0, 0)
@@ -7095,8 +7119,7 @@ class HatoWindow(Styled):
         window says so and offers to restart it (`restart_watcher`).
         """
         try:
-            from hato import watch as _watch
-            caps = _watch.watching_capabilities()
+            caps = own_tray_capabilities()
             return caps is not None and u"retries" not in caps
         except Exception:                     # noqa: BLE001
             return False
@@ -7106,8 +7129,7 @@ class HatoWindow(Styled):
         u"""-> False when a tray IS running that cannot read `auto_update` (LAYER
         11): every hato before 1.0.4. No tray, or one saying `updates`, -> True."""
         try:
-            from hato import watch as _watch
-            caps = _watch.watching_capabilities()
+            caps = own_tray_capabilities()
             return caps is None or u"updates" in caps
         except Exception:                     # noqa: BLE001 -- a guess must not crash
             return True
@@ -7122,8 +7144,7 @@ class HatoWindow(Styled):
         no word from Settings (ADVERSARY 2026-09-23 #1).
         """
         try:
-            from hato import watch as _watch
-            caps = _watch.watching_capabilities()
+            caps = own_tray_capabilities()
             return caps is None or u"formats" in caps
         except Exception:                     # noqa: BLE001 -- a guess must not crash
             return True
@@ -7133,8 +7154,7 @@ class HatoWindow(Styled):
         u"""-> False when a tray IS running whose runs cannot read `extract_embedded`
         (14c): every hato before 1.0.8. No tray, or one saying `extract`, -> True."""
         try:
-            from hato import watch as _watch
-            caps = _watch.watching_capabilities()
+            caps = own_tray_capabilities()
             return caps is None or u"extract" in caps
         except Exception:                     # noqa: BLE001 -- a guess must not crash
             return True
@@ -7144,8 +7164,7 @@ class HatoWindow(Styled):
         u"""-> False when a tray IS running whose runs cannot read `untimed` (LAYER 15):
         every hato before 1.0.9. No tray, or one saying `untimed`, -> True."""
         try:
-            from hato import watch as _watch
-            caps = _watch.watching_capabilities()
+            caps = own_tray_capabilities()
             return caps is None or u"untimed" in caps
         except Exception:                     # noqa: BLE001 -- a guess must not crash
             return True
@@ -7155,14 +7174,18 @@ class HatoWindow(Styled):
         u"""-> False when a tray IS running whose runs cannot read `surasura_connect`
         (LAYER 16): every hato before 1.1.0. No tray, or one saying `connect`, -> True."""
         try:
-            from hato import watch as _watch
-            caps = _watch.watching_capabilities()
+            caps = own_tray_capabilities()
             return caps is None or u"connect" in caps
         except Exception:                     # noqa: BLE001 -- a guess must not crash
             return True
 
     def restart_watcher(self):
-        u"""⭐ V1 -- replace an older tray with this build's. -> the argv, or None."""
+        u"""⭐ V1 -- replace an older tray with this build's. -> the argv, or None.
+        ⛔ LAYER 17 (A17-4): never from a held copy -- it would stop a tray it cannot
+        put back."""
+        from hato import paths as _paths
+        if _paths.held_by():
+            return None
         self.stop_watcher()
         argv = self.start_watcher()
         self.state.old_tray = False
@@ -7186,9 +7209,13 @@ class HatoWindow(Styled):
         ⚠ AND ONLY ONE. Two watchers on one folder means two runs racing for
         hato's run lock every time a file lands -- so an already-running one is
         left alone rather than doubled.
+
+        ⛔ LAYER 17 (A17-4): AND NEVER FROM A HELD COPY (`paths.held_by`) -- its tray
+        exits at once (H6), so a start would only ever look like one.
         """
+        from hato import paths as _paths
         from hato import watch as _watch
-        if _watch.watching_pid():
+        if _paths.held_by() or _watch.watching_pid():
             return None
         argv = _watch.watch_argv()
         self.spawn(argv, detached=True)

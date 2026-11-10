@@ -392,3 +392,19 @@ def test_the_registered_command_names_a_file_that_IS_THERE(monkeypatch):
 
 if __name__ == u"__main__":
     raise SystemExit(pytest.main([__file__, u"-q"]))
+
+
+# -- LAYER 17 (H6): a copy another program holds starts nothing by itself ------------------------
+
+def test_17_a_held_copy_never_starts_with_the_computer(registry, monkeypatch):
+    u"""⭐ H6 -- Surasura's own copy runs only its `hato-cli`, when Surasura asks: no login
+    start (its tray would refuse to sit there anyway), and the switch says why."""
+    from hato import paths
+    monkeypatch.setenv(paths.HELD_ENV, u"surasura")
+    with pytest.raises(startup.StartupError) as caught:
+        startup.enable()
+    assert u"kept by surasura" in str(caught.value)
+    assert startup.VALUE_NAME not in registry.values
+    monkeypatch.delenv(paths.HELD_ENV)
+    startup.enable()                                      # the control
+    assert startup.VALUE_NAME in registry.values

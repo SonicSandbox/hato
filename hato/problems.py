@@ -116,7 +116,9 @@ def open_problems(cfg, db, cache, now=None):
             continue                    # outside every configured folder
         if paths.under_any(video, cfg.skip_folders):
             continue                    # inside a folder the person skips
-        if look.find(video, keep.target_dir(video, root, out)) is not None:
+        beside = cfg.write_beside_video
+        if look.find(video, keep.target_dir(video, root, out, beside)) is not None or (
+                keep.also_beside(out, beside) and look.find(video) is not None):
             continue                    # ⭐ resolved on disk -- and the DB is not told
         if not _same_video(video, problem.video_hash):
             continue                    # gone, unreadable, or a different rip

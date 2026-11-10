@@ -7,6 +7,7 @@ Where hato's things live. ONE module, so nothing else guesses a path.
       state_db_path()      the state DB
       key_file_path()      key.txt -- what a stranger fills in (RUNBOOK 1c)
       default_subs_dir()   kept originals, when config.toml leaves subs_dir empty
+      own_subs_dir()       finished subtitles while write_beside_video is off (LAYER 17)
       default_log_path()   the run log, when config.toml leaves log.path empty
       lock_path()          one run at a time
     config_path()        config.toml. HATO_CONFIG overrides
@@ -130,6 +131,48 @@ def key_file_path():
 
 def default_subs_dir():
     return data_root() / "subs"
+
+
+def own_subs_dir():
+    u"""⭐ LAYER 17 -- where the FINISHED subtitles go while `write_beside_video` is
+    off (`keep.own_dir` adds one folder per video folder). In the per-user root, so
+    HATO_CACHE moves it with everything else."""
+    return data_root() / "subtitles"
+
+
+#: ⭐ LAYER 17 (H6) -- the mark another program leaves beside a copy of hato it fetched
+#: and keeps itself (Surasura's, D-1 a): that copy never updates itself, never starts a
+#: tray, a login start or a daily run. One small JSON object, `{"held_by": "surasura"}`.
+HELD_FILE = "held-by.json"
+#: The variable that marks a SOURCE run held (a suite, a developer): a checkout has no
+#: program folder of its own to carry the file.
+HELD_ENV = "HATO_HELD_BY"
+
+
+def held_by(install=None):
+    u"""⭐ LAYER 17 (H6) -- who holds this copy of hato, or None when it is its own.
+
+    -> the holder's name (`"surasura"`), or None. `install`: the program folder
+    (default: the frozen exe's own; a checkout has none, so only `HATO_HELD_BY` marks
+    it). ⛔ A mark that cannot be read still HOLDS (`"another program"`): the file is
+    put there on purpose, and a copy that updated itself past its holder's pin is the
+    one outcome it exists to stop. Never raises."""
+    named = os.environ.get(HELD_ENV)
+    if named:
+        return named.strip() or u"another program"
+    if install is None:
+        if not getattr(sys, "frozen", False):
+            return None
+        install = os.path.dirname(os.path.abspath(sys.executable))
+    mark = os.path.join(os.fspath(install), HELD_FILE)
+    if not os.path.isfile(mark):
+        return None
+    try:
+        with open(mark, "rb") as fh:
+            found = json.loads(fh.read(4096).decode("utf-8")).get("held_by")
+    except Exception:                          # noqa: BLE001 -- see the docstring
+        return u"another program"
+    return found.strip() if isinstance(found, str) and found.strip() else u"another program"
 
 
 def default_log_path():

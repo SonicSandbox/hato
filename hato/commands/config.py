@@ -81,8 +81,8 @@ def _show(args):
         # longer lines up is still, to all of them, correct.
         # ⚠ 15 since the Layer 14 pass (Z14-6): `format_fallback`, shown at last. A
         # check asserts the column now -- one position for every row.
-        # ⚠ 16 since 14c: `extract_embedded`.
-        print("  %-16s = %-44s %s" % (name, shown, cfg.origin(origin_key or name)))
+        # ⚠ 16 since 14c: `extract_embedded`. ⚠ 18 since LAYER 17: `write_beside_video`.
+        print("  %-18s = %-44s %s" % (name, shown, cfg.origin(origin_key or name)))
 
     row("folders", ", ".join(cfg.folders) if cfg.folders else "(none)")
     # ⚠ A SETTING NOBODY CAN SEE IS NOT A SETTING. This readout is where a
@@ -112,6 +112,9 @@ def _show(args):
     row("surasura_connect", cfg.surasura_connect)
     # ⭐ LAYER 16 (16k) -- release groups tried first; empty is 1.0.9's order
     row("favourite_groups", u", ".join(cfg.favourite_groups) or u"(none: hato's own order)")
+    # ⭐ LAYER 17 -- off: subtitles go into hato's own folder, never beside the video
+    row("write_beside_video", "true" if cfg.write_beside_video
+        else "false (into %s)" % paths.own_subs_dir())
     # ⚠ 1.0.x's folder: still read, never used by 1.1.0 (Go back finds it)
     row("surasura_dir", cfg.surasura_dir or "(off)")
     row("auto_update", "true" if cfg.auto_update else "false")
@@ -224,7 +227,7 @@ def _write(args):
         return EXIT_OK
     print("config.toml  %s" % written)
     for name in sorted(changes):
-        print("  %-16s = %s" % (name, _shown(fresh, name)))
+        print("  %-18s = %s" % (name, _shown(fresh, name)))
     return EXIT_OK
 
 

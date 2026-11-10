@@ -135,8 +135,11 @@ def configured_out(video):
         cfg = config.load()
     except Exception:                                 # noqa: BLE001 -- see the docstring
         return None
-    if not cfg.out:
+    if not cfg.out and cfg.write_beside_video:
         return None
+    if not cfg.out:
+        # ⭐ LAYER 17 -- `write_beside_video` off: hato's own folder, whatever the root
+        return str(keep.own_dir(video))
     for folder in cfg.folders:
         if paths.under_any(video, (folder,)):
             try:

@@ -215,7 +215,7 @@ def _show(path):
 # where the finished file goes -- ONE answer, used by BOTH sides
 # ---------------------------------------------------------------------------
 
-def target_dir(video, root, out=None):
+def target_dir(video, root, out=None, beside=True):
     u"""Where tsubasa will put the finished file. -> Path
 
     🚨 THE PRESENT-CHECK AND THE WRITE MUST ASK THE SAME FUNCTION. With `--out`
@@ -224,11 +224,50 @@ def target_dir(video, root, out=None):
     same episode every run, and tsubasa would refuse the write for ever
     (measured at 4a). One function, so the two cannot disagree.
 
-    `out` of None means beside the video, and then `root` is not read at all.
+    `out` of None means beside the video, and then `root` is not read at all --
+    ⭐ unless `beside` is False (LAYER 17, `write_beside_video` off): then hato's
+    own folder (`own_dir`). ⚠ `out` wins: it is a place a person named.
     """
     if not out:
+        if not beside:
+            return own_dir(video)
         return Path(os.path.dirname(os.path.abspath(os.fspath(video))))
     return mirrored_dir(video, root, out)
+
+
+def also_beside(out, beside):
+    u"""⭐ LAYER 17 -- does a present-check ALSO look beside the video? -> bool
+
+    With `write_beside_video` off the finished file goes to hato's own folder, but a
+    subtitle already beside the video -- one an earlier hato wrote before the switch,
+    or the person's own -- is still the video's subtitle. Asked only of the own
+    folder: under `--out` the mirror alone answers, as it always has (4a)."""
+    return not out and not beside
+
+
+#: ⭐ LAYER 17 -- the readable part of an own-folder name, at most this long.
+OWN_NAME_MAX = 32
+
+
+def own_dir(video, base=None):
+    u"""⭐ LAYER 17 -- a video's folder inside hato's own (`paths.own_subs_dir`). -> Path
+
+        D:\\Anime\\Frieren S2\\ep01.mkv  ->  <own>\\Frieren S2-1a2b3c4d\\
+
+    🚨 ONE FOLDER PER VIDEO FOLDER, NAMED BY ITS WHOLE PATH -- never `--out`'s mirror
+    below a root. Surasura asks about one library folder a run, so two runs over
+    `D:\\Anime` and `E:\\Anime` would both mirror `Frieren S2\\ep01` onto ONE file, and
+    the second would read the first's subtitle as its own, silently, for ever
+    (LEDGER-HOT: never let two videos target one output path -- here ACROSS runs,
+    where the in-run clash check cannot see). The hash is of the normcased folder, so
+    a case-only difference on Windows is the same folder."""
+    import hashlib
+    from hato import paths
+    folder = os.path.dirname(os.path.abspath(os.fspath(video)))
+    digest = hashlib.sha1(os.path.normcase(folder).encode("utf-8", "surrogatepass")).hexdigest()
+    name = (os.path.basename(folder) or u"root")[:OWN_NAME_MAX].rstrip(u" .") or u"root"
+    return Path(base if base is not None else paths.own_subs_dir()) / (
+        u"%s-%s" % (name, digest[:8]))
 
 
 def mirrored_dir(video, root, out):
@@ -461,5 +500,6 @@ SURASURA_FOLDER = u"Hato"
 __all__ = ["SURASURA_FOLDER", "TEMP_PREFIX", "InsideScan", "SubsDirInsideScan",
            "OutDirInsideScan",
            "KeptOriginalProblem", "UntaggedOriginal", "inside", "check_subs_dir",
-           "check_out_dir", "target_dir", "mirrored_dir", "download_name",
+           "check_out_dir", "target_dir", "also_beside", "own_dir", "mirrored_dir",
+           "download_name",
            "remembered_file", "entry_folder", "keep_original"]

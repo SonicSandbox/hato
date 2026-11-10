@@ -486,20 +486,105 @@ def check_only(settings):
     functions (`paths.under_any`), never a second copy of them.
     """
     for video in settings.only:
-        roots = [f for f in settings.folders if paths.under_any(video, (f,))]
-        if not roots:
-            return (u"--only names %s, which is not inside %s -- no run over %s would "
-                    u"look at it." % (video, u" or ".join(settings.folders),
-                                      u"that folder" if len(settings.folders) == 1
-                                      else u"those folders"))
-        if paths.under_any(video, settings.skip_folders):
-            return (u"--only names %s, which is inside a skipped folder -- no run "
-                    u"looks there." % video)
-        here = paths.normalised(os.path.dirname(video))
-        if not settings.recurse and here not in [paths.normalised(r) for r in roots]:
-            return (u"--only names %s, which is in a subfolder, and this run does not "
-                    u"look in subfolders." % video)
+        problem = unreachable(settings, video)
+        if problem:
+            return problem
     return None
+
+
+def unreachable(settings, video, lead=None):
+    u"""Why no walk of this run reaches `video` -- or None when one does. ⚠ The walk's
+    own rules (`paths.under_any`), asked of one video: `check_only`'s, and the list's.
+    `lead`: the sentence's start (`--only names <video>, which` by default)."""
+    lead = (u"--only names %s, which" % video) if lead is None else lead
+    roots = [f for f in settings.folders if paths.under_any(video, (f,))]
+    if not roots:
+        return (u"%s is not inside %s -- no run over %s would "
+                u"look at it." % (lead, u" or ".join(settings.folders),
+                                  u"that folder" if len(settings.folders) == 1
+                                  else u"those folders"))
+    if paths.under_any(video, settings.skip_folders):
+        return (u"%s is inside a skipped folder -- no run "
+                u"looks there." % lead)
+    here = paths.normalised(os.path.dirname(video))
+    if not settings.recurse and here not in [paths.normalised(r) for r in roots]:
+        return (u"%s is in a subfolder, and this run does not "
+                u"look in subfolders." % lead)
+    return None
+
+
+#: ⭐ LAYER 17 -- how a left-out listed video's row begins.
+LEFT_OUT = u"hato did not look at it:"
+#: ⭐ LAYER 17 -- while `--wait` waits for another run's lock under `--json --progress`,
+#: one `progress` line this often: Surasura stops a run silent for 10 minutes (its P3).
+LOCK_HEARTBEAT_SECONDS = 60.0
+
+
+def split_listed(settings, named):
+    u"""⭐ LAYER 17 -- an `--only-list` run's videos, split. -> (reachable, [(video, why)])
+
+    🚨 A LIST IS A MACHINE'S, AND ONE NAME MUST NOT STOP THE OTHERS. Surasura's finder
+    hands hato up to 200 waiting videos a run; refusing the whole list over ONE that is
+    gone (a file deleted since Surasura looked), in a folder the person skips, or in a
+    subfolder of a no-recurse config, failed every video beside it -- and Surasura then
+    asks again an hour later, and fails again, for ever. ⭐ So each one no walk reaches
+    is LEFT OUT, and still ANSWERED: an ERROR row of its own (`left_out_rows`), so the
+    machine that listed it reads a `video` line for every name it gave -- a run with
+    none reads as a run that failed whole (Surasura then waits an hour before asking
+    about ANY folder). The rest run. ⛔ `--only` typed by a person still refuses,
+    whole (`check_flags`, `check_only`): a typo there is told at once."""
+    kept, left, seen = [], [], set()
+    for video in named:
+        key = os.path.normcase(video)
+        if key in seen:
+            continue                        # ⚠ one row a video, however often listed
+        seen.add(key)
+        if not os.path.isfile(video):
+            left.append((video, u"%s it is not a file any more." % LEFT_OUT))
+            continue
+        problem = unreachable(settings, video, lead=u"%s it" % LEFT_OUT)
+        if problem:
+            left.append((video, problem))
+        else:
+            kept.append(video)
+    return kept, left
+
+
+def left_out_rows(left):
+    u"""⭐ LAYER 17 -- one ERROR row per left-out listed video. -> [VideoResult]
+    ⚠ ERROR, not a skip of a new kind: hato did not look at it, and nothing about a
+    subtitle was decided -- no row is recorded, and the next list asks again."""
+    from types import SimpleNamespace
+    # 🚨 An object, never the bare path: `VideoResult` reads `.title`, and a `str` HAS one
+    # -- the method -- which reached the JSON writer and failed the whole report.
+    return [pipeline.VideoResult(SimpleNamespace(path=video, name=os.path.basename(video),
+                                                 title=u"", season=None, episode=None),
+                                 pipeline.ERROR, why) for video, why in left]
+
+
+def _lock_sleep(args):
+    u"""⭐ LAYER 17 -- `RunLock.acquire`'s sleep, saying so while `--wait` waits. -> fn
+
+    🚨 A RUN WAITING FOR ANOTHER RUN IS NOT A HUNG RUN. Surasura's finder starts
+    `--wait` runs and stops one that says nothing for 10 minutes -- so a list run
+    queued behind the daily run was killed, read as failed, and every other folder
+    waited an hour. Under `--json --progress` a `progress` line goes out at once and
+    then every LOCK_HEARTBEAT_SECONDS (the window shows its `stage` as the live line).
+    ⛔ Nothing without `--progress`: the stream's grammar is untouched."""
+    import time
+    emit = _progress_emitter(args)
+    if emit is None:
+        return time.sleep
+    said = [None]
+
+    def sleep(seconds):
+        now = time.monotonic()
+        if said[0] is None or now - said[0] >= LOCK_HEARTBEAT_SECONDS:
+            said[0] = now
+            emit({u"phase": u"waiting", u"stage": u"waiting for another hato run to finish"})
+        time.sleep(seconds)
+
+    return sleep
 
 
 def check_flags(args):
@@ -555,6 +640,8 @@ def check_flags(args):
         return (u"--progress and --quiet contradict each other: --quiet means "
                 u"nothing is printed, and progress is something printed.")
     for video in (args.only or ()):
+        if getattr(args, "only_listed", None) and video in args.only_listed:
+            continue                # ⭐ LAYER 17: a listed one is left out and said
         # ⛔ A NAME THAT MATCHES NOTHING IS REFUSED, NOT RUN. A run over the
         # folders that then found nothing to do would exit 0 having looked at
         # nothing -- the silent miss this flag exists to replace.
@@ -585,6 +672,7 @@ def read_only_list(args):
     if not named:
         return u"--only-list names no video: %s" % source
     args.only = list(args.only or ()) + named
+    args.only_listed = set(named)
     return None
 
 
@@ -634,9 +722,24 @@ def run(args):
         # HATO_CACHE was therefore 22 lines of traceback while a relative
         # HATO_CONFIG -- caught above -- was one clean line. Measured 2026-09-17.
         return _fail(str(exc))
+    # ⭐ LAYER 17 -- an `--only-list` run leaves out (and says) a video no walk reaches,
+    # rather than refusing the list whole (`split_listed`); a typed `--only` still refuses.
+    listed = set(os.path.abspath(os.path.expanduser(v))
+                 for v in (getattr(args, "only_listed", None) or ()))
+    left = []
+    if listed:
+        kept, left = split_listed(settings, [v for v in settings.only if v in listed])
+        settings.only = tuple([v for v in settings.only if v not in listed] + kept)
     problem = check_only(settings)
     if problem:
         return _usage_fail(problem)
+    if listed and not settings.only:
+        # ⛔ NOTHING LEFT TO LOOK AT IS NOT "LOOK AT EVERYTHING": an empty `only` is no
+        # filter at all, so the pipeline is never started -- each listed video's row
+        # says why, then the `run` object.
+        run_report = pipeline.RunReport(settings)
+        run_report.results.extend(left_out_rows(left))
+        return _finish(args, cfg, run_report)
 
     try:
         world = build_world(args)
@@ -666,7 +769,7 @@ def run(args):
     try:
         try:
             lock.acquire(wait=LOCK_WAIT_SECONDS if args.wait else 0.0,
-                         poll=LOCK_POLL_SECONDS)
+                         poll=LOCK_POLL_SECONDS, sleep=_lock_sleep(args))
         except LockHeld as exc:
             # ⛔ NOT a failure. See the module docstring -- exit 0, and say
             # plainly that nothing ran.
@@ -703,6 +806,7 @@ def run(args):
                 extractor=world.extractor, on_progress=_progress_emitter(args))
             if lock.note:
                 run_report.notes.append(lock.note)
+            run_report.results.extend(left_out_rows(left))
             # ⭐ INSIDE the lock and before `world.close()`: the snapshot and the
             # dates are this run's, and no later run's answer is overwritten (S1).
             _remember(args, run_report, world.db, cfg)
@@ -724,7 +828,11 @@ def run(args):
             lock.release()
     finally:
         world.close()
+    return _finish(args, cfg, run_report)
 
+
+def _finish(args, cfg, run_report):
+    u"""A finished run's report: logged once, then shown; its exit code."""
     # ⚠ #6 (2026-10-04 hunt): everything from here to `stopped` ran unguarded, so a fault
     # in the REPORT, after the run had written its files, left the screen a traceback and
     # the log nothing. ⭐ Every piece that can fail is built FIRST, then logged once, then

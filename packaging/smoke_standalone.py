@@ -535,7 +535,7 @@ def _handoff(bundle, cli, env, store):
         pass
     check(u"handoff: the frozen hato names itself in hato.json",
           os.path.normcase(entry.get(u"cli") or u"") == os.path.normcase(os.path.abspath(cli))
-          and entry.get(u"verbs") == [u"pairings"],
+          and entry.get(u"verbs") == [u"pairings", u"find"],      # ⭐ LAYER 17
           u"cli %s · verbs %s" % (entry.get(u"cli"), entry.get(u"verbs")))
     code, out, err = run([cli, u"pairings", u"--json"], here, timeout=120)
     back = _ndjson(out)
@@ -1481,6 +1481,18 @@ def _going_back(install, root, was, store, swap):
         chose = took
         took = (lambda cfg: chose(cfg) and cfg.surasura_connect == u"off"
                 and list(cfg.favourite_groups) == [u"Haruhana"])
+    # ⭐ LAYER 17 -- `write_beside_video = false`, SAVED (the only value ever written: on is
+    # its default). Every hato up to 1.1.0 refuses it (`NEWER_THAN_1_1_0`), so Go back must
+    # take it away. ⚠ Against the released 1.1.0 it is the ONLY key the kept version never
+    # heard of: without it this arm saved nothing and waited for words that never come
+    # (the 2026-09-26 trap, a third time).
+    beside_key = u"write_beside_video" in _config.unknown_to(was)
+    if beside_key:
+        choose += [u"--set", u"write_beside_video=false"]
+        before = took
+        took = (lambda cfg: before(cfg) and cfg.write_beside_video is False)
+        if not connect_keys and becomes == u"goes —":
+            becomes = u"Save subtitles beside the videos"
     code, out, err = run([cli, u"config"] + choose + [u"--json"], here)
     with open(os.path.join(store, u"config.toml"), encoding="utf-8") as handle:
         saved = handle.read()
@@ -1533,7 +1545,7 @@ def _going_back(install, root, was, store, swap):
     code, out, err = run([cli, u"config", u"--show"], here)
     check(u"rehearsal: the kept version reads its settings after Go back", code == 0,
           u"exit %d%s" % (code, u"" if code == 0 else u" :: " + (err or out)[-200:]))
-    if connect_keys:
+    if connect_keys or beside_key:
         # ⚠ READ AS TEXT, and that is the point: the kept version's parser is the judge,
         # and a key it never heard of is refused wherever it sits -- at any value.
         try:
@@ -1542,9 +1554,9 @@ def _going_back(install, root, was, store, swap):
         except OSError as exc:
             kept = None
             why = u"%s" % exc
-        left = sorted(set(re.findall(r"(?m)^\s*(surasura_connect|favourite_groups)\s*=",
-                                     kept or u"")))
-        check(u"rehearsal: the kept version's config.toml carries neither Layer 16 key",
+        left = sorted(set(re.findall(
+            r"(?m)^\s*(surasura_connect|favourite_groups|write_beside_video)\s*=", kept or u"")))
+        check(u"rehearsal: the kept version's config.toml carries no key it never heard of",
               kept is not None and not left,
               u"neither key (%d lines)" % len(kept.splitlines()) if kept is not None and not left
               else u"still there: %s" % u", ".join(left) if kept is not None else why)

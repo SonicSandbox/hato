@@ -4831,6 +4831,52 @@ def test_an_older_tray_is_said_and_can_be_replaced(qapp, monkeypatch):
     assert calls == [u"stop", u"start"] and not window.state.old_tray
 
 
+def test_17_a_held_copys_window_offers_no_tray_and_never_starts_or_restarts_one(qapp,
+                                                                              monkeypatch):
+    u"""⭐ LAYER 17 (A17-4) -- the window of a copy Surasura holds (`held-by.json`): its tray
+    exits at once and it never starts with Windows (H6), so the window must not offer
+    either. The Watch tick and the Start-with-Windows switch are gone and the card says
+    who keeps the copy; `start_watcher` (the tick, the launch's reconcile, a failed
+    hand-off) spawns nothing; and no *Restart the tray* -- it would stop a tray the held
+    copy cannot put back. Two arms: the same window unheld offers all of it."""
+    from hato import paths
+    from hato import watch as _watch
+    from hato import startup as _startup
+    monkeypatch.setattr(_watch, u"watching_pid", lambda: None)
+    monkeypatch.setattr(_watch, u"watching_capabilities", lambda: {u"watching"})   # a 1.0.1 tray
+    monkeypatch.setattr(_watch, u"stop_running_watcher",
+                        lambda: pytest.fail(u"a held copy's window stopped the tray"))
+    monkeypatch.setattr(_startup, u"supported", lambda: True)
+    monkeypatch.setattr(_startup, u"is_enabled", lambda: False)
+    monkeypatch.setattr(_startup, u"is_stale", lambda: False)
+
+    def offered(window):
+        window.show_tab(gui_app.TAB_SET)
+        pane = window.panes[gui_app.TAB_SET]
+        keys = set(w.property(gui_app.KEEP) for w in pane.findChildren(gui_app.QWidget))
+        return keys, u" ".join(gui_app.texts(pane))
+
+    monkeypatch.setenv(paths.HELD_ENV, u"surasura")
+    window = make(running=False, watch=True)
+    window.state.old_tray = window.tray_is_old()
+    keys, text = offered(window)
+    assert u"when.watch" not in keys and u"when.startup" not in keys, keys
+    assert u"when.restart_tray" not in keys and not window.state.old_tray
+    assert u"kept by surasura" in text and u"does not sit in the tray" in text, text
+    window.spawn = lambda argv, **k: window.spawned.append(argv)
+    assert window.start_watcher() is None and window.restart_watcher() is None
+    assert window.spawned == [], window.spawned
+
+    monkeypatch.delenv(paths.HELD_ENV)                     # the control: its own copy
+    window = make(running=False, watch=True)
+    window.state.old_tray = window.tray_is_old()
+    keys, text = offered(window)
+    assert {u"when.watch", u"when.startup", u"when.restart_tray"} <= keys, keys
+    assert u"kept by" not in text
+    window.spawn = lambda argv, **k: window.spawned.append(argv)
+    assert window.start_watcher() is not None and len(window.spawned) == 1
+
+
 def test_the_alarming_word_is_nowhere_in_a_window_that_remembers(qapp):
     u"""The walk at the top of this file, over what LAYER 8 added -- which it
     never saw: every state it drove was the default fixture's (ADVERSARY

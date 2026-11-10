@@ -185,6 +185,16 @@ did before, and nothing in the window asks about it.
 > Before 1.1.0 this was a folder you picked by hand, and hato only copied into it.
 > That picker is gone: Surasura names its folder now.
 
+**Since 1.2.0 Surasura can ask, too.** For the videos in its library still waiting for
+a subtitle, Surasura hands hato the list, and hato looks for each one on jimaku and
+answers for every video — found, not there yet (and when it will look again), or why
+it could not look. Nothing to set up: Surasura sees that this hato can do it and asks.
+
+A new setting, `write_beside_video` (on by default), decides where a finished subtitle
+goes: on, beside the video as always; off (`hato config --set write_beside_video=false`),
+into a folder of hato's own, one per video folder, and nothing is written into your
+media folders. A subtitle already beside a video still counts as found either way.
+
 ---
 
 ## Every answer is inspectable

@@ -91,6 +91,10 @@ def sentence(decision, current):
     if decision.kind == update.TELL:
         return u"hato %s is out -- you have %s. %s %s" % (
             decision.version, current, TELLS.get(decision.reason, u""), decision.page)
+    if decision.reason == update.HELD:
+        from hato import paths
+        return (u"%s keeps this copy of hato up to date -- it never updates itself."
+                % (paths.held_by() or u"Another program").capitalize())
     if decision.version:
         return u"hato %s is up to date." % current
     if decision.reason == update.RATE_LIMITED:
@@ -308,6 +312,20 @@ def run(args, now=None):
 
 
 def _run(args, now):
+    from hato import paths
+    if paths.held_by():
+        # ⭐ LAYER 17 (H6) -- a copy another program holds (Surasura's own): its holder
+        # moves its version. ⛔ No network, nothing staged, nothing swapped; `--auto` is
+        # silent (nothing to do), the rest say why.
+        if args.auto:
+            return EXIT_OK
+        decision = update.Decision(update.NONE, reason=update.HELD)
+        if args.apply or args.rollback or args.stage:
+            return _fail(args, sentence(decision, __version__))
+        obj = dict(decision.as_dict())
+        obj.update({u"type": u"update", u"current": __version__})
+        _say(args, obj, sentence(decision, __version__))
+        return EXIT_OK
     if args.auto:
         return _auto(args, now)
     if args.apply or args.rollback:

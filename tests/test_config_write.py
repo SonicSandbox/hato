@@ -57,7 +57,8 @@ def test_every_schema_key_is_written_so_a_person_can_read_what_is_in_force(tmp_p
     changed = config.with_changes(load_from(tmp_path), prefer_format=u"srt",
                                   format_fallback=True, auto_update=False,
                                   extract_embedded=True, untimed=u"same_provider",
-                                  surasura_connect=u"off", favourite_groups=[u"Haruhana"])
+                                  surasura_connect=u"off", favourite_groups=[u"Haruhana"],
+                                  write_beside_video=False)
     text = config.dumps(changed)
     for name in config.NEWER_KEYS:
         assert (u"\n%s = " % name) in text, name
@@ -411,11 +412,15 @@ def test_going_back_writes_the_file_the_kept_version_can_read(tmp_path):
     # ⭐ LAYER 15: 1.0.9's key is one 1.0.8 AND everything before it has never heard of.
     # ⭐ LAYER 16: and 1.1.0's, one 1.0.9 and everything before it has never heard of.
     assert config.unknown_to(u"1.0.7") == (u"extract_embedded", u"untimed",
-                                           u"surasura_connect", u"favourite_groups")
+                                           u"surasura_connect", u"favourite_groups",
+                                           u"write_beside_video")
     assert config.unknown_to(u"1.0.8") == (u"untimed", u"surasura_connect",
-                                           u"favourite_groups")
-    assert config.unknown_to(u"1.0.9") == (u"surasura_connect", u"favourite_groups")
-    assert config.unknown_to(u"1.1.0") == ()
+                                           u"favourite_groups", u"write_beside_video")
+    assert config.unknown_to(u"1.0.9") == (u"surasura_connect", u"favourite_groups",
+                                           u"write_beside_video")
+    # ⭐ LAYER 17 -- 1.1.0 has never heard of `write_beside_video`
+    assert config.unknown_to(u"1.1.0") == (u"write_beside_video",)
+    assert config.unknown_to(u"1.1.1") == ()
     assert set(config.unknown_to(u"1.0.2")) == set(config.NEWER_KEYS)
 
 
@@ -660,3 +665,45 @@ def test_16z_A8_go_backs_words_name_the_folder_1_0_9_copies_into(tmp_path):
     config.save(config.with_changes(config.load(path), surasura_dir=u""), path)
     words = config.readable_by(config.load(path), u"1.0.9")[1]
     assert words == [u"“Hand new subtitles to Surasura” goes — 1.0.9 has no such setting"], words
+
+
+# -- LAYER 17 (H5): write_beside_video -----------------------------------------------------------
+
+def test_17_write_beside_video_is_on_unwritten_and_set_off_through_the_json_door(
+        tmp_path, monkeypatch, capsys):
+    u"""⭐ H5 -- the key Surasura's hato card reads (`config --show --json`, the LAST line
+    of stdout: `no_subs.hato_config`) and writes (`config --set write_beside_video=false
+    --json`). On by default and NEVER WRITTEN at its default (1.1.0 refuses a key it has
+    never heard of); off, written, shown with where the files go."""
+    import json
+    from hato import cli
+    path = tmp_path / "config.toml"
+    monkeypatch.setenv("HATO_CONFIG", str(path))
+    assert cli.main(["config", "--show", "--json"]) == 0
+    shown = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert shown["write_beside_video"] is True
+    assert cli.main(["config", "--set", "write_beside_video=false", "--json"]) == 0
+    said = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert said["ok"] is True and said["write_beside_video"] is False, said
+    assert u"write_beside_video = false" in path.read_text(encoding="utf-8")
+    assert cli.main(["config", "--show"]) == 0
+    text = capsys.readouterr().out
+    assert u"write_beside_video" in text and u"subtitles" in text, text
+    assert cli.main(["config", "--set", "write_beside_video=no", "--json"]) == 1
+    assert u"true or false" in json.loads(capsys.readouterr().out.strip())["error"]
+    assert cli.main(["config", "--set", "write_beside_video=true", "--json"]) == 0
+    capsys.readouterr()
+    assert u"write_beside_video" not in path.read_text(encoding="utf-8"), (
+        u"the default was written: 1.1.0 would refuse this file")
+
+
+def test_17_going_back_to_1_1_0_takes_write_beside_video_away_and_says_so(tmp_path):
+    u"""⭐ 14z's rule for 1.1.1's key: Go back to 1.1.0 drops it (on, the only way 1.1.0
+    writes), and says so before the press."""
+    from hato import config
+    path = tmp_path / "config.toml"
+    config.save(config.with_changes(config.load(path), write_beside_video=False), path)
+    words = config.make_readable_by(u"1.1.0", path)
+    assert u"write_beside_video" not in path.read_text(encoding="utf-8")
+    assert len(words) == 1 and u"beside the videos" in words[0] and u"1.1.0" in words[0], words
+    assert config.make_readable_by(u"1.1.0", path) == []

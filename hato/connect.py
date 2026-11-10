@@ -11,7 +11,7 @@ planning folder `tracks/tools/work/`: `hato-shapes-v2.md` holds every shape.
 
 ⭐ ONE SHARED FOLDER, two small files. Surasura writes `surasura.json` (its command
 line, the verbs it offers, the folder per language hato's copies go to); hato writes
-`hato.json` (its command line, `"verbs": ["pairings"]`). Neither ever opens the
+`hato.json` (its command line, `"verbs": ["pairings", "find"]`). Neither ever opens the
 other's data: Surasura asks `hato-cli pairings --json`, hato calls
 `surasura-cli register`. 🚨 Everything Connect-facing exists ONLY when Surasura is
 there (Sonic, 2026-10-12): with no `surasura.json` hato behaves as 1.0.9 did, minus
@@ -49,6 +49,14 @@ TOOLS_DIR_ENV = "HOUSEKI_TOOLS_DIR"
 #: command line to advertise (`app` is then null): the mirror of Surasura's
 #: SURASURA_TOOLS_CLI, so a developer's tree never takes over the real entry.
 TOOLS_CLI_ENV = "HATO_TOOLS_CLI"
+
+#: ⭐ LAYER 17 (1.1.1) -- the verbs hato offers Surasura while the hand-off is not off.
+#: `pairings`: `hato-cli pairings --json` (16f). `find`: the finder's batch run --
+#: `hato-cli <folder> --only-list FILE --json --progress --wait --lang L`, one NDJSON
+#: `video` object per listed video (`report.as_dict`), then the `run` object. ⛔ Listed
+#: only by a hato that keeps that contract (09-hato-layer.md §7): Surasura sends a
+#: hato nothing until its entry names `find` (its `no_subs.HATO_VERB`).
+VERBS = ["pairings", "find"]
 
 #: The effective states, in the words the card and the tray key off.
 OFF, ABSENT, TOO_NEW, OFFLINE, DROPS, REGISTERS = (
@@ -194,9 +202,9 @@ def advertised():
 def hato_entry(setting, version=None):
     u"""hato's entry as a dict, or None when this process writes none.
 
-    ⭐ A1 (Surasura confirmed 2026-10-29): `verbs` is `["pairings"]` unless the
-    setting is OFF, then `[]` -- and `cli` STAYS filled, because Surasura drops an
-    entry whose `cli` is missing rather than reading it as "hato can't be asked".
+    ⭐ A1 (Surasura confirmed 2026-10-29): `verbs` is `VERBS` unless the setting is
+    OFF, then `[]` -- and `cli` STAYS filled, because Surasura drops an entry whose
+    `cli` is missing rather than reading it as "hato can't be asked".
     """
     found = advertised()
     if found is None:
@@ -212,7 +220,7 @@ def hato_entry(setting, version=None):
         "cli": cli,
         "app": app,
         "contract": CONTRACT,
-        "verbs": [] if setting == "off" else ["pairings"],
+        "verbs": [] if setting == "off" else list(VERBS),
         "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
@@ -244,6 +252,25 @@ def _clear_stale_temps(folder, prefix):
             pass
 
 
+def _may_replace(old, new):
+    u"""⭐ LAYER 17 (H6) -- may THIS copy replace the entry that is there? -> bool
+
+    A copy another program holds (`paths.held_by`: Surasura's own, fetched for its
+    finder) never takes the entry from a hato the person runs themselves: both would
+    rewrite it on every run, and Surasura would ask whichever wrote last. So a held
+    copy writes only an entry that is absent, its own, or one whose `cli` is gone (an
+    uninstalled hato, edge 2). ⭐ The person's own copy always may: theirs wins."""
+    from hato import paths
+    if not paths.held_by():
+        return True
+    if not isinstance(old, dict):
+        return True
+    cli = old.get("cli")
+    if not isinstance(cli, str) or not cli or not os.path.isfile(cli):
+        return True
+    return os.path.normcase(os.path.abspath(cli)) == os.path.normcase(new["cli"])
+
+
 def write_hato_json(setting, entry=None, version=None):
     u"""Write `hato.json` when a field other than `updated` differs. -> True if written.
 
@@ -269,6 +296,8 @@ def write_hato_json(setting, entry=None, version=None):
         return False
     old = _read_json(path)
     if _same(old, new):
+        return False
+    if not _may_replace(old, new):
         return False
     data = (json.dumps(new, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     if len(data) > MAX_BYTES:
@@ -893,5 +922,6 @@ def watched(found=None):
 
 __all__ = ["SCHEMA", "CONTRACT", "STATES", "OFF", "ABSENT", "TOO_NEW", "OFFLINE", "DROPS",
            "REGISTERS", "Entry", "Link", "Status", "tools_dir", "read_entry", "drop_folder",
-           "verbs", "state", "advertised", "hato_entry", "write_hato_json", "refresh",
+           "verbs", "VERBS", "state", "advertised", "hato_entry", "write_hato_json",
+           "refresh",
            "library_there", "status", "watched"]

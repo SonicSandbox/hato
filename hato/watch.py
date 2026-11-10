@@ -565,8 +565,11 @@ UPDATE_FIRST = 300.0
 
 
 def can_update_itself():
-    u"""Frozen, on Windows: the only copy that updates itself. ⛔ A checkout is git's."""
-    return bool(getattr(sys, u"frozen", False)) and sys.platform.startswith("win")
+    u"""Frozen, on Windows: the only copy that updates itself. ⛔ A checkout is git's.
+    ⛔ LAYER 17 (H6): nor a copy another program holds (`paths.held_by`)."""
+    from hato import paths as _paths
+    return (bool(getattr(sys, u"frozen", False)) and sys.platform.startswith("win")
+            and not _paths.held_by())
 
 
 def spawn_update(spawner=None):
@@ -1031,6 +1034,14 @@ def main(argv=None):
     costs what it was measured to cost.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
+    from hato import paths as _held
+    holder = _held.held_by()
+    if holder:
+        # ⭐ LAYER 17 (H6) -- a copy another program holds runs only its `hato-cli`, when
+        # that program asks: no tray, no daily run. Said once, and NOT a failure.
+        complain(u"hato: this copy is kept by %s, which runs it when it needs it -- it "
+                 u"does not sit in the tray or run on a schedule.\n" % holder)
+        return 0
     if SCHEDULED_FLAG in argv:
         # ⭐ D2 -- Windows' daily task. BEFORE the one-watcher check below: a
         # tray that is already running is no reason to skip the daily run.
