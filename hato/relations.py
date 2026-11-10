@@ -455,12 +455,14 @@ def fetch(url=REFRESH_URL):
 
 def _urllib3_error():
     u"""-> urllib3's base error (what `raw.read1` raises in urllib3 2.x), or OSError
-    when urllib3 cannot be imported (then nothing raises it)."""
+    when it cannot be reached (then nothing raises it). ⚠ Through `requests.packages`,
+    requests' own re-export of the urllib3 it runs on: hato declares requests, never
+    urllib3 (`test_every_third_party_import_under_hato_is_DECLARED`)."""
     try:
-        from urllib3.exceptions import HTTPError
-    except ImportError:
+        import requests
+        return requests.packages.urllib3.exceptions.HTTPError
+    except (ImportError, AttributeError):
         return OSError
-    return HTTPError
 
 
 def _cut_short(exc):
