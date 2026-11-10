@@ -627,7 +627,12 @@ def test_a_7z_that_promises_more_than_its_data_holds_is_refused_not_a_hang(tmp_p
         "extract() was still unpacking a %s .7z after 30 s -- py7zr spins for ever on a header that "
         "overstates a member, and a scheduled run would hold its lock the whole time" % coder)
     raised = result.get("raised")
-    assert isinstance(raised, archives.ArchiveError) and raised.reason == archives.STALLED, (
+    # ⚠ py7zr 1.1.4 (CI's and the frozen build's) refuses the overstated member ITSELF
+    # ("decompression failed to make progress"); 1.1.3 (the dev venv) spins, and only
+    # hato's guard ends it -- the `alive` check above is that guard's witness either way
+    own = isinstance(raised, archives.ArchiveError) and u"make progress" in raised.reason
+    assert isinstance(raised, archives.ArchiveError) and (
+        raised.reason == archives.STALLED or own), (
         repr(raised) if raised is not None else "extract returned %r" % result.get("found"))
     assert not into.exists(), "the stalled extraction left %s" % tree(into)
 

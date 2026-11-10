@@ -1207,9 +1207,10 @@ def _crash_on(monkeypatch, name, exc):
     u"""The candidate loop raises `exc` for the video called `name` -- a fault in hato,
     the shape 1.0.9's NoneType had (raised out of the alignment, inside `_show`)."""
     real = pipeline._Run._candidates
+    names = {name} if isinstance(name, str) else set(name)
 
     def candidates(self, show, alignment, video, root, seen_groups):
-        if os.path.basename(str(video.path)) == name:
+        if os.path.basename(str(video.path)) in names:
             raise exc
         return real(self, show, alignment, video, root, seen_groups)
 
@@ -1289,7 +1290,9 @@ def test_the_per_show_guard_never_swallows_what_stops_the_whole_run(tmp_path, mo
     end the run exactly as before the guard."""
     lab = Lab(tmp_path, names=TWO_SHOWS)
     lab.client = ListForAnyEntry(lab.real)
-    _crash_on(monkeypatch, u"frieren - 28.mkv", raised)
+    # ⚠ 1.1.0's CI: EVERY video raises -- which show runs first is the folder listing's
+    # order (sorted on NTFS, not on ext4 or APFS); a swallowed stop still shows as crashes
+    _crash_on(monkeypatch, TWO_SHOWS, raised)
 
     if stops == u"report":
         report = lab.run()

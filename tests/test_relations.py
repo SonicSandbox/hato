@@ -415,8 +415,17 @@ def served(monkeypatch):
             threading.Thread(target=send, daemon=True).start()
             resp = http.client.HTTPResponse(a)
             resp.begin()
-            raw = urllib3.response.HTTPResponse.from_httplib(resp, preload_content=False,
-                                                             decode_content=False)
+            # ⚠ urllib3 2.x has no `from_httplib` (CI and the frozen build install 2.8;
+            # the dev venv pins 1.26): build the response as each version's pool does,
+            # its own defaults kept (2.x enforces the promised length, 1.26 does not)
+            if hasattr(urllib3.response.HTTPResponse, "from_httplib"):
+                raw = urllib3.response.HTTPResponse.from_httplib(resp, preload_content=False,
+                                                                 decode_content=False)
+            else:
+                raw = urllib3.response.HTTPResponse(
+                    body=resp, headers=resp.getheaders(), status=resp.status,
+                    version=resp.version, reason=resp.reason, preload_content=False,
+                    decode_content=False, original_response=resp)
             r = requests.Response()
             r.raw, r.status_code, r.url = raw, resp.status, url
             r.headers = requests.structures.CaseInsensitiveDict(raw.headers)
@@ -444,6 +453,35 @@ def test_16z_C1_a_download_cut_off_before_its_promised_length_is_refused(served)
     served[u"serve"](promised, whole)                          # the control: whole, taken
     assert relations.fetch() == whole
     assert served[u"asked"][-1][u"headers"][u"Accept-Encoding"] == u"identity"
+
+
+def test_a_cut_short_body_that_urllib3_RAISES_on_is_a_refresh_error_too(served, monkeypatch):
+    u"""1.1.0's CI: urllib3 2.x (the frozen build's; the dev venv pins 1.26) raises its
+    OWN ProtocolError(IncompleteRead) from `read1` on a body cut short -- none of the
+    errors `fetch` named, so `fetch` broke its word, "Raises RefreshError". Faked here
+    on both urllib3s: the error 2.x raises, and a plain one beside it."""
+    import urllib3.exceptions as u3
+    served[u"serve"](b"HTTP/1.1 200 OK\r\nContent-Length: 30", b"x" * 30)
+
+    def cut(response):
+        def read(n):
+            raise u3.ProtocolError(u"Connection broken", u3.IncompleteRead(10, 20))
+        return read
+    monkeypatch.setattr(relations, "_read_some", cut)
+    with pytest.raises(relations.RefreshError) as raised:
+        relations.fetch()
+    assert str(raised.value) == u"cut short: 10 of 30 bytes", raised.value
+    assert raised.value.answered is False, u"a dropped download waits the day"
+
+    def broken(response):
+        def read(n):
+            raise u3.ProtocolError(u"Connection aborted")
+        return read
+    monkeypatch.setattr(relations, "_read_some", broken)
+    served[u"serve"](b"HTTP/1.1 200 OK\r\nContent-Length: 30", b"x" * 30)
+    with pytest.raises(relations.RefreshError) as raised:
+        relations.fetch()
+    assert str(raised.value) == u"ProtocolError" and raised.value.answered is False
 
 
 def test_16z_C1_a_list_that_ends_inside_a_line_is_turned_away(cache):

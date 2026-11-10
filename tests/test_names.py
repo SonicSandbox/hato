@@ -12,9 +12,26 @@ What it structurally cannot cover: whether tsubasa's reading is RIGHT for a
 given release -- that is tsubasa's corpus gate and, for hato, the timing verdict.
 """
 import json
+import os
 from pathlib import Path
 
 from hato import names
+
+import pytest
+
+
+@pytest.fixture
+def windows_budget(monkeypatch):
+    u"""⚠ 1.1.0's CI: the stub budget is Windows' MAX_PATH rule (`cache.name_budget`);
+    elsewhere a name may run to NAME_MAX whatever the folder, so these checks' deep
+    workdirs cut nothing. The Windows rule is pinned off Windows: the cut is proven on
+    every platform, and Windows runs the real function."""
+    from hato import cache
+    if os.name != "nt":
+        def budget(folder):
+            return max(min(cache.NAME_MAX, cache.WIN_PATH_MAX - cache._units(str(folder)) - 1),
+                       cache.NAME_MIN)
+        monkeypatch.setattr(cache, "name_budget", budget)
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = json.loads((ROOT / "tests" / "fixtures" / "api" / "entries_11446_files.json")
@@ -119,7 +136,7 @@ def test_an_engine_below_the_floor_still_reads_every_name(tmp_path, monkeypatch)
     assert (info.episode, info.dual_numbering) == (34, None)
 
 
-def test_16l_p3_a_long_name_in_a_deep_workdir_keeps_its_episode_and_maxpath(tmp_path):
+def test_16l_p3_a_long_name_in_a_deep_workdir_keeps_its_episode_and_maxpath(tmp_path, windows_budget):
     """#7: a ~190-character name in a deep workdir passed MAX_PATH and the show read
     nothing. The stub is cut to the cache's own budget -- in its MIDDLE, so the
     episode at the end survives -- and two names cut alike are still both read."""
@@ -158,14 +175,14 @@ def deep_workdir(tmp_path):
     return work
 
 
-def test_16l_p3_long_name_is_read_in_a_deep_workdir(tmp_path):
+def test_16l_p3_long_name_is_read_in_a_deep_workdir(tmp_path, windows_budget):
     name = long_name(5)
     assert len(name) == LONG_NAME_LEN
     info, = names.read_names([name], deep_workdir(tmp_path))
     assert info.episode == 5
 
 
-def test_16l_p3_every_stub_path_fits_windows_limit(tmp_path):
+def test_16l_p3_every_stub_path_fits_windows_limit(tmp_path, windows_budget):
     work = deep_workdir(tmp_path)
     infos = names.read_names([long_name(5), long_name(6)], work)
     stubs = all_files(work)
@@ -174,7 +191,7 @@ def test_16l_p3_every_stub_path_fits_windows_limit(tmp_path):
     assert not too_long, [len(s) for s in too_long]
 
 
-def test_16l_p3_two_long_names_differing_after_cut_both_read(tmp_path):
+def test_16l_p3_two_long_names_differing_after_cut_both_read(tmp_path, windows_budget):
     a, b = long_name(5), long_name(6)
     assert len(a) == len(b) == LONG_NAME_LEN
     # They differ only in the last 15 characters (the " - 05 [JPN].ass" tail), so any cut
@@ -206,7 +223,7 @@ def d1_batch():
     return batch
 
 
-def test_16z_D1_a_cut_stub_reads_the_names_own_numbers_or_is_left_out_with_a_reason(tmp_path):
+def test_16z_D1_a_cut_stub_reads_the_names_own_numbers_or_is_left_out_with_a_reason(tmp_path, windows_budget):
     u"""Z-D1 (HIGH, wrong-episode class): the stub was cut at a fixed middle -- inside the
     tags -- and spliced a NEW number (`- 12 [1080p]…[AAC 2.~ix…` read episode 2; past 255
     characters a cut inside `[ABCD1234]` read 34/234/1234). Every name is checked against
@@ -234,7 +251,7 @@ def test_16z_D1_a_cut_stub_reads_the_names_own_numbers_or_is_left_out_with_a_rea
     assert len(all_files(work)) == len(infos) - len(unread)  # an unread name leaves no stub
 
 
-def test_16z_D1_a_name_left_unread_is_said_in_the_shows_notes_and_offered_nowhere(tmp_path):
+def test_16z_D1_a_name_left_unread_is_said_in_the_shows_notes_and_offered_nowhere(tmp_path, windows_budget):
     from hato import episodes
     work = tmp_path / ("w" * max(1, 120 - len(str(tmp_path))))
     long12 = (u"[Group] Kimi no Na wa - 12" + D1_TAGS[0] * 3 + u".ja.srt")  # no title to cut

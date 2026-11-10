@@ -443,9 +443,34 @@ def fetch(url=REFRESH_URL):
                 raise RefreshError(u"cut short: %d of %s bytes" % (len(body), promised.strip()),
                                    answered=False)
             return bytes(body)
-    except (requests.RequestException, http.client.HTTPException, OSError) as exc:
+    except (requests.RequestException, http.client.HTTPException, OSError,
+            _urllib3_error()) as exc:
         # ⚠ 16z: below urllib3 a timeout or a reset is the socket's own error
-        raise RefreshError(type(exc).__name__, answered=False)
+        # 🚨 1.1.0's CI: urllib3 2.x (the frozen build's) RAISES on a body cut short of
+        # its Content-Length -- its own ProtocolError, none of the three above, read
+        # through `read1` -- where 1.26 handed back the short body (Z-C1 below)
+        cut = _cut_short(exc)
+        raise RefreshError(cut or type(exc).__name__, answered=False)
+
+
+def _urllib3_error():
+    u"""-> urllib3's base error (what `raw.read1` raises in urllib3 2.x), or OSError
+    when urllib3 cannot be imported (then nothing raises it)."""
+    try:
+        from urllib3.exceptions import HTTPError
+    except ImportError:
+        return OSError
+    return HTTPError
+
+
+def _cut_short(exc):
+    u"""-> "cut short: N of M bytes" when `exc` carries urllib3's IncompleteRead
+    (`partial` bytes read, `expected` still owed), else None."""
+    for arg in getattr(exc, "args", ()):
+        partial, owed = getattr(arg, "partial", None), getattr(arg, "expected", None)
+        if isinstance(partial, int) and isinstance(owed, int):
+            return u"cut short: %d of %d bytes" % (partial, partial + owed)
+    return None
 
 
 def _read_some(response):

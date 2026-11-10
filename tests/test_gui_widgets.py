@@ -950,7 +950,10 @@ def test_16g_the_switch_writes_off_and_switched_on_the_key_goes_from_the_file(
     from hato import config
     window = _connect_window(tmp_path, monkeypatch, u"cards")
     toml = tmp_path / u"config.toml"
-    toml.write_text(u'folders = ["D:\\\\Anime"]\n', encoding="utf-8")
+    # ⚠ a NATIVE absolute folder, TOML literal-quoted (1.1.0's CI: on POSIX `D:\Anime`
+    # is a relative path, and `hato config` rightly refuses one)
+    anime = str(tmp_path / u"Anime")
+    toml.write_text(u"folders = ['%s']\n" % anime, encoding="utf-8")
     env = dict(os.environ, HATO_CONFIG=str(toml), PYTHONUTF8=u"1")
 
     def press_and_write():
@@ -973,7 +976,7 @@ def test_16g_the_switch_writes_off_and_switched_on_the_key_goes_from_the_file(
         u"switched back on, the key stayed in the file: %r" % toml.read_text(encoding="utf-8"))
     assert u"surasura_connect" not in toml.read_text(encoding="utf-8")
     assert CONNECT_SAID[u"cards"] in _said(_surasura_card(window))
-    assert cfg.folders == (u"D:\\Anime",), u"a switch's write lost another setting"
+    assert cfg.folders == (anime,), u"a switch's write lost another setting"
 
 
 def test_16g_a_written_on_reads_as_on_and_the_switch_turns_it_off(qapp, tmp_path,
