@@ -4668,3 +4668,28 @@ def test_16z_D3_a_dropped_file_note_reaches_every_show_that_uses_the_entrys_list
     assert len(report.shows) == 2 and all(s.resolved for s in report.shows), report.shows
     said = [s.title for s in report.shows if note % ENTRY in s.notes]
     assert len(said) == 2, [(s.title, [n[:60] for n in s.notes]) for s in report.shows]
+
+
+def test_a_real_subtitle_kept_sends_only_the_from_audio_file_hato_made_to_the_trash(tmp_path, monkeypatch):
+    u"""⭐ LAYER 19 (19f, PROVISIONAL) -- the seam, from the ONE funnel (`_keep_result`).
+
+    Episode 1 carries a `.from-audio.srt` hato made (recorded in `made.json`); episode 2
+    one with the same name hato never made (Surasura's own copy beside a video). The run
+    finds real subtitles for both: hato's goes to the trash, restorably; Surasura's stays.
+    ⚠ And neither counted as the video's subtitle (17e): both were fetched for."""
+    from hato import speech
+    monkeypatch.setenv("TSUBASA_NO_OS_TRASH", "1")          # the local trash: a move
+    lab = Lab(tmp_path, names=episodes_up_to(2))
+    lab.decide = lambda name: {}
+    videos = sorted(p for p in lab.media.iterdir() if p.suffix == u".mkv")
+    made, theirs = [v.with_name(v.stem + speech.SUFFIX) for v in videos]
+    for path in (made, theirs):
+        path.write_text(u"1\n00:00:01,000 --> 00:00:02,000\nあ\n", encoding="utf-8")
+    speech._remember(made, speech.FAST)
+
+    report = lab.run()
+
+    written = [r for r in report.results if r.wrote]
+    assert len(written) == 2, u"a .from-audio.srt counted as the video's subtitle (17e)"
+    assert not made.exists() and theirs.exists()
+    assert not speech.made_by_hato(made)
