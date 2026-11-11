@@ -169,6 +169,13 @@ update = ["pycryptodomex>=3.15"]
 # has been run here. 6.5 is named because nothing in the window is newer than
 # that, and ⛔ an older release is not something this can assert.
 gui = ["PyQt6>=6.5"]
+# ⭐ LAYER 19 -- THE SPEECH ADD-ON'S RUNTIMES ARE AN EXTRA, and never in hato's own zip:
+# `hato/speech_engine.py` is frozen on its own (packaging/hato-speech.spec) into the
+# add-on hato downloads only on the learner's yes, and imports each of these inside
+# the function that needs it. hato itself never imports them. ⚠ The floors are the
+# versions proven here on 2026-11-12 (the study's clip, both models), nothing older.
+speech = ["sherpa-onnx>=2.0.1", "faster-whisper>=1.2.1", "ctranslate2>=4.9.0", "av>=18.1.0",
+          "numpy>=2.4"]
 
 [project.scripts]
 # An entry point is only a string, and building never imports it -- the

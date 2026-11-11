@@ -821,6 +821,25 @@ def _drive(bundle, cli, gui, watch, env, store):
           u"%s" % (reported or u"no output") if source_version
           else u"could not read the source version")
 
+    # -- 4d · ⭐ LAYER 19 -- THE SPEECH ADD-ON IS NOT IN THIS ZIP -----------
+    # ⛔ The add-on (sherpa-onnx, CTranslate2, faster-whisper, PyAV) and the models are
+    # downloaded only on the learner's yes (19c): none of them may ride in hato's own
+    # zip. And the frozen `hato-cli speech status` answers, nothing installed, offline.
+    carried = [name for name in (u"sherpa_onnx", u"ctranslate2", u"faster_whisper", u"av",
+                                 u"onnxruntime", u"tokenizers")
+               if os.path.isdir(os.path.join(root, name))]
+    check(u"the speech add-on is outside hato's zip", not carried,
+          u"carried: " + u", ".join(carried) if carried else u"none of its runtimes here")
+    code, out, err = run([cli, u"speech", u"status", u"--json"], env, timeout=60)
+    try:
+        said = json.loads((out or u"").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        said = {}
+    check(u"hato speech status (frozen)", code == 0 and said.get(u"ok") is True and
+          not (said.get(u"addon") or {}).get(u"installed"),
+          u"nothing installed, picked %s" % said.get(u"picked") if said.get(u"ok") else
+          ((out or err).strip().splitlines() or [u"no output"])[-1][:120])
+
     # -- 5 · a real run, both halves --------------------------------------
     empty = os.path.join(store, "empty-folder")
     os.makedirs(empty)

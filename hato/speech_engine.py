@@ -328,11 +328,44 @@ def accurate(samples, models, threads, progress, device, gpu_dir):
 
 # --- the command line ------------------------------------------------------------------------------------------ #
 
+def missing(model):
+    u"""The runtimes `model` needs that this Python lacks (hato's `speech` extra), by name -- the named answer, never
+    a bare ImportError (from source; the frozen add-on carries them all)."""
+    gone = []
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        gone.append("numpy")
+    try:
+        import av  # noqa: F401
+    except ImportError:
+        gone.append("av")
+    try:
+        import sherpa_onnx  # noqa: F401
+    except ImportError:
+        gone.append("sherpa_onnx")
+    if model == "accurate":
+        try:
+            import ctranslate2  # noqa: F401
+        except ImportError:
+            gone.append("ctranslate2")
+        try:
+            import faster_whisper  # noqa: F401
+        except ImportError:
+            gone.append("faster_whisper")
+    return gone
+
+
 def run(args):
     started = time.monotonic()
     if not has_model(args.models, args.model):
         emit("result", outcome="no_model", model=args.model)
         return 0
+    gone = missing(args.model)
+    if gone:
+        emit("result", outcome="error", why="the speech add-on is missing %s (pip install hato[speech])"
+                                            % ", ".join(gone))
+        return 1
     last = [0.0]
 
     def progress(stage, done, total):
