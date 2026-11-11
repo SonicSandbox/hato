@@ -3721,8 +3721,12 @@ class HatoWindow(Styled):
             # ⭐ 14z (C4) -- AND WHY the subtitles inside them were not taken out, once
             # the run is over too (`hato problems` carries it now)
             inside = gui_run.not_taken_line(not_yet)
-            detail = Flowing(u"— %s%s%s" % (names, u" · %s" % when if when else u"",
-                                            u". %s." % inside if inside else u""), strip)
+            # ⭐ LAYER 19 (19e) -- an episode with a subtitle hato made from its audio says so: it
+            # still waits for a real one (17e), and the list never calls the made one *found*
+            heard, unheard = self._made_from_audio(not_yet)
+            detail = Flowing(u"— %s%s%s%s" % (names, u" · %s" % when if when else u"",
+                                              u" · %d made from audio" % len(heard) if heard else u"",
+                                              u". %s." % inside if inside else u""), strip)
             # ⭐ AND THE MANUAL CHOICE, ONE CLICK AWAY -- `05-interface.md`'s
             # *"unless prompted is a Retry on one row"*, which was never built.
             again = button(u"Look again now", strip)
@@ -3749,6 +3753,9 @@ class HatoWindow(Styled):
                    u"\n\nhato is not in the tray, so nothing asks again on its "
                    u"own — the next run does, or Look again now."), strip)
             _strip_row(box, lead, detail, again, dot)
+            offer = self._offer_from_audio(unheard, strip)
+            if offer is not None:
+                box.insertWidget(box.indexOf(again) + 1, offer, 0, Qt.AlignmentFlag.AlignTop)
             column.addWidget(strip)
 
         broken = [r for r in problems if gui_run.problem_kind(r) == gui_run.TROUBLE]
@@ -4950,6 +4957,43 @@ class HatoWindow(Styled):
         if state.speech_said and not busy:
             body.addWidget(label(state.speech_said, u"hint", card))
         return card
+
+    def _made_from_audio(self, rows):
+        u"""⭐ LAYER 19 -- (rows with a `.from-audio.srt` there -- beside the video or in hato's own folder --,
+        rows without). Two `stat`s a row; ⛔ never raises."""
+        heard, unheard = [], []
+        try:
+            from hato import speech
+        except Exception:                         # noqa: BLE001
+            return [], list(rows)
+        for row in rows:
+            video = row.get(u"video") or u""
+            try:
+                made = bool(video) and any(speech.made_for(video, beside).exists() for beside in (True, False))
+            except Exception:                     # noqa: BLE001
+                made = False
+            (heard if made else unheard).append(row)
+        return heard, unheard
+
+    def _offer_from_audio(self, rows, parent):
+        u"""⭐ 19h -- *Make from audio* for the waiting episodes that have no made file, ⛔ only when the add-on and
+        the picked model are installed, nothing is being made, and no Surasura is there (19g: Surasura makes these
+        through Anki Miner). -> the button, or None."""
+        if not rows or self.state.speech_busy is not None:
+            return None
+        found = self._speech_found()
+        model = self.state.speech_pick or found.get(u"picked")
+        if found.get(u"surasura") or not (found.get(u"addon") or {}).get(u"installed") or not (
+                (found.get(u"models") or {}).get(model) or {}).get(u"installed"):
+            return None
+        make_it = button(u"Make from audio", parent)
+        make_it.setToolTip(wrap(u"Makes their Japanese subtitles from each video's own audio, on this computer, "
+                                u"as <video>.ja.from-audio.srt. hato keeps looking for real ones."))
+        videos = [r.get(u"video") for r in rows if r.get(u"video")]
+        make_it.clicked.connect(lambda _c=False, vs=videos: self.start_speech_make(vs))
+        self._not_while_running(make_it)
+        kept(make_it, u"speech.make_waiting")
+        return make_it
 
     def _speech_pick(self, model):
         u"""A radio: the pick, written by `hato speech pick` (one writer of `choice.json`). Nothing downloads."""

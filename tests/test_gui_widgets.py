@@ -8073,3 +8073,48 @@ def test_progress_says_the_download_in_sizes_and_the_file_being_listened_to(qapp
     window._speech_progress({u"type": u"progress", u"stage": u"listening", u"done": 45, u"total": 90,
                              u"path": u"D:/Anime/Show - 01.mkv"})
     assert window.state.speech_said == u"Listening to Show - 01.mkv… 50 %"
+
+
+def _not_yet_strip(window):
+    for widget in window.panes[gui_app.TAB_PICK].findChildren(QLabel):
+        if u"not on jimaku yet" in widget.text():
+            return widget.parentWidget()
+    return None
+
+
+def test_a_waiting_episode_with_a_made_subtitle_says_made_from_audio_and_still_waits(qapp, monkeypatch, tmp_path):
+    u"""19e -- the made file is never *found*: the episode stays in *not on jimaku yet* (hato keeps looking, 17e)
+    and the strip counts it as made from audio."""
+    from hato import speech
+    window = make(running=False)
+    waiting = [r for r in window.state.problems()
+               if gui_run.problem_kind(r) == gui_run.WAITING and not gui_run.is_format_wait(r)
+               and not gui_run.untimed_wait_of(r) and not r.get(u"waiting_by_choice")]
+    assert waiting, u"the fixture has episodes not on jimaku yet"
+    made = tmp_path / ("x" + speech.SUFFIX)
+    made.write_text(u"1\n00:00:01,000 --> 00:00:02,000\nあ\n", encoding="utf-8")
+    first = waiting[0][u"video"]
+    monkeypatch.setattr(speech, "made_for", lambda video, beside=True: made if video == first else
+                        tmp_path / "none.srt")
+    window.state.speech = _speech_found()
+    window.show_tab(gui_app.TAB_PICK)
+    strip = _not_yet_strip(window)
+    words = u" ".join(w.text() for w in strip.findChildren(QLabel))
+    assert u"1 made from audio" in words, words
+
+
+def test_make_from_audio_is_offered_on_the_waiting_strip_only_when_installed_and_no_surasura(qapp, monkeypatch):
+    for found, offered in ((dict(), False), (dict(fast=True, addon=True), True),
+                           (dict(fast=True, addon=True, surasura=True), False)):
+        window = make(running=False)
+        window.state.speech = _speech_found(**found)
+        reads = []
+        window._read = lambda argv, done, each=None: reads.append(argv)
+        window.show_tab(gui_app.TAB_PICK)
+        buttons = [b for b in _not_yet_strip(window).findChildren(QPushButton)
+                   if b.property(gui_app.KEEP) == u"speech.make_waiting"]
+        assert bool(buttons) is offered, found
+        if buttons:
+            buttons[0].click()
+            argv, = reads
+            assert argv[len(gui_run.cli_argv()):len(gui_run.cli_argv()) + 2] == [u"speech", u"make"]
