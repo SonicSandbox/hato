@@ -6370,6 +6370,10 @@ class HatoWindow(Styled):
         back.
         """
         value = (value or u"").strip()
+        #: ⭐ WHY a save failed, for the card -- the child's own sentence, never
+        #: just *"could not be saved"* (a tester, 2026-11-11, regenerated a good
+        #: key because the window said nothing more). ⛔ Never the key itself.
+        self.key_save_error = u""
         if not value:
             return False
         process = self.spawn(
@@ -6388,20 +6392,47 @@ class HatoWindow(Styled):
         # child at all -- those checks assert argv, not the write.
         if process is not None:
             try:
-                process.communicate(timeout=timeout)
-            except Exception:                 # noqa: BLE001
+                out, err = process.communicate(timeout=timeout)
+            except Exception as exc:          # noqa: BLE001
                 try:
                     process.kill()
                 except Exception:             # noqa: BLE001
                     pass
+                self.key_save_error = self._without_key(
+                    u"hato did not finish saving it (%s: %s). Try again; "
+                    u"`hato key --set-from -` in a terminal says why"
+                    % (type(exc).__name__, exc), value)
                 return False
-            if getattr(process, "returncode", 0):
+            code = getattr(process, "returncode", 0)
+            if code:
+                said = gui_run.parse_answer(out).get(u"error")
+                if not said:
+                    if isinstance(err, bytes):
+                        err = err.decode("utf-8", "replace")
+                    tail = [ln.strip() for ln in (err or u"").splitlines()
+                            if ln.strip()]
+                    said = tail[-1] if tail else (
+                        u"hato stopped (exit %s) without saying why" % code)
+                self.key_save_error = self._without_key(said, value)
                 return False
         # ⚠ Only the LAST FOUR, and only what hato itself would print. The
         # window never holds the key. ⭐ And only once the write has SUCCEEDED.
         self.state.key_hint = u"…" + value[-4:] if len(value) >= 4 else u""
         self.render()
         return True
+
+    @staticmethod
+    def _without_key(text, value):
+        u"""⛔ A reason for the card, with the key taken out should any road
+        ever echo it -- the CLI's sentences never do, a traceback might."""
+        text = u"%s" % (text or u"")
+        if value:
+            text = text.replace(value, u"…" + value[-4:] if len(value) > 4 else u"…")
+        # ⚠ The card says it through `safe`, which swaps a whole sentence holding
+        # the engine's word for *"jimaku did not accept that key"* -- wrong for a
+        # write hato itself declined (`Refusing to write the key to …`).
+        return safe(text, u"hato would not write the key there — "
+                          u"`hato key --set-from -` in a terminal says why")
 
     # -- the three controls that ask the person for something --------------
     #
@@ -6489,7 +6520,9 @@ class HatoWindow(Styled):
             # about whatever was there before. On the swap path that is the
             # OLD, still-valid key, and the window would report *"Connected"*
             # about a key that never landed. (F-B05.)
-            self.state.key_status = u"the key could not be saved"
+            why = getattr(self, u"key_save_error", u"")
+            self.state.key_status = (u"the key could not be saved — %s" % why
+                                     if why else u"the key could not be saved")
             self.state.key_ok = False
             self.render()
             return False
@@ -7673,9 +7706,20 @@ class HatoWindow(Styled):
         if stdin_text is not None:
             try:
                 process.stdin.write(stdin_text.encode("utf-8"))
-                process.stdin.close()
             except (OSError, ValueError):
                 pass                       # the child is gone; its exit says so
+            finally:
+                try:
+                    process.stdin.close()
+                except (OSError, ValueError):
+                    pass
+            # 🚨 AND THE PIPE IS LET GO OF. On macOS and Linux `communicate()`
+            # FLUSHES `stdin` first, and a closed one raises *"flush of closed
+            # file"* -- so `set_key` killed the child before it read the key, and
+            # every Mac said *"the key could not be saved"* (a tester,
+            # 2026-11-11). Windows' `communicate` never flushes, which is why no
+            # Windows run ever showed it.
+            process.stdin = None
         return process
 
 

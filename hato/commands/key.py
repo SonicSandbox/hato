@@ -83,6 +83,15 @@ def _set_from(args):
         else:
             key, written = credentials.save_key_from(args.set_from)
     except (credentials.KeyMissing, paths.PathError, OSError) as exc:
+        if isinstance(exc, OSError):
+            # ⭐ WHAT FAILED AND WHAT TO DO, not a bare errno: the folder is the
+            # thing to fix, and HATO_CACHE / HATO_JIMAKU_KEY are the ways round it.
+            # ⚠ "read or written": `--set-from FILE` reads the person's own file
+            # first, and the errno's path says which of the two it was.
+            exc = (u"a file could not be read or written (%s). Make sure that "
+                   u"folder is yours and not read-only -- or set HATO_CACHE to a "
+                   u"folder you own, or HATO_JIMAKU_KEY to the key -- and try "
+                   u"again." % exc)
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
         else:

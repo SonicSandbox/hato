@@ -2,14 +2,14 @@
  "//": "hato's version stamp. The RELEASE NUMBER is a decision, declared with `python -m hato.dev stamp --release X.Y.Z`; the CONTENT HASH is what `stamp --check` proves has not drifted since. ⛔ Never hand-edit either -- re-run the stamper (doctrine/release §2).",
  "//stamped_at": "provenance only -- ⛔ NOT part of content_hash. A timestamp in the hash would churn on every build in an auto-committing repo (doctrine/release §2).",
  "algorithm": "sha256 over '<posix path> <sha256 of content>\\n' per file, sorted by path, utf-8. Per-file content is the file's bytes with CRLF normalised to LF unless it holds a NUL, so the hash survives git's line-ending rewrite and means the same thing on every platform.",
- "content_hash": "sha256:250ecb8417402d069d73ae1cb875e1fb567544b7bfe5fd0cb9a1449fe4ab461c",
+ "content_hash": "sha256:c66aedf0040934a1767377f2ac93bd80de089035c100e0955c1128495f3b0326",
  "file_count": 88,
  "files": {
   "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
-  "README.md": "e3db61e06176677b47215ba5e45e49ea3c74aca01aae828f9ca1db9f705a61d9",
+  "README.md": "03cb9bb97584f61e6ccd5f7382f7c6aff5e0ab2234fa4d4654cb14898478865a",
   "THIRD_PARTY_LICENSES.md": "0f49aed62470befb62ef3b492a05675fb6fb56236de347bcb336d4d1bf57a80c",
   "hato-run.cmd": "914c9b0242de37c2f25d28b3fa2d3fc6e5d140a2d4d8bfc22ff52807232612c1",
-  "hato/__init__.py": "2e7d2af45e7a0c38006b0e75ac36ed656405db68890afc9851468e318db7411d",
+  "hato/__init__.py": "0625df3b0174d2a7b3e298ac2852a34dc6f2daa0a3c988843552c21751d550b4",
   "hato/__main__.py": "d17604bdbbd0b30116a19ee0cead4e0d755e600681bf6cee610adb92755764fb",
   "hato/api.py": "7c3c9c1329dbe28c96de61c4cb4621ed390bfdb89ae35ec780b8e4109059b970",
   "hato/archives.py": "a64c7903575ae8a234df101dc8cbe3d3ce18e007216b69fc4c53851930d2dc34",
@@ -25,7 +25,7 @@
   "hato/commands/extract.py": "7bef1085aaba549f5e9c9d7b585220c0d1c12a3b0dcbca47594540d84a0f659a",
   "hato/commands/files.py": "a8c1a0ce822636ea4352e7e22c200dbd3765c4d37d6b688e5a0eed4f58aeece5",
   "hato/commands/identify.py": "19ef9a3823d33881fb49379c38af0faa11b7ecc552645e59c4dc3edd511219ae",
-  "hato/commands/key.py": "dd0321256d8971cf5a331b0fab88b1e40b820f61c9b264fb5f6edcef05533cfa",
+  "hato/commands/key.py": "70f3fbfce0706d4a38c62eb1215c6298078f585199330bd77057a1238b12b105",
   "hato/commands/pairings.py": "5829aa5f576e1df24c2d32af073e4fc8eabe71065020fbaff8cb6a93b70d7122",
   "hato/commands/problems.py": "74b84037779f128a465375d302ea0986f8de53357009636ba70b3cdbb1e683a9",
   "hato/commands/rank.py": "dd0e273dc84e585e05a4503f34bc0b6a183551a0926aacec55919d629b6ac43f",
@@ -35,7 +35,7 @@
   "hato/commands/update.py": "4c43c9c302e7c7bec17cdc357671c7d9688294813e3371ddaf2ec9d186b2ef3c",
   "hato/config.py": "9f601cbf8700547aa97e43d3d114cbf1f9e784deb60b9fce4aa6121b11196d2f",
   "hato/connect.py": "228da32831efa212f78246779c9465200ebbb32069c2cbf433920de0a897206f",
-  "hato/credentials.py": "fe053907a288a5221e101be5a0102581ecb9d0355eef9dd0c6ada5de06cad44c",
+  "hato/credentials.py": "0dbcb485b7b994643fee896b4d8110ab7a96d8b0dc0cd3bbf0da288e0e5284e2",
   "hato/data/anime-relations.txt": "6f0b4dcf88d731b397f7dd26edb6bed5237c993f88410e57f01ff877f1c1ed05",
   "hato/data/hato-128.png": "9f182807a6835a5256aa41c4dbd8a101bf1deb519290cdf40f82c9849a950787",
   "hato/data/hato-16.png": "8d04d96e01f69f5530d972adf0106123316ab128f98f0e799324c9edaa6de4f7",
@@ -62,7 +62,7 @@
   "hato/formats.py": "06e5ab89ae87bc1d9eb48e038b1ef420c9846a679b6d6c4bbeaf4c1860bf3790",
   "hato/gui/__init__.py": "7fcf5266e29cd868862b7d04061f9b9a6f9807b032a027f21de023ff5d989026",
   "hato/gui/__main__.py": "244d973f071e97989e53588a335514a2df3db946bf49294f3bb0752c449cc156",
-  "hato/gui/app.py": "0cb869e5b6e2df3b8272a3d6ac856d5a1c580599e3e243f09cbee54e0f9c99e3",
+  "hato/gui/app.py": "3924fcda895e1e93fea8a88ffdc6d8f74937cc08edb138ee47915f114aac33a4",
   "hato/gui/branding.py": "edacabefa623533743b9bec3a72d5142d550058dae3137eca0b12bfb9b5a3020",
   "hato/gui/run.py": "bab1aa80bce001b3a7d8e202dc9d45a8b10f9d624b502cee85e0573c7547715c",
   "hato/gui/theme.py": "b6f84e88db7144f2488d48bfc2baa61302bc81c840ce83cd086648146ece9914",
@@ -94,6 +94,6 @@
   "hato/watch.py": "7c3a7dca9ed3714961615e11827e3b06996413e6c48314906a3e63834a8f5f51",
   "pyproject.toml": "09de59b076362fb689171182b0566dc05d3f109f31aac5e2d4edbd92af1f68d9"
  },
- "release": "1.2.0",
- "stamped_at": "2026-11-10T19:50:33+00:00"
+ "release": "1.2.1",
+ "stamped_at": "2026-11-11T16:59:13+00:00"
 }

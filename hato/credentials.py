@@ -79,14 +79,36 @@ def read_key_file(path):
 
     ⛔ Every message names the path and nothing else -- a refusal that echoed the
     line back would put the key in a terminal, a log and a bug report at once.
+
+    🚨 RICH TEXT IS REFUSED BY NAME (a Mac tester, 2026-11-11: *"text edit was
+    exporting the file with the key as the wrong format"*). TextEdit saves RTF by
+    default, and an RTF file's LAST line is `\\f0\\fs24 \\cf0 <key>}` -- this used to
+    be saved as the key and reported *"saved"*, and only jimaku's refusal said
+    anything was wrong. ⭐ And the last line goes through the same space check a
+    pasted key does, so no other formatted file can slip a label in with it.
     """
     try:
+        with open(str(path), "rb") as fh:
+            raw = fh.read()
+    except OSError as exc:
+        raise KeyMissing("The key file %s could not be read: %s" % (path, exc))
+    if raw.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"{\\rtf"):
+        raise KeyMissing(
+            u"%s isn't plain text (TextEdit saves rich text by default). In "
+            u"TextEdit choose Format › Make Plain Text, save, and try again "
+            u"— or paste the key instead." % path)
+    try:
+        if b"\x00" in raw:
+            raise UnicodeError("a NUL byte")
         # utf-8-sig: a key file saved by Notepad carries a BOM, and it must
         # not become part of anything.
-        with open(str(path), encoding="utf-8-sig") as fh:
-            lines = [ln.strip() for ln in fh.read().splitlines() if ln.strip()]
-    except (OSError, UnicodeDecodeError) as exc:
-        raise KeyMissing("The key file %s could not be read: %s" % (path, exc))
+        text = raw.decode("utf-8-sig")
+    except UnicodeError:
+        raise KeyMissing(
+            u"%s isn't plain text (it is not UTF-8, or it is a word-processor "
+            u"file). Save it as plain text (UTF-8) and try again — or paste "
+            u"the key instead." % path)
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if not lines:
         raise KeyMissing("The key file %s is empty. The key goes on its last "
                          "line." % path)
@@ -95,6 +117,10 @@ def read_key_file(path):
         raise KeyMissing(
             "The last line of %s looks like a comment, not a key. The key goes "
             "on the LAST line; documentation goes above it." % path)
+    if any(ch.isspace() for ch in value):
+        raise KeyMissing(
+            "The last line of %s has a space in it, so it is not the key alone. "
+            "The key goes on the LAST line by itself; notes go above it." % path)
     return value
 
 

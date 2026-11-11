@@ -121,6 +121,10 @@ From the command line:
 python -m hato key --set-from /path/to/a/file-with-the-key
 ```
 
+The file must be **plain text**. On a Mac, TextEdit saves rich text by default —
+choose **Format → Make Plain Text** before saving, or skip the file and paste the
+key straight in: `pbpaste | python -m hato key --set-from -`.
+
 From the Windows download, the command line is `hato-cli.exe` — so
 `hato-cli.exe key --set-from …`. (`hato.exe` is the **window**.)
 
