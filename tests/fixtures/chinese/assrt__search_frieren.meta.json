@@ -1,0 +1,14 @@
+{
+ "body_kept": true,
+ "bytes": 1881,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "GET",
+ "note": "",
+ "provenance": "SHAPED from the service's documented/recorded answer (see make_fixtures.py) -- no real key was available; re-capture with one.",
+ "response_headers": {
+  "content-type": "application/json; charset=utf-8"
+ },
+ "sha256": "b5ae52b70b62674df803333367660c9ca8335eec4e9b68ccc7be9a59f4506d0e",
+ "status": 200,
+ "url": "https://api.assrt.net/v1/sub/search?q=Sousou+no+Frieren&cnt=15&pos=0&filelist=1"
+}

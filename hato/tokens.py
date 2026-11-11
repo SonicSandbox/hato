@@ -130,6 +130,43 @@ def language_class(name):
     return "unknown"
 
 
+#: ⭐ LAYER 20 -- a CHINESE run's classes (`chinese_class`), best first in
+#: `rank.LANGUAGE_ORDER_ZH`. ⚠ Tokens are split on `-`, so OpenSubtitles' `zh-cn` arrives
+#: as `zh` + `cn`, `zh-tw` as `zh` + `tw`. Hanzi tags are read by the character they hold:
+#: 简/簡 simplified, 繁 traditional, 英/日 a second language (`简英`, `繁日`, `简繁日`).
+_ZH_SIMPLIFIED = frozenset(u"chs sc gb chn cn hans simplified".split())
+_ZH_TRADITIONAL = frozenset(u"cht tc big5 tw hk hant traditional".split())
+_ZH_ANY = frozenset(u"zh zho chi chinese".split())
+CHINESE_CLASSES = ("simplified", "traditional", "chinese", "unknown", "multi", "non-zh")
+
+
+def chinese_class(name):
+    u"""A subtitle name's language, for a CHINESE run. -> one of CHINESE_CLASSES
+
+    `multi` is Chinese with a second language (`[CHS, JPN]`, `简英`, `jpsc`) or both
+    scripts in one file (`简繁`); `non-zh` names another language and no Chinese."""
+    tokens = _language_tokens(name)
+    hanzi = u"".join(t for t in tokens if not t.isascii())
+    simplified = bool(tokens & _ZH_SIMPLIFIED) or u"简" in hanzi or u"簡" in hanzi
+    traditional = bool(tokens & _ZH_TRADITIONAL) or u"繁" in hanzi
+    both = bool(_BOTH & tokens)
+    chinese = (simplified or traditional or both or bool(tokens & _ZH_ANY)
+               or u"中文" in hanzi or u"中字" in hanzi)
+    other = (both or bool(tokens & _JA) or bool(tokens & _OTHER)
+             or u"英" in hanzi or u"日" in hanzi)
+    if chinese and (other or (simplified and traditional)):
+        return "multi"
+    if simplified:
+        return "simplified"
+    if traditional:
+        return "traditional"
+    if chinese:
+        return "chinese"
+    if other:
+        return "non-zh"
+    return "unknown"
+
+
 # ---------------------------------------------------------------------------
 # is_ai
 # ---------------------------------------------------------------------------

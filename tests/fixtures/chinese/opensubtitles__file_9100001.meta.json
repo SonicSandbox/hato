@@ -1,0 +1,14 @@
+{
+ "body_kept": true,
+ "bytes": 67,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "GET",
+ "note": "",
+ "provenance": "SHAPED from the service's documented/recorded answer (see make_fixtures.py) -- no real key was available; re-capture with one.",
+ "response_headers": {
+  "content-type": "application/x-subrip"
+ },
+ "sha256": "b8499de90c193fb04d23925f342e7d2f3d32ee7d5ff27445c821379e3a148471",
+ "status": 200,
+ "url": "https://www.opensubtitles.com/download/4242795DECBF5B771DD91AA50A759100001/subfile/bocchi-1.srt"
+}

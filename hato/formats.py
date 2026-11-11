@@ -121,17 +121,21 @@ def kinds_words(kinds):
 #: *"only as .vtt"* for an episode also offered as `.srt` was never ended by
 #: choosing `.srt`, and the window offered *"Download .vtt instead"* to the
 #: person who had just chosen it (ADVERSARY 2026-09-23, 9a #4).
-_ONLY_AS = u"only as %s on jimaku"
-_ONLY_AS_RE = re.compile(r"^only as (\.[a-z0-9]+(?:(?:, | or )\.[a-z0-9]+)*) on jimaku\b")
+_ONLY_AS = u"only as %s on %s"
+#: ⭐ LAYER 20 -- a Chinese run's waits name its two sources (`chinese.WHERE`); a reason
+#: written by any older hato still reads (`on jimaku`).
+_ONLY_AS_RE = re.compile(r"^only as (\.[a-z0-9]+(?:(?:, | or )\.[a-z0-9]+)*) on "
+                         r"(?:jimaku|assrt\.net or OpenSubtitles)\b")
 
 
-def waiting_reason(kinds, prefer, count):
+def waiting_reason(kinds, prefer, count, where=u"jimaku"):
     u"""Why an episode waits although jimaku has it. -> text
 
     `kinds` every format jimaku has it in; `count` how many files that is.
+    `where` -- ⭐ LAYER 20: the source that has it, as the run names it.
     """
     return (u"%s -- you prefer .%s, and \"%s\" is off in Settings (%d file%s)"
-            % (_ONLY_AS % kinds_words(kinds), prefer, fallback_words(prefer), count,
+            % (_ONLY_AS % (kinds_words(kinds), where), prefer, fallback_words(prefer), count,
                u"" if count == 1 else u"s"))
 
 

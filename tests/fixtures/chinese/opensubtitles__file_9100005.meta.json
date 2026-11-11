@@ -1,0 +1,14 @@
+{
+ "body_kept": true,
+ "bytes": 67,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "GET",
+ "note": "",
+ "provenance": "SHAPED from the service's documented/recorded answer (see make_fixtures.py) -- no real key was available; re-capture with one.",
+ "response_headers": {
+  "content-type": "application/x-subrip"
+ },
+ "sha256": "a21018958d1576606d202825a878a72773f8df159ea1b8793825da2f1b7762b8",
+ "status": 200,
+ "url": "https://www.opensubtitles.com/download/4242795DECBF5B771DD91AA50A759100005/subfile/bocchi-3.srt"
+}

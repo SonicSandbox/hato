@@ -1,0 +1,14 @@
+{
+ "body_kept": true,
+ "bytes": 63,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "GET",
+ "note": "",
+ "provenance": "SHAPED from the service's documented/recorded answer (see make_fixtures.py) -- no real key was available; re-capture with one.",
+ "response_headers": {
+  "content-type": "application/octet-stream"
+ },
+ "sha256": "7dd6a13873d2ace740772de73464b180d1d5fe29ab9bc3a9de569aa721a94582",
+ "status": 200,
+ "url": "http://file0.assrt.net/download/700002/Sousou.no.Frieren.S01E03.1080p.WEB-DL.srt?_=1794000000&-=af6b&api=1"
+}

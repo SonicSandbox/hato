@@ -53,7 +53,7 @@ THE KEY, each part compared only when every part above it is equal:
 """
 import functools
 
-from hato import formats, tokens
+from hato import config, formats, tokens
 from hato.episodes import QUALITIES
 
 #: The order with `.ass` preferred -- 1.0.2's, and `rank()`'s default.
@@ -62,6 +62,11 @@ FORMAT_ORDER = formats.order(formats.DEFAULT_PREFERENCE)
 #: at all (NanakoRaws, shincaps -- broadcast captions), and on jimaku an untagged
 #: file is far likelier Japanese-only than one tagged with a second language.
 LANGUAGE_ORDER = ("single-ja", "unknown", "multi")
+#: ⭐ LAYER 20 -- a CHINESE run's order (`tokens.chinese_class`): ⭐ SIMPLIFIED FIRST, so a
+#: season pack holding `.chs` and `.cht` gives every episode in one script (by size alone
+#: the two would alternate), then traditional, then a Chinese file naming no script, then
+#: untagged, then Chinese with a second language or script. `non-zh` is filtered out.
+LANGUAGE_ORDER_ZH = ("simplified", "traditional", "chinese", "unknown", "multi")
 
 #: 🚨 ONE NAME PER KEY PART, IN KEY ORDER. `_why` finds the first part where two
 #: candidates differ BY POSITION, so a key element added without a name here does
@@ -74,6 +79,9 @@ _KEY_PARTS = ("known", "format", "favourite", "language", "fit", "coverage", "ag
 
 _LANGUAGE_WORDS = {"single-ja": u"Japanese-only", "unknown": u"untagged",
                    "multi": u"Japanese + another", "non-ja": u"not Japanese"}
+_LANGUAGE_WORDS_ZH = {"simplified": u"simplified Chinese", "traditional": u"traditional Chinese",
+                      "chinese": u"Chinese", "unknown": u"untagged",
+                      "multi": u"Chinese + another", "non-zh": u"not Chinese"}
 _FIT_WORDS = {"range": u"whole-range", "overlap": u"partial", "literal": u"literal-number",
               "guess": u"unbroken-tie guess", "position": u"by-position guess",
               "movie": u"movie"}
@@ -103,18 +111,21 @@ class Ranking(object):
     """`ordered` best first; `excluded` [(Candidate, reason)] in input order;
     `other_format` the excluded ones whose only fault was their FORMAT (9a)."""
 
-    __slots__ = ("ordered", "excluded", "other_format")
+    __slots__ = ("ordered", "excluded", "other_format", "chinese")
 
-    def __init__(self):
+    def __init__(self, chinese=False):
         self.ordered = []
         self.excluded = []
         self.other_format = []
+        self.chinese = chinese          # ⭐ LAYER 20 -- which language classes it ranked by
 
 
 @functools.lru_cache(maxsize=8192)
-def _facts(name):
-    """Every token fact ranking needs, computed once per distinct name (Rule 4)."""
-    return (tokens.subtitle_format(name), tokens.language_class(name),
+def _facts(name, chinese=False):
+    """Every token fact ranking needs, computed once per distinct name (Rule 4).
+    ⭐ LAYER 20 -- `chinese`: the language class is a Chinese run's."""
+    return (tokens.subtitle_format(name),
+            tokens.chinese_class(name) if chinese else tokens.language_class(name),
             tokens.version(name), tokens.is_ai(name))
 
 
@@ -131,15 +142,15 @@ def _format_rank(fmt, order=FORMAT_ORDER):
     return (len(order), fmt or u"")
 
 
-def _language_rank(language):
+def _language_rank(language, order=LANGUAGE_ORDER):
     """⚠ A class outside the order sorts after it rather than raising: the filter
     above is what keeps `non-ja` out, and it must be the ONLY thing that does --
     a crash here would hide a missing filter behind a traceback."""
-    return LANGUAGE_ORDER.index(language) if language in LANGUAGE_ORDER else len(LANGUAGE_ORDER)
+    return order.index(language) if language in order else len(order)
 
 
 def rank(candidates, *, allow_ai=False, seen_groups=frozenset(),
-         prefer=formats.DEFAULT_PREFERENCE, fallback=True, favourites=()):
+         prefer=formats.DEFAULT_PREFERENCE, fallback=True, favourites=(), lang=u"ja"):
     """-> Ranking. `candidates`: hato.episodes.Candidate for ONE video.
 
     `prefer` / `fallback` -- the person's format settings (9a). ⚠ The defaults
@@ -147,15 +158,18 @@ def rank(candidates, *, allow_ai=False, seen_groups=frozenset(),
     passes `config.toml`'s, whose fallback default is OFF.
     `favourites` -- release group names, first tried first (16k). ⚠ Empty here
     (1.0.9's order); the RUN passes `config.toml`'s, whose default is NanakoRaws.
+    `lang` -- ⭐ LAYER 20: a CHINESE run ranks by Chinese classes and drops `non-zh`.
     """
-    ranking = Ranking()
+    chinese = config.is_chinese(lang)
+    ranking = Ranking(chinese)
+    languages = LANGUAGE_ORDER_ZH if chinese else LANGUAGE_ORDER
     seen_names = set()
     kept = []
     order = formats.order(prefer)
     places = _favourite_places(favourites)
     for cand in candidates:
         name = cand.file["name"]
-        fmt, language, version, ai = _facts(name)
+        fmt, language, version, ai = _facts(name, chinese)
         if ai and not allow_ai:
             ranking.excluded.append((cand, u"AI-generated -- the name carries a machine-transcription "
                                            u"marker. Whisper output has plausible timing and hallucinated "
@@ -165,6 +179,10 @@ def rank(candidates, *, allow_ai=False, seen_groups=frozenset(),
             ranking.excluded.append((cand, u"Tagged with another language and no Japanese -- timing cannot "
                                            u"tell a Chinese subtitle from a Japanese one, so it is never "
                                            u"tried."))
+            continue
+        if language == "non-zh":
+            ranking.excluded.append((cand, u"Tagged with another language and no Chinese -- a "
+                                           u"Chinese run never tries it."))
             continue
         if name in seen_names:
             ranking.excluded.append((cand, u"A duplicate: the same file is already a candidate."))
@@ -192,7 +210,7 @@ def rank(candidates, *, allow_ai=False, seen_groups=frozenset(),
                _format_rank(fmt, order),
                # ⭐ 16k -- a favourite group's file, after the format, before the language
                places.get(_group_key(name), len(places)),
-               _language_rank(language),
+               _language_rank(language, languages),
                QUALITIES.index(cand.quality),
                # ⚠ Coverage says how clean a PARTIAL fit is. ⛔ NOT for a `range`
                # fit: one covers the whole folder by definition, and its coverage is
@@ -216,13 +234,15 @@ def rank(candidates, *, allow_ai=False, seen_groups=frozenset(),
         kept.append(Ranked(cand, key))
     kept.sort(key=lambda r: r.key)
     for i, r in enumerate(kept):
-        fmt, language, version, ai = _facts(r.candidate.file["name"])
+        fmt, language, version, ai = _facts(r.candidate.file["name"], chinese)
         if ai:
             r.reasons.append(u"AI-generated, and allowed by --allow-ai.")
         if i > 0:
-            r.reasons.append(u"Below #%d: %s" % (i, _why(kept[i - 1], r, prefer, len(places))))
+            r.reasons.append(u"Below #%d: %s" % (i, _why(kept[i - 1], r, prefer, len(places),
+                                                         chinese)))
         if i + 1 < len(kept):
-            r.reasons.append(u"Above #%d: %s" % (i + 2, _why(r, kept[i + 1], prefer, len(places))))
+            r.reasons.append(u"Above #%d: %s" % (i + 2, _why(r, kept[i + 1], prefer, len(places),
+                                                             chinese)))
         if len(kept) == 1:
             r.reasons.append(u"The only candidate.")
     ranking.ordered = kept
@@ -246,12 +266,13 @@ def _favourite_places(favourites):
     return places
 
 
-def _why(upper, lower, prefer=formats.DEFAULT_PREFERENCE, favourites=0):
+def _why(upper, lower, prefer=formats.DEFAULT_PREFERENCE, favourites=0, chinese=False):
     """The sentence for the FIRST key part where `upper` beats `lower`."""
     part = next((i for i, (a, b) in enumerate(zip(upper.key, lower.key)) if a != b), len(_KEY_PARTS) - 1)
     uc, lc = upper.candidate, lower.candidate
-    ufmt, ulang, uver, _ = _facts(uc.file["name"])
-    lfmt, llang, lver, _ = _facts(lc.file["name"])
+    ufmt, ulang, uver, _ = _facts(uc.file["name"], chinese)
+    lfmt, llang, lver, _ = _facts(lc.file["name"], chinese)
+    words = _LANGUAGE_WORDS_ZH if chinese else _LANGUAGE_WORDS
     what = _KEY_PARTS[part]
     if what == "known":
         return (u"its number is known, not guessed -- a file whose own numbering places it "
@@ -272,7 +293,7 @@ def _why(upper, lower, prefer=formats.DEFAULT_PREFERENCE, favourites=0):
         return u"[%s] comes before [%s] in your favourite groups." % (
             mine, untimed.provider_shown(lc.file["name"]))
     if what == "language":
-        return u"%s is tried before %s, within .%s." % (_LANGUAGE_WORDS[ulang], _LANGUAGE_WORDS[llang], ufmt)
+        return u"%s is tried before %s, within .%s." % (words[ulang], words[llang], ufmt)
     if what == "fit":
         return u"a %s fit is tried before a %s fit." % (_FIT_WORDS[uc.quality], _FIT_WORDS[lc.quality])
     if what == "coverage":
@@ -285,7 +306,7 @@ def _why(upper, lower, prefer=formats.DEFAULT_PREFERENCE, favourites=0):
         return u"release version %d is tried before version %d." % (uver, lver)
     if what == "size":
         return (u"bigger (%s B against %s B) -- size is only ever compared between .%s %s files."
-                % (_bytes(uc), _bytes(lc), ufmt, _LANGUAGE_WORDS[ulang]))
+                % (_bytes(uc), _bytes(lc), ufmt, words[ulang]))
     if what == "seen":
         return u"its release (%s) has already succeeded for this show." % uc.group
     return u"nothing else separates them, so the name decides and the order is stable."
@@ -316,10 +337,12 @@ def explain(ranking):
     out = [u"%d candidate%s ranked · %d excluded" % (
         len(ranking.ordered), u"" if len(ranking.ordered) == 1 else u"s", len(ranking.excluded))]
     rows = [(u"#", u"format", u"language", u"fit", u"v", u"size B", u"release", u"file")]
+    chinese = getattr(ranking, "chinese", False)
+    words = _LANGUAGE_WORDS_ZH if chinese else _LANGUAGE_WORDS
     for i, r in enumerate(ranking.ordered):
         c = r.candidate
-        fmt, language, version, _ai = _facts(c.file["name"])
-        rows.append((u"%d" % (i + 1), u".%s" % fmt if fmt else u"(none)", _LANGUAGE_WORDS[language],
+        fmt, language, version, _ai = _facts(c.file["name"], chinese)
+        rows.append((u"%d" % (i + 1), u".%s" % fmt if fmt else u"(none)", words[language],
                      u"%s %d%%" % (c.quality, round(c.coverage * 100)), u"%d" % version, _bytes(c),
                      c.group, c.file["name"]))
     widths = [max(len(row[k]) for row in rows) for k in range(7)]

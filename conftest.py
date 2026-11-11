@@ -77,6 +77,10 @@ else:
     if not LIVE:
         os.environ.pop("HATO_JIMAKU_KEY", None)
         os.environ["HATO_KEYFILE"] = str(TEST_ROOT / "no-such-key.txt")
+        # ⭐ LAYER 20 -- nor a Chinese source's: theirs live only in HATO_CACHE (a temp
+        # folder here) or these two, never HATO_KEYFILE
+        os.environ.pop("HATO_ASSRT_KEY", None)
+        os.environ.pop("HATO_OPENSUBTITLES_KEY", None)
 
 
 # ⛔ D2: and no check touches Task Scheduler -- the developer's own daily run is

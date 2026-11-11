@@ -1,0 +1,14 @@
+{
+ "body_kept": true,
+ "bytes": 1473,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "GET",
+ "note": "",
+ "provenance": "SHAPED from the service's documented/recorded answer (see make_fixtures.py) -- no real key was available; re-capture with one.",
+ "response_headers": {
+  "content-type": "application/json; charset=utf-8"
+ },
+ "sha256": "82e604ddba6f56cea55b17ff571e110288179564a9b8140ef3985e9cccaa837f",
+ "status": 200,
+ "url": "https://api.assrt.net/v1/sub/detail?id=700001"
+}

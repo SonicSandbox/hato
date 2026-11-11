@@ -1,0 +1,14 @@
+{
+ "body_kept": true,
+ "bytes": 41,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "GET",
+ "note": "recorded for /sub/search?q=frieren; the refusal does not depend on the query",
+ "provenance": "REAL: the service's own answer to a deliberately invalid key, 2026-11-11.",
+ "response_headers": {
+  "content-type": "application/json"
+ },
+ "sha256": "a30469839d46a0a8da5d9146b7e31c411d835d5d14546963d39b16f09316ee8e",
+ "status": 400,
+ "url": "https://api.assrt.net/v1/sub/search?q=Yuru+Camp&cnt=15&pos=0&filelist=1"
+}

@@ -1,0 +1,14 @@
+{
+ "body_kept": true,
+ "bytes": 220,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "GET",
+ "note": "",
+ "provenance": "SHAPED from the service's documented/recorded answer (see make_fixtures.py) -- no real key was available; re-capture with one.",
+ "response_headers": {
+  "content-type": "application/octet-stream"
+ },
+ "sha256": "e83697f5b9a4cbe8b6f3b2c97572c19a5b3980cc2804c4b322d4d49ef795347e",
+ "status": 200,
+ "url": "http://file0.assrt.net/onthefly/700001/-/2/[Nekomoe kissaten] Sousou no Frieren - 01 [WebRip 1080p].chs.ass?_=1794000000&-=f281c84ea1a1d01280bd105e5f4a0baf&api=1"
+}

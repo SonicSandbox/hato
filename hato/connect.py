@@ -868,8 +868,19 @@ def _call_register(argv, data, timeout):
     return proc.returncode, out.decode("utf-8", "replace")
 
 
-def refresh(setting):
-    u"""Read surasura.json once and keep hato.json in step. -> Link for `ja`.
+def handoff_lang(lang):
+    u"""⭐ LAYER 20 -- the `drop_folders` key a run hands over under: `zh` for a Chinese
+    run, `ja` for every other (as every hato before 1.3 did, whatever `lang` said)."""
+    from hato import config
+    return u"zh" if config.is_chinese(lang) else u"ja"
+
+
+def refresh(setting, lang="ja"):
+    u"""Read surasura.json once and keep hato.json in step. -> Link for `lang`.
+
+    🚨 LAYER 20 -- `lang`: until 1.3 this was always `ja`, so a `--lang zh` run (Surasura
+    sends one for a Chinese library) would have handed its file to the JAPANESE drop
+    folder under `"language": "ja"`. The run passes `handoff_lang(settings.lang)`.
 
     ⭐ Called at the start of the window, the tray and each run (once per run, once
     per window refresh). ⛔ Never raises: Connect is never why hato fails."""
@@ -881,7 +892,7 @@ def refresh(setting):
         write_hato_json(setting, found)
     except Exception:
         pass
-    return state(setting, "ja", found)
+    return state(setting, lang, found)
 
 
 #: ⭐ 16g -- what the window's card and the tray's line are drawn from: the effective

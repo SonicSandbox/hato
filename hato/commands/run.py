@@ -203,10 +203,26 @@ class World(object):
                 pass
 
 
-def build_world(args):
-    u"""-> World. Raises `credentials.KeyMissing` / `paths.PathError` by name."""
+def build_world(args, lang=u"ja"):
+    u"""-> World. Raises `credentials.KeyMissing` / `paths.PathError` by name.
+
+    ⭐ LAYER 20 -- a CHINESE run (`config.is_chinese`) gets the Chinese client: assrt.net
+    first, OpenSubtitles when it has nothing, on the learner's own keys. ⛔ It reads no
+    jimaku key and builds no Kitsu client, and a Japanese run builds none of it."""
     fixtures = Path(args.fixtures).expanduser() if args.fixtures else None
     session = RecordedSession(fixtures) if fixtures is not None else None
+    if config_module.is_chinese(lang):
+        from hato import chinese
+        if fixtures is not None:
+            client = chinese.ChineseClient(
+                assrt=credentials.Key(STAND_IN_KEY, u"--fixtures", credentials.ASSRT),
+                opensubtitles=credentials.Key(STAND_IN_KEY, u"--fixtures",
+                                              credentials.OPENSUBTITLES),
+                session=session)
+        else:
+            client = chinese.build()
+        return World(client=client, db=StateDB(), resolutions=ResolutionCache(),
+                     kitsu=None, cache=Cache())
     if fixtures is not None:
         key = credentials.Key(STAND_IN_KEY, u"--fixtures")
     else:
@@ -742,7 +758,10 @@ def run(args):
         return _finish(args, cfg, run_report)
 
     try:
-        world = build_world(args)
+        # ⭐ LAYER 20 -- the language is handed on only for a Chinese run: a Japanese one
+        # calls the seam exactly as every hato before it (a suite's own one-argument stand-in)
+        world = (build_world(args, settings.lang) if config_module.is_chinese(settings.lang)
+                 else build_world(args))
     except (credentials.KeyMissing, paths.PathError) as exc:
         # 🚨 EXIT 2, NOT 1 -- AND A PERSON FOUND THIS THE HARD WAY.
         # Sonic, 2026-09-19, on the published 1.0.0: *"I gave it a new folder
