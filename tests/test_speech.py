@@ -619,8 +619,9 @@ def test_an_untimed_keep_never_sends_the_made_file_to_the_trash(root, monkeypatc
     for untimed, retired in (({u"tier": u"same-provider"}, False), (None, True)):
         asked[:] = []
         run = NS(_not_taken={}, report=NS(results=[], notes=[]), progress=lambda *a, **k: None, handoff=None,
-                 s=NS(write_beside_video=True))
-        result = NS(not_taken=None, video=u"D:/Anime/Show - 01.mkv", wrote=True, skip=None, untimed=untimed)
+                 s=NS(write_beside_video=True), where=u"jimaku")          # LAYER 20: the run's source
+        result = NS(not_taken=None, video=u"D:/Anime/Show - 01.mkv", wrote=True, skip=None, untimed=untimed,
+                    source=None)
         pipeline._Run._keep_result(run, NS(results=[]), result)
         assert bool(asked) is retired
         assert bool(run.report.notes) is retired and (not retired or u"went to the trash" in run.report.notes[0])

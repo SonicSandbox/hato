@@ -64,7 +64,7 @@ _PYPI = u"https://files.pythonhosted.org/packages/"
 #: release builds it (RUNBOOK 19, packaging/package_speech.py) -- until then `install` says it isn't published.
 ADDON_VERSION = u"1.0.0"
 ADDON_PIN = Pin(u"hato-speech-%s-windows-x64.zip" % ADDON_VERSION,
-                u"https://github.com/SonicSandbox/hato/releases/download/v1.3.0/"
+                u"https://github.com/SonicSandbox/hato/releases/download/v1.4.0/"
                 u"hato-speech-%s-windows-x64.zip" % ADDON_VERSION, 0, u"")
 
 #: ⭐ THE MODELS (RUNBOOK 19b) -- what each part fetches, and the files it keeps.
