@@ -491,6 +491,15 @@ class State(object):
         #: ⭐ HANDOFF 4c -- video key -> the retry date the person chose to wait
         #: for (`run.apply_waits`). Kept in hato's folder by the window.
         self.waits = {}
+        # ---- ⭐ LAYER 19: subtitles from the audio ----
+        #: `speech.status()`, or None until the card reads it (and again after each action).
+        self.speech = None
+        #: the model the radios show while its pick is being written, else None.
+        self.speech_pick = None
+        #: None, or what runs now: "install" · "make".
+        self.speech_busy = None
+        #: one line under the card: the progress, or what the last action came to.
+        self.speech_said = u""
         # ---- ⭐ LAYER 11: updating hato itself ----
         #: Everything the update screens say comes from this, through
         #: `gui/updating.py` -- ⛔ no Qt there, so it is asserted without a display.
@@ -2430,6 +2439,79 @@ class CandidateCard(Clickable):
 # the window
 # ---------------------------------------------------------------------------
 
+def _size_text(n):
+    u"""Bytes, as a person reads a download: *0.7 GB*, *45 MB*."""
+    n = n or 0
+    return u"%.1f GB" % (n / 1e9) if n >= 1e8 else u"%d MB" % max(1, int(round(n / 1e6)))
+
+
+class SpeechDialog(QDialog):
+    u"""⭐ LAYER 19 (19c, 19h) -- the one yes before anything downloads, and before *Remove*.
+
+    ⛔ HAND-BUILT, like `ClearDialog`: a native box arrives white. ⛔ IT NAMES WHAT DOWNLOADS AND ITS SIZE, once,
+    plainly -- and the NVIDIA pack only as a choice of its own, off, shown only when this computer has an NVIDIA
+    card and More accurate is picked (NVIDIA's libraries are a second download, from PyPI).
+    """
+
+    def __init__(self, parent=None, found=None, model=None, removing=None):
+        super().__init__(parent)
+        from hato import speech
+        found = found or {}
+        models = found.get(u"models") or {}
+        addon = found.get(u"addon") or {}
+        self.setWindowTitle(u"Subtitles from the audio")
+        self.setModal(True)
+        self.setStyleSheet(theme.qss())
+        self.setMinimumWidth(460)
+        box = QVBoxLayout(self)
+        box.setContentsMargins(GAP, 16, GAP, 14)
+        box.setSpacing(12)
+        self._gpu = None
+        if removing is not None:
+            box.addWidget(label(u"Remove the speech add-on?", u"emptylead", self))
+            for text in (u"Goes: the add-on and its models — %s." % _size_text(removing),
+                         u"Stays: every subtitle it made, beside your videos."):
+                line = paragraph(text, self)
+                line.setObjectName(u"")
+                box.addWidget(line)
+            go_words = u"Remove"
+        else:
+            name = u"Fast" if model == speech.FAST else u"More accurate"
+            size = (0 if addon.get(u"installed") else addon.get(u"download") or 0) + (
+                (models.get(model) or {}).get(u"download") or 0)
+            box.addWidget(label(u"Download %s (%s)?" % (name, _size_text(size)), u"emptylead", self))
+            line = paragraph(u"hato makes the subtitles on this computer. Nothing you watch is sent anywhere.", self)
+            line.setObjectName(u"")
+            box.addWidget(line)
+            if model == speech.ACCURATE and found.get(u"nvidia") and not (models.get(speech.GPU) or {}).get(
+                    u"installed"):
+                row = QWidget(self)
+                pair = QHBoxLayout(row)
+                pair.setContentsMargins(0, 0, 0, 0)
+                pair.setSpacing(10)
+                self._gpu = Switch(row)
+                pair.addWidget(self._gpu)
+                pair.addWidget(label(u"Use my NVIDIA card — %s more, about 5× faster" % _size_text(
+                    (models.get(speech.GPU) or {}).get(u"download") or 0), None, row), 1)
+                box.addWidget(row)
+            go_words = u"Download"
+        row = QWidget(self)
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(9)
+        line.addStretch(1)
+        cancel = button(u"Cancel", row)
+        cancel.clicked.connect(self.reject)
+        line.addWidget(cancel)
+        go = button(go_words, row, accent=True)
+        go.clicked.connect(self.accept)
+        line.addWidget(go)
+        box.addWidget(row)
+
+    def use_gpu(self):
+        return self._gpu is not None and self._gpu.isChecked()
+
+
 class KeyDialog(QDialog):
     u"""Where a person types the jimaku key.
 
@@ -2755,6 +2837,8 @@ class HatoWindow(Styled):
         self._read_timer = None
         #: ⛔ 16z Z-D5 -- the readers whose progress callback already failed, said ONCE
         self._progress_said = set()
+        self._speech_painted = 0.0           # ⭐ LAYER 19: the card's progress, at most 4 a second
+        self._speech_cancel = None           # its run's cancel file
         #: ⭐ 14z (B-5) -- `hato config` writes waiting their turn, and one in flight
         self._settings_queue = []
         self._settings_writing = False
@@ -3980,6 +4064,7 @@ class HatoWindow(Styled):
         stack.addWidget(self._card_skips(holder))
         stack.addWidget(self._card_blacklist(holder))
         stack.addWidget(self._card_memory(holder))
+        stack.addWidget(self._card_speech(holder))      # ⭐ LAYER 19: optional, so below the core cards
         # ⭐ LAST, DELIBERATELY. Sonic: *"Not everyone's going to want this so I
         # don't want it to be the headliner. I want it to be down below in
         # settings."* An integration most people will not use sits under the
@@ -4771,6 +4856,242 @@ class HatoWindow(Styled):
             u"Stays: every subtitle, the originals hato kept, your settings, "
             u"your key, and the blacklist unless you say otherwise.", card))
         return card
+
+    # -- ⭐ LAYER 19: subtitles from the audio ----------------------------------------------------------------
+
+    def _speech_found(self):
+        u"""What is installed and picked (`speech.status`), read once and again after each action. ⛔ Never
+        raises: a card that can't read says nothing is installed."""
+        if self.state.speech is None:
+            try:
+                from hato import speech
+                self.state.speech = speech.status()
+            except Exception:                     # noqa: BLE001 -- the card, never a stop
+                self.state.speech = {}
+        return self.state.speech
+
+    def _card_speech(self, parent):
+        u"""⭐ LAYER 19 (19h, words PROVISIONAL) -- *Subtitles from the audio*.
+
+        Sonic: *"Let them pick the model ... make it not extremely verbose, etc, so fit the style of the rest of
+        the app."* So: one line, two choices with their size, one button. ⛔ NOTHING DOWNLOADS FROM THIS CARD
+        WITHOUT THE CONFIRM, which names the size once (`SpeechDialog`). ⭐ 19g: with a Surasura there the card
+        stays usable but says, quietly, that Surasura makes these through Anki Miner.
+        """
+        from hato import speech
+        card, body = self._card(u"Subtitles from the audio", parent)
+        state = self.state
+        found = self._speech_found()
+        models = found.get(u"models") or {}
+        addon = found.get(u"addon") or {}
+        picked = state.speech_pick or found.get(u"picked") or speech.FAST
+        if found.get(u"surasura"):
+            body.addWidget(label(u"Surasura makes these through Anki Miner.", u"hint", card))
+        body.addWidget(label(u"Make Japanese subtitles from a video's own audio, on this computer.", None, card))
+        busy = state.speech_busy is not None
+        for model, name, hint in ((speech.FAST, u"Fast", u"quick on any computer"),
+                                  (speech.ACCURATE, u"More accurate", u"faster with an NVIDIA card")):
+            row = QWidget(card)
+            line = QHBoxLayout(row)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(8)
+            radio = Radio(row)
+            radio.setChecked(picked == model)
+            radio.setEnabled(not busy)
+            radio.clicked.connect(lambda _c=False, m=model: self._speech_pick(m))
+            kept(radio, u"speech.model:%s" % model)
+            line.addWidget(radio)
+            line.addWidget(label(name, None, row))
+            part = models.get(model) or {}
+            size = u"installed" if part.get(u"installed") else _size_text(part.get(u"download") or 0)
+            line.addWidget(label(u"· %s · %s" % (size, hint), u"hint", row))
+            line.addStretch(1)
+            body.addWidget(row)
+
+        row = QWidget(card)
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.setSpacing(8)
+        ready = bool(addon.get(u"installed")) and bool((models.get(picked) or {}).get(u"installed"))
+        if busy:
+            words = label(state.speech_said or u"Working…", None, row)
+            words.setWordWrap(True)
+            line.addWidget(words, 1)
+            cancel = button(u"Cancel", row)
+            cancel.clicked.connect(self.speech_cancel)
+            kept(cancel, u"speech.cancel")
+            line.addWidget(cancel)
+        elif ready:
+            folder = button(u"Make subtitles for a folder…", row, accent=True)
+            folder.clicked.connect(lambda _c=False: self.choose_speech_make(folder=True))
+            kept(folder, u"speech.make_folder")
+            line.addWidget(folder)
+            one = button(u"For one file…", row)
+            one.clicked.connect(lambda _c=False: self.choose_speech_make(folder=False))
+            kept(one, u"speech.make_file")
+            line.addWidget(one)
+            line.addStretch(1)
+        else:
+            need = (0 if addon.get(u"installed") else addon.get(u"download") or 0) + (
+                (models.get(picked) or {}).get(u"download") or 0)
+            get = button(u"Download (%s)…" % _size_text(need) if need else u"Download…", row, accent=True)
+            get.clicked.connect(self.choose_speech_install)
+            kept(get, u"speech.install")
+            line.addWidget(get)
+            line.addStretch(1)
+        if not busy and (addon.get(u"installed") or any((m or {}).get(u"installed") for m in models.values())):
+            remove = button(u"Remove", row)
+            remove.setToolTip(wrap(u"Delete the add-on and its models from hato's folder. The subtitles it made "
+                                   u"stay beside your videos."))
+            remove.clicked.connect(self.choose_speech_remove)
+            kept(remove, u"speech.remove")
+            line.addWidget(remove)
+        body.addWidget(row)
+        if state.speech_said and not busy:
+            body.addWidget(label(state.speech_said, u"hint", card))
+        return card
+
+    def _speech_pick(self, model):
+        u"""A radio: the pick, written by `hato speech pick` (one writer of `choice.json`). Nothing downloads."""
+        self.state.speech_pick = model
+        self.state.speech_said = u""
+        self._read(gui_run.argv_for_speech(u"pick", u"--model", model), self._speech_refreshed)
+        self.render()
+
+    def _speech_refreshed(self, finished, events):
+        self.state.speech = None
+        if self.state.tab == TAB_SET:
+            self.render()
+
+    def choose_speech_install(self):
+        u"""*Download…* -- ⛔ the confirm first, with what downloads and its size; Cancel fetches nothing."""
+        from hato import speech
+        found = self._speech_found()
+        model = self.state.speech_pick or found.get(u"picked") or speech.FAST
+        dialog = SpeechDialog(self, found, model)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        flags = [u"install", u"--model", model, u"--progress"] + ([u"--gpu"] if dialog.use_gpu() else [])
+        self.state.speech_busy = u"install"
+        self.state.speech_said = u"Downloading…"
+        self.render()
+        return self._read(gui_run.argv_for_speech(*flags), self._speech_installed, each=self._speech_progress)
+
+    def _speech_progress(self, event):
+        u"""A download's bytes, or the file being listened to and how far -- one line, painted at most 4 a second."""
+        if not isinstance(event, dict) or event.get(u"type") != u"progress":
+            return
+        done, total = event.get(u"done"), event.get(u"total")
+        if event.get(u"stage") == u"downloading" and isinstance(done, int) and isinstance(total, int) and total:
+            said = u"Downloading… %s of %s" % (_size_text(done), _size_text(total))
+        else:
+            name = os.path.basename(event.get(u"path") or u"")
+            share = (u" %d %%" % min(99, int(100 * done / total))
+                     if isinstance(done, (int, float)) and isinstance(total, (int, float)) and total else u"")
+            said = u"Listening to %s…%s" % (safe(name), share) if name else u"Listening…"
+        now = time.monotonic()
+        if said != self.state.speech_said and now - self._speech_painted >= 0.25:
+            self._speech_painted = now
+            self.state.speech_said = said
+            if self.state.tab == TAB_SET:
+                self.render()
+
+    def _speech_installed(self, finished, events):
+        answer = next((e for e in reversed(events) if isinstance(e, dict) and e.get(u"type") == u"result"), None)
+        self.state.speech_busy = None
+        self.state.speech = None
+        if answer is not None and answer.get(u"ok"):
+            self.state.speech_said = u"Ready."
+        else:
+            self.state.speech_said = u"Not downloaded: %s" % (
+                safe((answer or {}).get(u"error")) or u"hato's download stopped")
+        self.render()
+
+    def choose_speech_make(self, folder=True):
+        u"""*Make subtitles…* -- a folder (every video and audio file in it) or one file, then the run."""
+        if folder:
+            path = QFileDialog.getExistingDirectory(self, u"Make subtitles for a folder", u"",
+                                                    QFileDialog.Option.ShowDirsOnly)
+        else:
+            path = QFileDialog.getOpenFileName(self, u"Make subtitles for one file", u"",
+                                               u"Videos and audio (*.mkv *.mp4 *.m4v *.avi *.webm *.mov *.ts "
+                                               u"*.m2ts *.wmv *.flv *.mp3 *.m4a *.m4b *.aac *.flac *.ogg *.opus "
+                                               u"*.wav)")[0]
+        if not path:
+            return None
+        return self.start_speech_make([path])
+
+    def start_speech_make(self, paths_):
+        u"""`hato speech make PATH… --progress --cancel-file F`. ⛔ One at a time (the card is busy meanwhile)."""
+        from hato import paths, speech
+        if self.state.speech_busy is not None:
+            return None
+        cancel = paths.cache_dir() / u"speech" / (u"cancel-%d" % os.getpid())
+        try:
+            cancel.parent.mkdir(parents=True, exist_ok=True)
+            if cancel.exists():
+                cancel.unlink()
+        except OSError:
+            pass
+        self._speech_cancel = cancel
+        model = self.state.speech_pick or self._speech_found().get(u"picked") or speech.FAST
+        self.state.speech_busy = u"make"
+        self.state.speech_said = u"Starting…"
+        self.render()
+        return self._read(gui_run.argv_for_speech(u"make", *(list(paths_) + [
+            u"--model", model, u"--progress", u"--cancel-file", str(cancel)])), self._speech_made,
+            each=self._speech_progress)
+
+    def speech_cancel(self):
+        u"""Cancel: the run stops at once and ends the file it is on -- nothing half-made beside a video. A
+        download is stopped where it is; it goes on from there next time (its `.part`)."""
+        if self.state.speech_busy == u"make" and self._speech_cancel is not None:
+            try:
+                self._speech_cancel.write_text(u"", encoding="utf-8")
+            except OSError:
+                pass
+        for runner, done, _events, _each in list(self._reading):
+            if done in (self._speech_made, self._speech_installed):
+                runner.stop()
+        self.state.speech_said = u"Stopping…"
+        self.render()
+
+    def _speech_made(self, finished, events):
+        u"""What the run came to, counted -- *made 3 · 1 already has Japanese subtitles · 1 no speech heard*."""
+        from hato.commands import speech as words
+        answer = next((e for e in reversed(events) if isinstance(e, dict) and e.get(u"type") == u"result"), None)
+        self.state.speech_busy = None
+        counts = (answer or {}).get(u"counts")
+        if isinstance(counts, dict) and counts:
+            order = (u"made", u"already", u"present", u"no_speech", u"unreadable", u"clash", u"stopped", u"error")
+            said = u" · ".join(u"%d %s" % (counts[k], words.WORDS[k]) for k in order
+                               if isinstance(counts.get(k), int) and counts[k])
+            self.state.speech_said = said or u"Nothing to make there."
+        elif answer is not None and not answer.get(u"ok"):
+            self.state.speech_said = u"Not made: %s" % (safe(answer.get(u"error")) or u"it stopped")
+        else:
+            self.state.speech_said = u"No videos or audio there."
+        self.render()
+
+    def choose_speech_remove(self):
+        u"""*Remove* -- the add-on and its models, after one confirm naming the space. Made subtitles stay."""
+        found = self._speech_found()
+        size = sum(((found.get(u"models") or {}).get(m) or {}).get(u"on_disk") or 0
+                   for m in (found.get(u"models") or {})) + ((found.get(u"addon") or {}).get(u"on_disk") or 0)
+        dialog = SpeechDialog(self, found, None, removing=size)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        self.state.speech_said = u"Removing…"
+        self.render()
+        return self._read(gui_run.argv_for_speech(u"remove"), self._speech_removed)
+
+    def _speech_removed(self, finished, events):
+        answer = next((e for e in reversed(events) if isinstance(e, dict) and e.get(u"type") == u"result"), None)
+        self.state.speech = None
+        self.state.speech_pick = None
+        self.state.speech_said = (u"Removed — %s freed." % _size_text(answer.get(u"freed") or 0)
+                                  if answer is not None and answer.get(u"ok") else u"Not removed.")
+        self.render()
 
     def _card_surasura(self, parent):
         u"""The surasura integration. ⭐ Last card, and quiet.
