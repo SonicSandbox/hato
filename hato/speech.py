@@ -60,12 +60,14 @@ _HF = u"https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo/reso
       u"0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/"
 _PYPI = u"https://files.pythonhosted.org/packages/"
 
-#: ⭐ THE ADD-ON. Its zip is an asset of hato's own GitHub release; the version, size and sha256 are pinned when the
-#: release builds it (RUNBOOK 19, packaging/package_speech.py) -- until then `install` says it isn't published.
+#: ⭐ THE ADD-ON. Its zip is an asset of hato's own GitHub release (first v1.4.0); the version, size and sha256 are
+#: the bytes packaging/package_speech.py built for that release. Later hatos keep pointing here until the add-on
+#: itself changes (a new add-on version, a new release asset, a new pin).
 ADDON_VERSION = u"1.0.0"
 ADDON_PIN = Pin(u"hato-speech-%s-windows-x64.zip" % ADDON_VERSION,
                 u"https://github.com/SonicSandbox/hato/releases/download/v1.4.0/"
-                u"hato-speech-%s-windows-x64.zip" % ADDON_VERSION, 0, u"")
+                u"hato-speech-%s-windows-x64.zip" % ADDON_VERSION, 83272813,
+                u"9c697363c7890975d43d8f1464db521892a6c6b5a3fbb21b8ad34f20d4d73d5c")
 
 #: ⭐ THE MODELS (RUNBOOK 19b) -- what each part fetches, and the files it keeps.
 PARTS = {
