@@ -1493,6 +1493,15 @@ def _going_back(install, root, was, store, swap):
         took = (lambda cfg: before(cfg) and cfg.write_beside_video is False)
         if not connect_keys and becomes == u"goes —":
             becomes = u"Save subtitles beside the videos"
+    # ⭐ 1.2.1 (Hato-MK, 2026-11-11) -- A RELEASE THAT ADDS NO SETTING: the kept 1.2.0 knows
+    # every key, so the arm chose NOTHING (`hato config --json` alone is a usage error) and
+    # waited for a change Go back rightly never names -- the 2026-09-26 trap a fourth time.
+    # ⭐ Then the arm saves a choice the kept version DOES know, away from its default, and
+    # Go back must say it changes nothing and the kept tray must still read the file.
+    nothing_new = not _config.unknown_to(was)
+    if nothing_new:
+        choose = [u"--set", u"write_beside_video=false"]
+        took = (lambda cfg: cfg.write_beside_video is False)
     code, out, err = run([cli, u"config"] + choose + [u"--json"], here)
     with open(os.path.join(store, u"config.toml"), encoding="utf-8") as handle:
         saved = handle.read()
@@ -1501,7 +1510,9 @@ def _going_back(install, root, was, store, swap):
         written = took(_config.parse(saved))
     except _config.ConfigError:
         written = False
-    check(u"rehearsal: the new version saves a choice the kept one never heard of",
+    check(u"rehearsal: the new version saves a choice the kept one never heard of"
+          if not nothing_new else
+          u"rehearsal: the new version saves a choice (the kept one knows every key)",
           code == 0 and written,
           u"exit %d%s" % (code, u"" if code == 0 else u" :: " + (err or out)[-160:]))
     result = os.path.join(str(root), u"result.json")
@@ -1515,8 +1526,11 @@ def _going_back(install, root, was, store, swap):
             continue
         if said.get(u"type") == u"applying":
             applying = said
-    check(u"rehearsal: going back says what it changes",
-          code == 0 and any(becomes in c for c in applying.get(u"changed") or ()),
+    check(u"rehearsal: going back says what it changes" if not nothing_new else
+          u"rehearsal: going back says it changes nothing (no setting is newer)",
+          code == 0 and u"type" in applying and (
+              not applying.get(u"changed") if nothing_new else
+              any(becomes in c for c in applying.get(u"changed") or ())),
           u"exit %d · %s" % (code, applying.get(u"changed") or (err or out)[-200:]))
     if connect_keys:
         # the words are `config._GOING_BACK`'s, as Settings names the two choices

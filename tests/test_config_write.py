@@ -341,6 +341,105 @@ def test_the_string_road_and_the_file_road_refuse_the_same_things(bad, guard):
         credentials.check_key_value(bad)
 
 
+# ---------------------------------------------------------------------------
+# 🚨 the file road -- what a Mac's TextEdit actually saves (a tester, 2026-11-11)
+# ---------------------------------------------------------------------------
+
+#: ⭐ TextEdit's own RTF for one pasted line, as it writes it by default. The LAST
+#: line is `\f0\fs24 \cf0 <key>}` -- which 1.2.0 saved as the key and said "saved".
+TEXTEDIT_RTF = (b"{\\rtf1\\ansi\\ansicpg1252\\cocoartf2822\n"
+                b"\\cocoatextscaling0\\cocoaplatform0{\\fonttbl\\f0\\fswiss\\fcharset0 Helvetica;}\n"
+                b"{\\colortbl;\\red255\\green255\\blue255;}\n"
+                b"\\pard\\tx566\\pardirnatural\\partightenfactor0\n\n"
+                b"\\f0\\fs24 \\cf0 AKfh29dkQmacKEY77}")
+
+
+def test_a_textedit_rich_text_key_file_is_refused_by_name_and_saves_nothing(tmp_path):
+    source, target = tmp_path / "key.rtf", tmp_path / "data" / "key.txt"
+    source.write_bytes(TEXTEDIT_RTF)
+    with pytest.raises(credentials.KeyMissing) as caught:
+        credentials.save_key_from(source, target)
+    said = str(caught.value)
+    assert "isn't plain text" in said and "Make Plain Text" in said, said
+    assert "AKfh29dkQmacKEY77" not in said            # ⛔ never the key
+    assert not target.exists()
+
+
+def test_rich_text_saved_with_a_bom_is_still_rich_text(tmp_path):
+    u"""⚠ The check looks past a BOM and leading blank lines, or a file that
+    starts `\\ufeff{\\rtf` would reach the line reader as text."""
+    source = tmp_path / "key.rtf"
+    source.write_bytes(b"\xef\xbb\xbf\r\n" + TEXTEDIT_RTF)
+    with pytest.raises(credentials.KeyMissing) as caught:
+        credentials.read_key_file(source)
+    assert "Make Plain Text" in str(caught.value)
+
+
+def test_a_utf16_key_file_is_said_to_be_not_plain_text(tmp_path):
+    u"""Notepad's "Unicode" and Word documents hold NUL bytes; 1.2.0 decoded or
+    errored on them with a codec's words. ⭐ Said as what to do instead."""
+    # ⚠ BOTH SHAPES: with its BOM the bytes are not UTF-8 at all; WITHOUT one
+    # they decode cleanly as UTF-8 with a NUL between every letter -- and that
+    # one only the NUL check catches (M18K-06).
+    for name, text in ((u"bom.txt", u"﻿AKfh29dkQmacKEY77\r\n"),
+                       (u"nobom.txt", u"AKfh29dkQmacKEY77\r\n")):
+        source = tmp_path / name
+        source.write_bytes(text.encode("utf-16-le"))
+        with pytest.raises(credentials.KeyMissing) as caught:
+            credentials.read_key_file(source)
+        said = str(caught.value)
+        assert "isn't plain text" in said and "UTF-8" in said, (name, said)
+        assert "AKfh29dkQmacKEY77" not in said
+
+
+def test_a_plain_key_file_with_a_bom_crlf_and_a_final_newline_reads_clean(tmp_path):
+    u"""The control: a plain file in every shape an editor saves still works."""
+    source = tmp_path / "key.txt"
+    source.write_bytes(b"\xef\xbb\xbf# my jimaku key\r\n  AKfh29dkQmacKEY77  \r\n\r\n")
+    assert credentials.read_key_file(source) == u"AKfh29dkQmacKEY77"
+
+
+def test_a_last_line_with_a_label_in_it_is_not_taken_as_the_key(tmp_path):
+    u"""⭐ The file road gives the space refusal the paste road always gave --
+    a formatted export that is not RTF cannot slip `key: …` in as the key."""
+    source = tmp_path / "key.txt"
+    source.write_text(u"jimaku key: AKfh29dkQmacKEY77\n", encoding="utf-8")
+    with pytest.raises(credentials.KeyMissing) as caught:
+        credentials.read_key_file(source)
+    assert "has a space in it" in str(caught.value)
+    assert "AKfh29dkQmacKEY77" not in str(caught.value)
+
+
+def test_the_cli_refuses_an_rtf_file_and_says_so(monkeypatch, tmp_path, capsys):
+    target = tmp_path / "data" / "key.txt"
+    monkeypatch.setattr("hato.paths.key_file_path", lambda: target)
+    source = tmp_path / "key.rtf"
+    source.write_bytes(TEXTEDIT_RTF)
+    assert cli.main(["key", "--set-from", str(source)]) == 1
+    out = capsys.readouterr()
+    assert "isn't plain text" in out.err and "AKfh29dkQmacKEY77" not in out.err + out.out
+    assert not target.exists()
+
+
+def test_a_write_that_fails_says_what_to_do_not_only_an_errno(monkeypatch, tmp_path, capsys):
+    target = tmp_path / "data" / "key.txt"
+    monkeypatch.setattr("hato.paths.key_file_path", lambda: target)
+
+    def denied(*a, **kw):
+        raise PermissionError(13, "Permission denied", str(target) + ".new-1")
+
+    monkeypatch.setattr(credentials, "_write_key", denied)
+
+    class Stdin(object):
+        buffer = type("B", (), {"read": staticmethod(lambda: b"AKfh29dkQmacKEY77\n")})()
+
+    monkeypatch.setattr(sys, "stdin", Stdin())
+    assert cli.main(["key", "--set-from", "-", "--json"]) == 1
+    out = capsys.readouterr().out
+    assert "could not be read or written" in out and "HATO_CACHE" in out, out
+    assert "AKfh29dkQmacKEY77" not in out
+
+
 def test_a_refused_key_writes_nothing_at_all(tmp_path):
     target = tmp_path / "key.txt"
     with pytest.raises(credentials.KeyMissing):

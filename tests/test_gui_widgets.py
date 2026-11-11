@@ -1229,6 +1229,104 @@ def test_a_key_that_FAILS_to_save_is_not_reported_as_saved(qapp):
     assert window.state.key_hint == u"…old1"
 
 
+def test_a_key_SAVES_through_a_real_child_on_this_platform(qapp, tmp_path, monkeypatch):
+    u"""🚨 A MAC TESTER, 2026-11-11: *"it keeps saying my jimaku key can't be
+    saved. I tried regenerating and I got the same error"*.
+
+    ⛔ Every check above models the child, so none could see it: `_spawn` wrote
+    the key and CLOSED stdin, and on POSIX `communicate()` flushes stdin first --
+    *"flush of closed file"* -- so `set_key` killed the child before it read a
+    byte. Windows' `communicate` never flushes. ⭐ A REAL child, on every CI
+    runner: red on macOS and Linux before the fix, green on Windows both ways.
+    """
+    data = tmp_path / u"data"
+    monkeypatch.setenv(u"HATO_CACHE", str(data))
+    monkeypatch.setenv(u"HATO_CONFIG", str(tmp_path / u"config.toml"))
+    monkeypatch.delenv(u"HATO_CLI", raising=False)
+    monkeypatch.delenv(u"HATO_JIMAKU_KEY", raising=False)
+    window = make()
+    window.spawn = window._spawn
+    assert window.set_key(u"AKfh29dkQmacKEY77", timeout=90.0) is True, (
+        u"the save failed: %s" % getattr(window, u"key_save_error", u""))
+    written = data / u"key.txt"
+    lines = [ln for ln in written.read_text(encoding=u"utf-8").splitlines() if ln.strip()]
+    assert lines[-1] == u"AKfh29dkQmacKEY77"
+    if os.name != u"nt":
+        assert (written.stat().st_mode & 0o777) == 0o600, oct(written.stat().st_mode)
+    assert window.state.key_hint == u"…EY77"
+
+
+def test_the_spawn_lets_go_of_the_stdin_it_closed(qapp, monkeypatch):
+    u"""The mechanism, pinned on every platform: a `communicate()` after
+    `_spawn` must find no stdin to flush."""
+    import subprocess
+
+    class Pipe(object):
+        closed = False
+
+        def write(self, data):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    class Child(object):
+        def __init__(self, *a, **kw):
+            self.stdin = Pipe()
+
+    monkeypatch.setattr(subprocess, u"Popen", Child)
+    process = make()._spawn([u"hato"], stdin_text=u"AKfh29dkQmacKEY77\n")
+    assert process.stdin is None
+
+
+def test_a_failed_save_says_WHY_on_the_card_and_never_the_key(qapp, monkeypatch):
+    u"""⭐ *"could not be saved"* and nothing else made a tester regenerate a
+    good key. The card carries the child's own sentence."""
+    window = make()
+
+    class Refused(object):
+        returncode = 1
+
+        def communicate(self, timeout=None):
+            return (b'{"ok": false, "error": "/Users/x/key.rtf isn\'t plain text '
+                    b'(TextEdit saves rich text by default)"}\n', b"")
+
+    class FakeDialog(object):
+        def __init__(self, *a, **kw):
+            pass
+
+        def exec(self):
+            return gui_app.QDialog.DialogCode.Accepted
+
+        def value(self):
+            return u"AKfh29dkQmacKEY77"
+
+    window.spawn = lambda argv, **kw: Refused()
+    monkeypatch.setattr(gui_app, "KeyDialog", FakeDialog)
+    assert window.choose_key() is False
+    assert u"could not be saved" in window.state.key_status
+    assert u"isn't plain text" in window.state.key_status, window.state.key_status
+    assert u"AKfh29dkQmacKEY77" not in window.state.key_status
+
+
+def test_a_save_that_raises_says_so_and_never_echoes_the_key(qapp):
+    window = make()
+
+    class Broken(object):
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise ValueError(u"flush of closed file AKfh29dkQmacKEY77")
+
+        def kill(self):
+            pass
+
+    window.spawn = lambda argv, **kw: Broken()
+    assert window.set_key(u"AKfh29dkQmacKEY77") is False
+    assert u"flush of closed file" in window.key_save_error
+    assert u"AKfh29dkQmacKEY77" not in window.key_save_error
+
+
 def test_the_window_WAITS_for_the_write_before_it_returns(qapp):
     window = make()
     order = []
