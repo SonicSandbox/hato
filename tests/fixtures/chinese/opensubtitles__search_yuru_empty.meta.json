@@ -1,0 +1,14 @@
+{
+ "body_kept": true,
+ "bytes": 75,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "GET",
+ "note": "shares its URL with the invalid-key recording: a suite picks one (stems=)",
+ "provenance": "SHAPED from the service's documented/recorded answer (see make_fixtures.py) -- no real key was available; re-capture with one.",
+ "response_headers": {
+  "content-type": "application/json; charset=utf-8"
+ },
+ "sha256": "84ddc816abd3b7816fc8fbc4fda71c278fb95a18c9b3239f9177c5c3d1e136f8",
+ "status": 200,
+ "url": "https://api.opensubtitles.com/api/v1/subtitles?languages=zh-cn,zh-tw&query=yuru+camp"
+}

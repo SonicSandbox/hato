@@ -1,0 +1,15 @@
+{
+ "body_kept": true,
+ "bytes": 100,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "GET",
+ "note": "recorded for the same search for `frieren`; the refusal does not depend on it",
+ "provenance": "REAL: the service's own answer to a deliberately invalid key, 2026-11-11.",
+ "response_headers": {
+  "content-type": "application/json; charset=utf-8",
+  "x-content-type-options": "nosniff"
+ },
+ "sha256": "d55a3e3083e9ef041bc2263808cfc5d0184a49347d31bf921d26f3001a378b93",
+ "status": 403,
+ "url": "https://api.opensubtitles.com/api/v1/subtitles?languages=zh-cn,zh-tw&query=yuru+camp"
+}

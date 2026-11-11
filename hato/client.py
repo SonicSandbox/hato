@@ -339,13 +339,18 @@ def network_disabled(session):
     return os.environ.get("HATO_NO_NETWORK") == "1" and not isinstance(session, RecordedSession)
 
 
-def _request_key(url):
+def _request_key(url, method="GET", body=None):
+    u"""⭐ LAYER 20 -- a POST is matched on its JSON body too (OpenSubtitles' download is
+    one POST per file, told apart only by its `file_id`). A GET's key is 1.0.0's."""
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
-    return (scheme, (parts.hostname or "").lower(),
-            parts.port or {"https": 443, "http": 80}.get(scheme),
-            unquote(parts.path),
-            tuple(sorted(parse_qsl(parts.query, keep_blank_values=True))))
+    key = (scheme, (parts.hostname or "").lower(),
+           parts.port or {"https": 443, "http": 80}.get(scheme),
+           unquote(parts.path),
+           tuple(sorted(parse_qsl(parts.query, keep_blank_values=True))))
+    if method == "GET":
+        return key
+    return (method,) + key + (json.dumps(body, sort_keys=True),)
 
 
 class _RecordedAdapter(BaseAdapter):
@@ -416,7 +421,10 @@ class RecordedSession(requests.Session):
             url = meta.get("url") or meta.get("final_url")
             if not isinstance(url, str) or not url:
                 continue
-            self._recordings.setdefault(_request_key(url), []).append(
+            method = meta.get("method") or "GET"
+            if method not in ("GET", "POST"):
+                continue
+            self._recordings.setdefault(_request_key(url, method, meta.get("body")), []).append(
                 (stem, meta, meta_path.with_name(stem + ".json")))
             found.add(stem)
         if wanted is not None and wanted - found:
@@ -427,10 +435,19 @@ class RecordedSession(requests.Session):
 
     def _answer(self, request):
         self.calls.append({"method": request.method, "url": request.url,
-                           "headers": dict(request.headers)})
-        if request.method != "GET":
+                           "headers": dict(request.headers), "body": request.body})
+        body = None
+        if request.method == "POST":
+            # ⭐ LAYER 20 -- a POST answers only from a recording of the SAME JSON body.
+            try:
+                raw = request.body or b""
+                body = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+            except (ValueError, UnicodeDecodeError):
+                raise NoRecording("a POST to %s whose body is not JSON is never recorded"
+                                  % request.url)
+        elif request.method != "GET":
             raise NoRecording("only GET is ever recorded, not %s %s" % (request.method, request.url))
-        found = self._recordings.get(_request_key(request.url))
+        found = self._recordings.get(_request_key(request.url, request.method, body))
         if not found:
             raise NoRecording("nothing recorded under %s answers GET %s -- recordings are made "
                               "by `hato doctor --capture`, never by hand"

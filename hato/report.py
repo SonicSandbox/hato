@@ -784,11 +784,26 @@ def _show_notes(show, width, first, rest, verbose=False):
     return out
 
 
+#: ⭐ LAYER 20 -- how a Chinese run's show is named where a jimaku run names its entry.
+_CHINESE_WHERE = u"assrt.net / OpenSubtitles"
+
+
+def _chinese(resolved):
+    u"""True for a Chinese run's show (`resolution.SOURCE_CHINESE`): it has no entry."""
+    return getattr(resolved, "source", None) == _CHINESE_WHERE
+
+
+def _entry_words(resolved):
+    if _chinese(resolved):
+        return u'%s, searched as "%s"' % (_CHINESE_WHERE, resolved.entry_name)
+    return u"jimaku entry %d" % resolved.entry_id
+
+
 def _show_block(show, width, verbose=False):
     out = [u"  " + _show_title(show)]
     parsed = u'%s  %s parsed "%s" %s ' % (u"", HOOK, show.title or u"?", ARROW)
     if show.resolved is not None:
-        line = parsed + u"jimaku entry %d" % show.resolved.entry_id
+        line = parsed + _entry_words(show.resolved)
         if show.resolved.low_confidence:
             line += u"  (LOW CONFIDENCE)"
         out.append(line)
@@ -1008,6 +1023,11 @@ def _identify_row(show, width):
         return wrap(u"no jimaku entry matched %s %s" % (DASH, show.reason),
                     width, first=head, rest=u" " * cells(head))
     mark = WARN if show.resolved.low_confidence else OK
+    if _chinese(show.resolved):
+        # ⭐ LAYER 20 -- no entry number to show: the title is what the sources are asked
+        out = [u"  %s  %s  %s %s    %s" % (mark, pad(clip(show.title or u"?", 22), 22), ARROW,
+                                           _CHINESE_WHERE, counts)]
+        return out
     out = [u"  %s  %s  %s jimaku %s    %s" % (
         mark, pad(clip(show.title or u"?", 22), 22), ARROW,
         pad(u"%d" % show.resolved.entry_id, 5), counts)]
@@ -1059,7 +1079,8 @@ def render_plan(report, width=DEFAULT_WIDTH, verbose=False):
                       (pipeline.NEGATIVE, u"waiting to retry"),
                       (pipeline.BLACKLISTED, u"blacklisted"),
                       (pipeline.EMBEDDED, u"already embedded"),
-                      (pipeline.NOT_FOUND, u"not on jimaku"),
+                      (pipeline.NOT_FOUND, u"not found" if any(
+                          _chinese(s.resolved) for s in report.shows) else u"not on jimaku"),
                       (FORMAT_WAIT, u"only in the other format"),
                       (pipeline.REFUSED, u"refused"),
                       (pipeline.ERROR, u"unreadable")):
@@ -1162,7 +1183,19 @@ def tsubasa_dict(result):
 
 def as_dict(result):
     u"""One video, as the library returns it (`05-interface.md` §*`Result`
-    carries*) plus `skip` and `attempts`."""
+    carries*) plus `skip` and `attempts`.
+
+    ⭐ LAYER 20 -- a Chinese run's row adds `source` (where it looked) and carries no
+    `jimaku_entry` (its id is only its title's). ⛔ A jimaku row is exactly as before."""
+    row = _as_dict(result)
+    source = getattr(result, "source", None)
+    if source:
+        row["source"] = source
+        row["jimaku_entry"] = None
+    return row
+
+
+def _as_dict(result):
     return {
         "type": "video",
         "video": result.video, "name": result.name,
