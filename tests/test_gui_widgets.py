@@ -1229,6 +1229,33 @@ def test_a_key_that_FAILS_to_save_is_not_reported_as_saved(qapp):
     assert window.state.key_hint == u"…old1"
 
 
+def test_a_key_SAVES_through_a_real_child_on_this_platform(qapp, tmp_path, monkeypatch):
+    u"""🚨 A MAC TESTER, 2026-11-11: *"it keeps saying my jimaku key can't be
+    saved. I tried regenerating and I got the same error"*.
+
+    ⛔ Every check above models the child, so none could see it: `_spawn` wrote
+    the key and CLOSED stdin, and on POSIX `communicate()` flushes stdin first --
+    *"flush of closed file"* -- so `set_key` killed the child before it read a
+    byte. Windows' `communicate` never flushes. ⭐ A REAL child, on every CI
+    runner: red on macOS and Linux before the fix, green on Windows both ways.
+    """
+    data = tmp_path / u"data"
+    monkeypatch.setenv(u"HATO_CACHE", str(data))
+    monkeypatch.setenv(u"HATO_CONFIG", str(tmp_path / u"config.toml"))
+    monkeypatch.delenv(u"HATO_CLI", raising=False)
+    monkeypatch.delenv(u"HATO_JIMAKU_KEY", raising=False)
+    window = make()
+    window.spawn = window._spawn
+    assert window.set_key(u"AKfh29dkQmacKEY77", timeout=90.0) is True, (
+        u"the save failed: %s" % getattr(window, u"key_save_error", u""))
+    written = data / u"key.txt"
+    lines = [ln for ln in written.read_text(encoding=u"utf-8").splitlines() if ln.strip()]
+    assert lines[-1] == u"AKfh29dkQmacKEY77"
+    if os.name != u"nt":
+        assert (written.stat().st_mode & 0o777) == 0o600, oct(written.stat().st_mode)
+    assert window.state.key_hint == u"…EY77"
+
+
 def test_the_window_WAITS_for_the_write_before_it_returns(qapp):
     window = make()
     order = []
