@@ -2839,6 +2839,8 @@ class HatoWindow(Styled):
         self._progress_said = set()
         self._speech_painted = 0.0           # ⭐ LAYER 19: the card's progress, at most 4 a second
         self._speech_cancel = None           # its run's cancel file
+        self._speech_line = None             # the card's busy line, repainted in place (A19-1)
+        self._speech_stopping = False        # Cancel pressed: the end says *Stopped* (A19-3)
         #: ⭐ 14z (B-5) -- `hato config` writes waiting their turn, and one in flight
         self._settings_queue = []
         self._settings_writing = False
@@ -4924,18 +4926,19 @@ class HatoWindow(Styled):
             words = label(state.speech_said or u"Working…", None, row)
             words.setWordWrap(True)
             line.addWidget(words, 1)
+            self._speech_line = words           # ⚠ A19-1: progress repaints THIS label, never all of Settings
             cancel = button(u"Cancel", row)
             cancel.clicked.connect(self.speech_cancel)
-            kept(cancel, u"speech.cancel")
+            kept(cancel, u"speech.cancel", then=u"speech.make_folder")
             line.addWidget(cancel)
         elif ready:
             folder = button(u"Make subtitles for a folder…", row, accent=True)
             folder.clicked.connect(lambda _c=False: self.choose_speech_make(folder=True))
-            kept(folder, u"speech.make_folder")
+            kept(folder, u"speech.make_folder", then=u"speech.cancel")
             line.addWidget(folder)
             one = button(u"For one file…", row)
             one.clicked.connect(lambda _c=False: self.choose_speech_make(folder=False))
-            kept(one, u"speech.make_file")
+            kept(one, u"speech.make_file", then=u"speech.cancel")
             line.addWidget(one)
             line.addStretch(1)
         else:
@@ -4943,7 +4946,7 @@ class HatoWindow(Styled):
                 (models.get(picked) or {}).get(u"download") or 0)
             get = button(u"Download (%s)…" % _size_text(need) if need else u"Download…", row, accent=True)
             get.clicked.connect(self.choose_speech_install)
-            kept(get, u"speech.install")
+            kept(get, u"speech.install", then=u"speech.cancel")
             line.addWidget(get)
             line.addStretch(1)
         if not busy and (addon.get(u"installed") or any((m or {}).get(u"installed") for m in models.values())):
@@ -4951,7 +4954,7 @@ class HatoWindow(Styled):
             remove.setToolTip(wrap(u"Delete the add-on and its models from hato's folder. The subtitles it made "
                                    u"stay beside your videos."))
             remove.clicked.connect(self.choose_speech_remove)
-            kept(remove, u"speech.remove")
+            kept(remove, u"speech.remove", then=u"speech.install")
             line.addWidget(remove)
         body.addWidget(row)
         if state.speech_said and not busy:
@@ -4979,6 +4982,12 @@ class HatoWindow(Styled):
         u"""⭐ 19h -- *Make from audio* for the waiting episodes that have no made file, ⛔ only when the add-on and
         the picked model are installed, nothing is being made, and no Surasura is there (19g: Surasura makes these
         through Anki Miner). -> the button, or None."""
+        if self.state.speech_busy == u"make":
+            stop = button(u"Stop making", parent)           # ⚠ A19-16: the run is seen and stopped from here too
+            stop.setToolTip(wrap(self.state.speech_said or u"Making subtitles from the audio…"))
+            stop.clicked.connect(self.speech_cancel)
+            kept(stop, u"speech.stop_waiting")
+            return stop
         if not rows or self.state.speech_busy is not None:
             return None
         found = self._speech_found()
@@ -5016,10 +5025,25 @@ class HatoWindow(Styled):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         flags = [u"install", u"--model", model, u"--progress"] + ([u"--gpu"] if dialog.use_gpu() else [])
-        self.state.speech_busy = u"install"
-        self.state.speech_said = u"Downloading…"
+        return self._speech_start(u"install", u"Downloading…", gui_run.argv_for_speech(*flags),
+                                  self._speech_installed)
+
+    def _speech_start(self, busy, said, argv, done):
+        u"""⚠ A19-2 -- the card is BUSY only once a child is really reading: a spawn that raised or started nothing
+        leaves it free, with a sentence, never busy for ever with a Cancel that finds no reader."""
+        self._speech_stopping = False
+        try:
+            runner = self._read(argv, done, each=self._speech_progress)
+        except Exception as exc:                  # noqa: BLE001 -- the card, never a stop
+            runner, said = None, u"couldn't start — %s" % safe(str(exc) or type(exc).__name__)
+        if runner is None:
+            self.state.speech_busy = None
+            self.state.speech_said = said if said.startswith(u"couldn't") else u"couldn't start"
+        else:
+            self.state.speech_busy = busy
+            self.state.speech_said = said
         self.render()
-        return self._read(gui_run.argv_for_speech(*flags), self._speech_installed, each=self._speech_progress)
+        return runner
 
     def _speech_progress(self, event):
         u"""A download's bytes, or the file being listened to and how far -- one line, painted at most 4 a second."""
@@ -5037,8 +5061,13 @@ class HatoWindow(Styled):
         if said != self.state.speech_said and now - self._speech_painted >= 0.25:
             self._speech_painted = now
             self.state.speech_said = said
-            if self.state.tab == TAB_SET:
-                self.render()
+            # ⚠ A19-1 -- IN PLACE (`_refresh_update_line`'s shape): a rebuild of Settings 4 times a second for an
+            # hour is RUNBOOK 13b again, and a Cancel destroyed under the pointer is a click lost
+            try:
+                if self._speech_line is not None:
+                    self._speech_line.setText(said)
+            except RuntimeError:                  # the card was rebuilt: that label is gone
+                self._speech_line = None
 
     def _speech_installed(self, finished, events):
         answer = next((e for e in reversed(events) if isinstance(e, dict) and e.get(u"type") == u"result"), None)
@@ -5078,27 +5107,49 @@ class HatoWindow(Styled):
         except OSError:
             pass
         self._speech_cancel = cancel
+        # ⚠ A19-2 -- THE PATHS IN A FILE, never on the command line: a few hundred waiting episodes pass Windows'
+        # 32,767 characters (ADVERSARY 2026-09-22 A33's shape)
+        listed = cancel.parent / (u"list-%d.txt" % os.getpid())
+        try:
+            listed.write_text(u"".join(str(p) + u"\n" for p in paths_), encoding="utf-8")
+        except OSError as exc:
+            self.state.speech_said = u"couldn't start — %s" % safe(exc.strerror or type(exc).__name__)
+            self.render()
+            return None
         model = self.state.speech_pick or self._speech_found().get(u"picked") or speech.FAST
-        self.state.speech_busy = u"make"
-        self.state.speech_said = u"Starting…"
-        self.render()
-        return self._read(gui_run.argv_for_speech(u"make", *(list(paths_) + [
-            u"--model", model, u"--progress", u"--cancel-file", str(cancel)])), self._speech_made,
-            each=self._speech_progress)
+        return self._speech_start(u"make", u"Starting…", gui_run.argv_for_speech(
+            u"make", u"--list", str(listed), u"--model", model, u"--progress", u"--cancel-file", str(cancel)),
+            self._speech_made)
 
     def speech_cancel(self):
         u"""Cancel: the run stops at once and ends the file it is on -- nothing half-made beside a video. A
         download is stopped where it is; it goes on from there next time (its `.part`)."""
+        self._speech_stopping = True
         if self.state.speech_busy == u"make" and self._speech_cancel is not None:
+            # ⚠ A19-3 -- THE CANCEL FILE ALONE: `hato speech make` ends its add-on itself and finishes placing and
+            # recording the file it is on. A kill could leave a temp file beside a video, a made file with no
+            # record (19f could never retire it), and an add-on running on as an orphan.
             try:
                 self._speech_cancel.write_text(u"", encoding="utf-8")
             except OSError:
                 pass
-        for runner, done, _events, _each in list(self._reading):
-            if done in (self._speech_made, self._speech_installed):
-                runner.stop()
+            QTimer.singleShot(self.STOP_GRACE_S * 1000, lambda: self._speech_stop_readers(self._speech_made))
+        else:
+            self._speech_stop_readers(self._speech_installed)   # a download: its .part goes on next time
         self.state.speech_said = u"Stopping…"
-        self.render()
+        try:
+            if self._speech_line is not None:
+                self._speech_line.setText(u"Stopping…")
+        except RuntimeError:
+            self._speech_line = None
+
+    #: ⚠ A19-3 -- how long a make has to stop by its cancel file before it is ended.
+    STOP_GRACE_S = 30
+
+    def _speech_stop_readers(self, done_of):
+        for runner, done, _events, _each in list(self._reading):
+            if done == done_of:
+                runner.stop()
 
     def _speech_made(self, finished, events):
         u"""What the run came to, counted -- *made 3 · 1 already has Japanese subtitles · 1 no speech heard*."""
@@ -5107,14 +5158,18 @@ class HatoWindow(Styled):
         self.state.speech_busy = None
         counts = (answer or {}).get(u"counts")
         if isinstance(counts, dict) and counts:
-            order = (u"made", u"already", u"present", u"no_speech", u"unreadable", u"clash", u"stopped", u"error")
+            order = (u"made", u"already", u"present", u"no_speech", u"unreadable", u"too_long", u"clash",
+                     u"stopped", u"error")
             said = u" · ".join(u"%d %s" % (counts[k], words.WORDS[k]) for k in order
                                if isinstance(counts.get(k), int) and counts[k])
             self.state.speech_said = said or u"Nothing to make there."
         elif answer is not None and not answer.get(u"ok"):
             self.state.speech_said = u"Not made: %s" % (safe(answer.get(u"error")) or u"it stopped")
+        elif self._speech_stopping:
+            self.state.speech_said = u"Stopped."      # ⚠ A19-3: never "no videos there" over a cancelled run
         else:
             self.state.speech_said = u"No videos or audio there."
+        self._speech_stopping = False
         self.render()
 
     def choose_speech_remove(self):

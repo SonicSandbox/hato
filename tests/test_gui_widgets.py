@@ -7966,11 +7966,21 @@ def _speech_found(fast=False, accurate=False, addon=False, gpu=False, surasura=F
             u"picked": picked, u"nvidia": nvidia, u"surasura": surasura, u"held": False}
 
 
+class _Reading(object):
+    u"""What `_read` hands back when a child really started (the card is busy only then: A19-2)."""
+
+    def __init__(self):
+        self.stopped = 0
+
+    def stop(self):
+        self.stopped += 1
+
+
 def _speech_window(**found):
     window = make(running=False)
     window.state.speech = _speech_found(**found)
     reads = []
-    window._read = lambda argv, done, each=None: reads.append(argv)
+    window._read = lambda argv, done, each=None: reads.append(argv) or _Reading()
     window.show_tab(gui_app.TAB_SET)
     return window, reads
 
@@ -8043,8 +8053,10 @@ def test_once_installed_the_card_makes_for_a_folder_or_one_file_and_can_remove(q
     assert set(_speech_buttons(window)) == {u"speech.make_folder", u"speech.make_file", u"speech.remove"}
     window.start_speech_make([str(tmp_path / "Anime")])
     argv, = reads
-    assert argv == gui_run.argv_for_speech(u"make", str(tmp_path / "Anime"), u"--model", u"fast", u"--progress",
+    listed = argv[argv.index(u"--list") + 1]
+    assert argv == gui_run.argv_for_speech(u"make", u"--list", listed, u"--model", u"fast", u"--progress",
                                            u"--cancel-file", str(window._speech_cancel)), argv
+    assert open(listed, encoding="utf-8").read() == str(tmp_path / "Anime") + u"\n"
     assert window.state.speech_busy == u"make" and set(_speech_buttons(window)) == {u"speech.cancel"}
     window.speech_cancel()
     assert window._speech_cancel.exists(), u"Cancel is the cancel file the run watches"
@@ -8109,7 +8121,7 @@ def test_make_from_audio_is_offered_on_the_waiting_strip_only_when_installed_and
         window = make(running=False)
         window.state.speech = _speech_found(**found)
         reads = []
-        window._read = lambda argv, done, each=None: reads.append(argv)
+        window._read = lambda argv, done, each=None: reads.append(argv) or _Reading()
         window.show_tab(gui_app.TAB_PICK)
         buttons = [b for b in _not_yet_strip(window).findChildren(QPushButton)
                    if b.property(gui_app.KEEP) == u"speech.make_waiting"]
@@ -8118,3 +8130,58 @@ def test_make_from_audio_is_offered_on_the_waiting_strip_only_when_installed_and
             buttons[0].click()
             argv, = reads
             assert argv[len(gui_run.cli_argv()):len(gui_run.cli_argv()) + 2] == [u"speech", u"make"]
+
+
+
+def test_a_child_that_never_started_leaves_the_card_free_with_a_sentence(qapp, tmp_path, monkeypatch):
+    u"""A19-2 -- busy only once a child is really reading: never busy for ever with a Cancel that finds no one."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    window, _reads = _speech_window(fast=True, addon=True)
+    window._read = lambda argv, done, each=None: None
+    window.start_speech_make([str(tmp_path / "Anime")])
+    assert window.state.speech_busy is None and window.state.speech_said == u"couldn't start"
+
+    def raising(argv, done, each=None):
+        raise OSError(u"The filename or extension is too long")
+    window._read = raising
+    window.start_speech_make([str(tmp_path / "Anime")])
+    assert window.state.speech_busy is None and u"too long" in window.state.speech_said
+
+
+def test_cancel_asks_the_run_to_stop_by_its_file_and_never_kills_it_at_once(qapp, tmp_path, monkeypatch):
+    u"""A19-3 -- the cancel file alone: a kill could leave a temp file beside a video and a made file unrecorded.
+    The end then says *Stopped*, never *No videos or audio there*."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    window, _reads = _speech_window(fast=True, addon=True)
+    reading = _Reading()
+    window._read = lambda argv, done, each=None: window._reading.append((reading, done, [], each)) or reading
+    window.start_speech_make([str(tmp_path / "Anime")])
+    window.speech_cancel()
+    assert window._speech_cancel.exists() and reading.stopped == 0
+    window._speech_made(None, [])
+    assert window.state.speech_said == u"Stopped."
+
+
+def test_progress_repaints_the_cards_line_in_place_and_never_rebuilds_settings(qapp, tmp_path, monkeypatch):
+    u"""A19-1 -- RUNBOOK 13b: a rebuild 4 times a second for an hour, and a Cancel destroyed under the pointer."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    window, _reads = _speech_window(fast=True, addon=True)
+    window.start_speech_make([str(tmp_path / "Anime")])
+    built = []
+    monkeypatch.setattr(window, u"render", lambda *a, **k: built.append(1))
+    window._speech_painted = 0.0
+    window._speech_progress({u"type": u"progress", u"stage": u"listening", u"done": 30, u"total": 60,
+                             u"path": u"D:/Anime/Show - 01.mkv"})
+    assert built == [] and window._speech_line.text() == u"Listening to Show - 01.mkv… 50 %"
+
+
+def test_the_waiting_strip_can_stop_a_run_it_started(qapp, tmp_path, monkeypatch):
+    u"""A19-16 -- *Make from audio* pressed on Needs you: the run is seen and stopped there, not only in Settings."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    window, _reads = _speech_window(fast=True, addon=True)
+    window.start_speech_make([str(tmp_path / "Anime")])
+    window.show_tab(gui_app.TAB_PICK)
+    stop, = [b for b in _not_yet_strip(window).findChildren(QPushButton)
+             if b.property(gui_app.KEEP) == u"speech.stop_waiting"]
+    stop.click()
+    assert window._speech_cancel.exists()

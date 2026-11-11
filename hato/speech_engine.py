@@ -40,6 +40,7 @@ FAST_FILES = ("model.int8.onnx", "tokens.txt")
 ACCURATE_FILES = ("model.bin", "config.json", "tokenizer.json", "preprocessor_config.json", "vocabulary.json")
 VAD_FILE = "silero_vad.onnx"     # shipped inside the add-on, beside the exe (MIT)
 JA_TAGS = ("ja", "jpn", "jp", "japanese")
+MAX_HOURS = 4                    # an episode, a film, a long chapter; never a whole audiobook at once (A19-11)
 # The cues: one sentence where it can be, never longer than MAX_CUE_S, never across a pause over GAP_S
 MAX_CUE_S = 7.0
 GAP_S = 0.8
@@ -53,6 +54,10 @@ SPEECH_PAD = 0.4                 # faster-whisper's own VAD pads each stretch of
 
 class Unreadable(Exception):
     pass
+
+
+class TooLong(Exception):
+    u"""Over MAX_HOURS of audio: a 12-hour audiobook is ~3 GB of samples, copied on the way (A19-11)."""
 
 
 def emit(kind, **fields):
@@ -91,21 +96,29 @@ def read_audio(path, progress=None):
         stream = next(s for s in audio if s.index == index)
         total = (float(stream.duration * stream.time_base) if stream.duration else
                  (container.duration / 1e6 if container.duration else None))
+        if total and total > MAX_HOURS * 3600:
+            raise TooLong()
         resampler = av.AudioResampler(format="flt", layout="mono", rate=RATE)
         parts, last = [], 0.0
         try:
             for frame in container.decode(stream):
                 for out in resampler.resample(frame):
                     parts.append(out.to_ndarray().reshape(-1))
+                if frame.time is not None and frame.time > MAX_HOURS * 3600:
+                    raise TooLong()                     # a length the container didn't say
                 if progress and frame.time is not None and frame.time - last >= 30:
                     last = frame.time
                     progress("reading", frame.time, total)
             for out in resampler.resample(None):
                 parts.append(out.to_ndarray().reshape(-1))
+        except TooLong:
+            raise
         except Exception as e:
             if not parts:
                 raise Unreadable(type(e).__name__)
-        samples = np.concatenate(parts).astype(np.float32) if parts else np.zeros(0, np.float32)
+        # ⚠ A19-11: one copy, not three -- the parts let go as soon as they are joined
+        samples = np.concatenate(parts).astype(np.float32, copy=False) if parts else np.zeros(0, np.float32)
+        del parts
     finally:
         container.close()
     if not len(samples):
@@ -331,6 +344,9 @@ def run(args):
         samples = read_audio(args.input, progress)
     except Unreadable as e:
         emit("result", outcome="unreadable", why=str(e))
+        return 0
+    except TooLong:
+        emit("result", outcome="too_long", hours=MAX_HOURS)
         return 0
     seconds = len(samples) / RATE
     threads = args.threads or max(1, min(8, (os.cpu_count() or 2) - 1))

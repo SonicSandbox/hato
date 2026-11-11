@@ -112,6 +112,10 @@ class SpeechError(Exception):
     u"""One sentence a person reads; never a traceback."""
 
 
+class RangeRefused(Exception):
+    u"""The server answered 416 to a resume: the `.part` is not the start of this file (A19-15)."""
+
+
 # --- where it lives -------------------------------------------------------------------------------------------- #
 
 def root():
@@ -280,6 +284,8 @@ def stream(url, start=0):
         with requests.get(url, headers=headers, timeout=30, stream=True) as response:
             if response.status_code == 206 and start:
                 yield True                                  # resumed where the .part ends
+            elif response.status_code == 416 and start:
+                raise RangeRefused()                        # the .part is longer than the file: start again
             elif response.status_code == 200:
                 yield False                                 # from the start (a server that ignores Range)
             else:
@@ -287,7 +293,7 @@ def stream(url, start=0):
             for block in response.iter_content(1024 * 1024):
                 if block:
                     yield block
-    except SpeechError:
+    except (SpeechError, RangeRefused):
         raise
     except Exception as exc:                            # noqa: BLE001 -- a sentence, never a traceback
         raise SpeechError(u"the download stopped (%s) -- it goes on from there next time" % type(exc).__name__)
@@ -313,7 +319,13 @@ def fetch(pin, progress=None, get=None, done_before=0, total=None):
         have = 0
     if have < pin.size:
         blocks = get(pin.url, have)
-        resumed = next(blocks)
+        try:
+            resumed = next(blocks)
+        except RangeRefused:                            # ⭐ A19-15: thrown away, then once from nothing
+            part.unlink()
+            have = 0
+            blocks = get(pin.url, 0)
+            resumed = next(blocks)
         mode = "ab" if resumed else "wb"
         have = have if resumed else 0
         with open(str(part), mode) as out:
@@ -363,20 +375,31 @@ def _judge(names_sizes, top=None):
 
 
 def _into(folder, write):
-    u"""Unpack under `folder.part`, then rename it into place whole. `write(part_folder)` does the writing."""
+    u"""Unpack under `folder.part`, then rename it into place whole. `write(part_folder)` does the writing.
+
+    ⚠ A19-14 -- the folder already there is RENAMED ASIDE first (`.old`), then removed: a file in it held open (an
+    add-on still running, a virus scanner) fails the rename, and the install says so with the old one whole --
+    never a half-deleted folder that a new one could not replace."""
     folder = Path(folder)
     part = Path(str(folder) + u".part")
-    if part.exists():
-        shutil.rmtree(str(part), ignore_errors=True)
+    old = Path(str(folder) + u".old")
+    for stale in (part, old):
+        if stale.exists():
+            shutil.rmtree(str(stale), ignore_errors=True)
     part.mkdir(parents=True)
     try:
         write(part)
         if folder.exists():
-            shutil.rmtree(str(folder), ignore_errors=True)
+            try:
+                os.replace(str(folder), str(old))
+            except OSError:
+                raise SpeechError(u"a file in %s is in use, so nothing was changed -- close what uses it and try "
+                                  u"again" % folder.name)
         os.replace(str(part), str(folder))
     except BaseException:
         shutil.rmtree(str(part), ignore_errors=True)
         raise
+    shutil.rmtree(str(old), ignore_errors=True)
 
 
 def _copy_member(source, target):
@@ -463,6 +486,28 @@ def install(model, gpu=False, progress=None, get=None):
     if model not in MODELS:
         raise SpeechError(u"pick fast or accurate")
     _refuse_when_held()
+    with _locked():
+        return _install(model, gpu, progress, get)
+
+
+class _locked(object):
+    u"""⚠ A19-14 -- install and remove take the make's own lock: never a model replaced under a run using it."""
+
+    def __enter__(self):
+        from hato.runlock import LockHeld, RunLock
+        self.lock = RunLock(root() / LOCK_NAME)
+        try:
+            self.lock.acquire()
+        except LockHeld:
+            raise SpeechError(u"subtitles are being made from audio -- try again when that finishes")
+        return self
+
+    def __exit__(self, *exc):
+        self.lock.release()
+        return False
+
+
+def _install(model, gpu, progress, get):
     todo = []
     if not installed(ADDON):
         todo.append(ADDON)
@@ -487,8 +532,11 @@ def install(model, gpu=False, progress=None, get=None):
             unpack_wheels(got, part_dir(part))
         else:
             def write(folder, got=got):
-                for path in got:
-                    shutil.copyfile(str(path), str(folder / path.name))
+                for path in got:                        # ⚠ A19-13: moved on one volume, never 1.6 GB twice
+                    try:
+                        os.replace(str(path), str(folder / path.name))
+                    except OSError:
+                        shutil.copyfile(str(path), str(folder / path.name))
             _into(part_dir(part), write)
         for path in got:                                    # the downloads were only ever a means
             try:
@@ -500,16 +548,17 @@ def install(model, gpu=False, progress=None, get=None):
 
 
 def remove(what=None):
-    u"""Remove a model (`fast`, `accurate`), NVIDIA's pack (`gpu`), or everything (None). -> bytes freed.
-    ⛔ hato's own `speech/` files only: the subtitles it made stay where they are, beside the videos."""
-    targets = [root()] if what is None else [part_dir(what)]
+    u"""Remove a model (`fast`, `accurate`), NVIDIA's pack (`gpu`), or the add-on and all it downloaded (None).
+    -> bytes freed. ⛔ hato's own `speech/` files only: the subtitles it made stay beside the videos.
+    ⚠ A19-6 -- `made.json` STAYS, and the pick: 19f must still know which files hato made, so a real subtitle
+    found after a Remove still sends hato's own made file to the trash."""
+    targets = ([addon_dir(), models_dir(), part_dir(GPU), downloads_dir()] if what is None else [part_dir(what)])
     freed = 0
-    for target in targets:
-        if target.is_dir():
-            freed += disk_size(target)
-            shutil.rmtree(str(target), ignore_errors=True)
-    if what is None:
-        shutil.rmtree(str(downloads_dir()), ignore_errors=True)
+    with _locked():
+        for target in targets:
+            if target.is_dir():
+                freed += disk_size(target)
+                shutil.rmtree(str(target), ignore_errors=True)
     return freed
 
 
@@ -548,26 +597,63 @@ def target_of(media, beside=True):
     return keep.target_dir(media, None, out=None, beside=beside) / (stem + SUFFIX)
 
 
-def plan(media_paths, beside=True, presence=None):
-    u"""Each file -> (media, target, None to make it, else why not). 🚨 Two files that would make ONE name (`Show -
-    01.mkv` + `Show - 01.mp4`) both refuse (LEDGER-HOT: never let two videos target one output path)."""
-    from hato import keep
-    from hato.present import Presence
-    presence = presence or Presence(LANG)
+def plan(media_paths, beside=True, presence=None, tracks=None):
+    u"""Each file -> (media, target, None to make it, else why not).
+
+    🚨 Two files that would make ONE name (`Show - 01.mkv` + `Show - 01.mp4`) both refuse (LEDGER-HOT: never let
+    two videos target one output path) -- ⚠ A19-8: and so does one whose SIBLING shares its stem though the sibling
+    isn't in this run (one file picked, the waiting strip's button).
+    ⚠ A19-7 -- `present` too when a video carries a Japanese TEXT track inside (`present.read_tracks`, hato's own
+    read rule): never an hour of listening for a subtitle it already has. `tracks(video)` -> kind (a seam)."""
+    from hato import present
+    presence = presence or presence_for()
+    tracks = tracks or (lambda video: present.read_tracks(video, LANG).kind)
     targets = [(m, target_of(m, beside)) for m in media_paths]
     count = collections.Counter(os.path.normcase(str(t)) for _m, t in targets)
     out = []
     for media, target in targets:
         why = None
-        if count[os.path.normcase(str(target))] > 1:
+        if count[os.path.normcase(str(target))] > 1 or sibling_shares_stem(media):
             why = u"clash"
         elif os.path.lexists(str(target)):
             why = u"already"
-        elif (presence.find(media, folder=str(target.parent)) or
-              (keep.also_beside(None, beside) and presence.find(media))):
+        elif has_subtitle(media, target, beside, presence):
             why = u"present"
+        elif os.path.splitext(media)[1].lower() in VIDEO_EXTENSIONS:
+            try:
+                if tracks(media) == present.EMBEDDED:
+                    why = u"present"
+            except Exception:                           # noqa: BLE001 -- an unread container is listened to
+                pass
         out.append((media, target, why))
     return out
+
+
+def presence_for():
+    from hato.present import Presence
+    return Presence(LANG)
+
+
+def has_subtitle(media, target, beside, presence):
+    u"""Is a real Japanese subtitle there for `media`, by hato's own present-check -- asked AFRESH (its listing of
+    the folder forgotten first: A19-9)?"""
+    from hato import keep
+    presence.forget(str(target.parent))
+    also = keep.also_beside(None, beside)
+    if also:
+        presence.forget(os.path.dirname(media))
+    return bool(presence.find(media, folder=str(target.parent)) or (also and presence.find(media)))
+
+
+def sibling_shares_stem(media):
+    u"""A19-8 -- another video or audio file beside `media` with the same stem (normcased): one made name for two."""
+    folder, name = os.path.split(media)
+    stem = os.path.normcase(os.path.splitext(name)[0])
+    try:
+        names = os.listdir(folder or u".")
+    except OSError:
+        return False
+    return any(n != name and is_media(n) and os.path.normcase(os.path.splitext(n)[0]) == stem for n in names)
 
 
 def addon_argv(media, output, model, gpu=True):
@@ -586,10 +672,10 @@ def _spawn(argv):
                             **extra)
 
 
-def listen(media, output, model, progress=None, should_stop=None, spawn=None):
+def listen(media, output, model, progress=None, should_stop=None, spawn=None, gpu=True):
     u"""Run the add-on on one file. -> its `result` line (dict), or {"outcome": "stopped"}. ⛔ A stop ends the
     process: what it was writing is in hato's cache, never beside the video."""
-    process = (spawn or _spawn)(addon_argv(media, output, model))
+    process = (spawn or _spawn)(addon_argv(media, output, model, gpu=gpu))
     result = None
     try:
         for raw in process.stdout:
@@ -616,7 +702,8 @@ def listen(media, output, model, progress=None, should_stop=None, spawn=None):
     return result or {u"outcome": u"error", u"why": u"the speech add-on stopped without an answer"}
 
 
-def make(targets, model=None, beside=True, skip=(), progress=None, should_stop=None, spawn=None, now=None):
+def make(targets, model=None, beside=True, skip=(), progress=None, should_stop=None, spawn=None, now=None,
+         tracks=None):
     u"""⭐ 19d -- for each video / audio file: `<stem>.ja.from-audio.srt` made from its own audio. -> rows, one a
     file: {"path", "outcome", "subtitle"?, "why"?}. outcomes: made · present (a real Japanese subtitle is there) ·
     already (a made one is there) · clash · no_speech · unreadable · stopped · error.
@@ -632,8 +719,11 @@ def make(targets, model=None, beside=True, skip=(), progress=None, should_stop=N
     rows = []
     work = downloads_dir() / u"out"
     work.mkdir(parents=True, exist_ok=True)
+    presence = presence_for()
+    gpu = [True]                                    # ⚠ A19-10: off for the rest of the run once the card failed
     with RunLock(root() / LOCK_NAME):
-        for media, target, why in plan(media_under(targets, skip), beside=beside):
+        for media, target, why in plan(media_under(targets, skip), beside=beside, presence=presence,
+                                       tracks=tracks):
             if should_stop is not None and should_stop():
                 rows.append({u"path": media, u"outcome": u"stopped"})
                 continue
@@ -647,11 +737,27 @@ def make(targets, model=None, beside=True, skip=(), progress=None, should_stop=N
             def told(line, media=media, n=len(rows)):
                 if progress is not None:
                     progress(dict(line, path=media, index=n))
-            answer = listen(media, temporary, model, progress=told, should_stop=should_stop, spawn=spawn)
+            # ⚠ A19-9 -- asked AGAIN just before listening: an hour-long folder run meets a daily run that kept a
+            # real subtitle for a later file meanwhile
+            if has_subtitle(media, target, beside, presence):
+                rows.append({u"path": media, u"outcome": u"present"})
+                continue
+            answer = listen(media, temporary, model, progress=told, should_stop=should_stop, spawn=spawn,
+                            gpu=gpu[0])
+            if answer.get(u"outcome") == u"error" and gpu[0] and model == ACCURATE and installed(GPU):
+                # ⚠ A19-10 -- a card CUDA can't use after all (a driver too old for NVIDIA's libraries): the CPU,
+                # for this file and every file after it in this run
+                gpu[0] = False
+                if os.path.exists(temporary):
+                    os.remove(temporary)
+                answer = listen(media, temporary, model, progress=told, should_stop=should_stop, spawn=spawn,
+                                gpu=False)
             outcome = answer.get(u"outcome")
             row = {u"path": media, u"outcome": outcome if outcome in (
-                u"made", u"no_speech", u"unreadable", u"stopped") else u"error"}
-            if outcome == u"made" and os.path.isfile(temporary):
+                u"made", u"no_speech", u"unreadable", u"too_long", u"stopped") else u"error"}
+            if outcome == u"made" and os.path.isfile(temporary) and has_subtitle(media, target, beside, presence):
+                row = {u"path": media, u"outcome": u"present"}      # A19-9: a real one arrived while it listened
+            elif outcome == u"made" and os.path.isfile(temporary):
                 try:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     keep._place(temporary, target)

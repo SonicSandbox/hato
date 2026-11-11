@@ -29,7 +29,8 @@ ACTIONS = ("status", "install", "remove", "pick", "make")
 #: The row words a person reads (PROVISIONAL, 19h), one per outcome.
 WORDS = {u"made": u"made from audio", u"present": u"already has Japanese subtitles",
          u"already": u"already made from audio", u"clash": u"two files here would make one subtitle name",
-         u"no_speech": u"no speech heard", u"unreadable": u"couldn't read its audio", u"stopped": u"stopped",
+         u"no_speech": u"no speech heard", u"unreadable": u"couldn't read its audio",
+         u"too_long": u"longer than 4 hours: split it first", u"stopped": u"stopped",
          u"error": u"couldn't make it"}
 
 
@@ -42,6 +43,8 @@ def register(parser):
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--progress", action="store_true", help="with --json: progress lines as it goes")
     parser.add_argument("--cancel-file", default=None, help="make: stop when this file appears")
+    parser.add_argument("--list", default=None,
+                        help="make: a UTF-8 file of paths, one a line (the window's: never a command line too long)")
 
 
 def _out(args, obj, text=None):
@@ -82,6 +85,10 @@ def _install(args):
     except speech.SpeechError as exc:
         _out(args, {u"type": u"result", u"ok": False, u"error": str(exc)}, str(exc))
         return EXIT_FAILED
+    except OSError as exc:                                  # ⚠ A19-13: a full disk, a folder hato can't write
+        said = u"it couldn't be saved (%s) -- is the disk full?" % (exc.strerror or type(exc).__name__)
+        _out(args, {u"type": u"result", u"ok": False, u"error": said}, said)
+        return EXIT_FAILED
     _out(args, {u"type": u"result", u"ok": True, u"installed": parts, u"picked": args.model},
          u"installed: %s" % (u", ".join(parts) or u"nothing new"))
     return EXIT_OK
@@ -104,6 +111,14 @@ def _pick(args):
 
 
 def _make(args):
+    if args.list:
+        try:
+            with open(args.list, encoding="utf-8") as f:
+                args.paths = list(args.paths) + [line.rstrip(u"\r\n") for line in f if line.strip()]
+        except (OSError, UnicodeError) as exc:
+            said = u"the list of files couldn't be read (%s)" % type(exc).__name__
+            _out(args, {u"type": u"result", u"ok": False, u"error": said}, said)
+            return EXIT_USAGE
     if not args.paths:
         _out(args, {u"type": u"result", u"ok": False, u"error": u"name a video, an audio file or a folder"},
              u"name a video, an audio file or a folder")

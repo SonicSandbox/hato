@@ -1088,9 +1088,16 @@ class _Run(object):
         # the ONE funnel, for the same reason as the hand-off. ⛔ Only a file hato made
         # and nobody changed (`speech.made_by_hato`): Surasura's own copy beside a video
         # carries the same name and is never touched. ⛔ `speech.retire` never raises.
-        if result.wrote and not result.skip:
+        # ⚠ A19-4 -- never for a Layer 15 keep: a file NOBODY TIMED never displaces one made from the
+        # video's own audio, which is in sync with it.
+        if result.wrote and not result.skip and result.untimed is None:
             from hato import speech
-            speech.retire(result.video, beside=self.s.write_beside_video)
+            gone = speech.retire(result.video, beside=self.s.write_beside_video)
+            if gone:
+                # ⚠ A19-5 -- a decision made on the person's behalf is said where they look (LEDGER-HOT)
+                self.report.notes.append(
+                    u"%s: the subtitle hato made from its audio went to the trash (a real one was found)"
+                    % os.path.basename(result.video))
 
     def _hand_off(self, show, result):
         u"""⭐ LAYER 16 -- one kept file to Surasura, its record built FROM THE ROAD

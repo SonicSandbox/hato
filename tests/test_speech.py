@@ -36,6 +36,8 @@ def root(tmp_path, monkeypatch):
     monkeypatch.setenv("HATO_NO_NETWORK", "1")
     monkeypatch.delenv("HATO_HELD_BY", raising=False)
     monkeypatch.setattr(speech, "surasura_found", lambda: False)
+    from hato import present
+    monkeypatch.setattr(present, "read_tracks", lambda video, lang, reader=None: present.Tracks(present.FETCH, u""))
     return tmp_path
 
 
@@ -248,8 +250,12 @@ def test_remove_frees_hatos_own_files_and_leaves_every_subtitle_beside_the_video
     beside = tmp_path / "Anime" / ("Show - 01" + speech.SUFFIX)
     beside.parent.mkdir(parents=True)
     beside.write_text(JA, encoding="utf-8")
+    speech._remember(beside, speech.FAST)
     assert speech.remove() > 0
-    assert not speech.root().exists() and beside.read_text(encoding="utf-8") == JA
+    assert not speech.installed(speech.ADDON) and not speech.installed(speech.FAST)
+    assert beside.read_text(encoding="utf-8") == JA
+    # ⚠ A19-6 -- the record of what hato made, and the pick, stay: 19f still works after a Remove
+    assert speech.made_by_hato(beside) and speech.picked() == speech.FAST
 
 
 # ---------------------------------------------------------------------------
@@ -489,7 +495,7 @@ def test_the_add_ons_answer_for_a_missing_model_is_one_result_line(tmp_path, cap
 class Args(object):
     def __init__(self, **k):
         self.__dict__.update(dict(action=u"status", paths=[], model=None, gpu=False, json=True, progress=False,
-                                  cancel_file=None), **k)
+                                  cancel_file=None, list=None), **k)
 
 
 def test_status_says_what_is_there_and_each_download_size(root, capsys):
@@ -516,3 +522,106 @@ def test_make_stops_at_the_cancel_file_and_counts_each_outcome(ready, tmp_path, 
     assert [ln["outcome"] for ln in lines if ln["type"] == u"speech"] == [u"stopped", u"stopped"]
     assert lines[-1]["counts"] == {u"stopped": 2}
     assert _leftovers(folder, [u"Show - 01.mkv", u"Show - 02.mkv"]) == []
+
+
+# ---------------------------------------------------------------------------
+# the adversary pass (ADVERSARY-2026-11-12.md, A19-*)
+# ---------------------------------------------------------------------------
+
+def test_a_416_to_a_resume_throws_the_part_away_and_starts_once_from_nothing(root):
+    u"""A19-15 -- a `.part` longer than the server's file (a replaced file): never the same error every try."""
+    data = os.urandom(300)
+    pin = _pin(u"m.bin", data)
+    part = speech.downloads_dir() / u"m.bin.part"
+    part.parent.mkdir(parents=True, exist_ok=True)
+    part.write_bytes(os.urandom(120))
+    starts = []
+
+    def get(url, start):
+        starts.append(start)
+        if start:
+            raise speech.RangeRefused()
+        yield False
+        yield data
+    assert speech.fetch(pin, get=get).read_bytes() == data and starts == [120, 0]
+
+
+def test_install_and_remove_wait_for_no_one_while_subtitles_are_being_made(root, monkeypatch):
+    u"""A19-14 -- never a model replaced or deleted under a run that is using it: the make's lock refuses."""
+    from hato.runlock import RunLock
+    get = _published(monkeypatch)
+    with RunLock(speech.root() / speech.LOCK_NAME):
+        with pytest.raises(speech.SpeechError, match=u"being made from audio"):
+            speech.install(speech.FAST, get=get)
+        with pytest.raises(speech.SpeechError, match=u"being made from audio"):
+            speech.remove()
+
+
+def test_a_video_with_a_japanese_text_track_inside_is_present(root, tmp_path):
+    u"""A19-7 -- hato's own read rule: never an hour of listening for a subtitle the video already carries."""
+    from hato import present
+    folder = _media(tmp_path / "Show", u"Show - 01.mkv", u"Show - 02.mkv", u"Show - 03.mp3")
+    inside = {u"Show - 01.mkv": present.EMBEDDED}
+    got = {os.path.basename(m): why for m, _t, why in speech.plan(
+        speech.media_under([folder]), tracks=lambda v: inside.get(os.path.basename(v), present.FETCH))}
+    assert got == {u"Show - 01.mkv": u"present", u"Show - 02.mkv": None, u"Show - 03.mp3": None}
+
+
+def test_one_file_whose_sibling_shares_its_stem_refuses_though_the_sibling_is_not_in_the_run(root, tmp_path):
+    u"""A19-8 -- `Show - 01.mp4` picked alone beside `Show - 01.mkv`: one made name would serve both."""
+    folder = _media(tmp_path / "Show", u"Show - 01.mkv", u"Show - 01.mp4", u"Show - 02.mkv")
+    got = speech.plan([str(folder / u"Show - 01.mp4"), str(folder / u"Show - 02.mkv")])
+    assert [(os.path.basename(m), why) for m, _t, why in got] == [(u"Show - 01.mp4", u"clash"),
+                                                                 (u"Show - 02.mkv", None)]
+
+
+def test_a_real_subtitle_that_arrives_while_it_listens_wins(ready, tmp_path):
+    u"""A19-9 -- asked again before placing: a daily run kept `Show - 01.ja.srt` meanwhile; nothing made beside it."""
+    folder = _media(tmp_path / "Show", u"Show - 01.mkv")
+    real = folder / u"Show - 01.ja.srt"
+    rows = speech.make([folder], model=speech.FAST,
+                       spawn=FakeAddon(on_start=lambda _a: real.write_text(JA, encoding="utf-8")))
+    assert [r["outcome"] for r in rows] == [u"present"]
+    assert _leftovers(folder, [u"Show - 01.mkv"]) == [real.name]
+
+
+def test_a_card_cuda_cant_use_falls_back_to_the_cpu_for_the_rest_of_the_run(root, monkeypatch, tmp_path):
+    u"""A19-10 -- an error with the NVIDIA pack: that file again on the CPU, and every file after it."""
+    monkeypatch.setattr(speech, "installed", lambda part: True)
+    folder = _media(tmp_path / "Show", u"Show - 01.mkv", u"Show - 02.mkv")
+    seen = []
+
+    def spawn(argv):
+        seen.append(u"--gpu" in argv)
+        return FakeAddon(outcome=u"error" if u"--gpu" in argv else u"made")(argv)
+    rows = speech.make([folder], model=speech.ACCURATE, spawn=spawn)
+    assert [r["outcome"] for r in rows] == [u"made", u"made"] and seen == [True, False, False]
+
+
+def test_make_reads_its_paths_from_a_list_file_one_a_line(ready, tmp_path, capsys, monkeypatch):
+    u"""A19-2 -- the window's few hundred waiting episodes travel in a file, never on a command line."""
+    folder = _media(tmp_path / "Show", u"Show - 01.mkv", u"Show - 02.mkv")
+    listed = tmp_path / "list.txt"
+    listed.write_text(u"%s\n\n%s\n" % (folder / u"Show - 01.mkv", folder / u"Show - 02.mkv"), encoding="utf-8")
+    monkeypatch.setattr(speech, "_spawn", FakeAddon())
+    assert command.run(Args(action=u"make", list=str(listed), model=speech.FAST)) == 0
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [ln["outcome"] for ln in lines if ln["type"] == u"speech"] == [u"made", u"made"]
+    assert command.run(Args(action=u"make", list=str(tmp_path / "gone.txt"))) == command.EXIT_USAGE
+
+
+def test_an_untimed_keep_never_sends_the_made_file_to_the_trash(root, monkeypatch):
+    u"""A19-4 -- a Layer 15 file nobody timed never displaces one made from the video's own audio; a timed one
+    does, and the run's report says where it went (A19-5)."""
+    from types import SimpleNamespace as NS
+    from hato import pipeline
+    asked = []
+    monkeypatch.setattr(speech, "retire", lambda video, beside=True: asked.append(video) or u"x" + speech.SUFFIX)
+    for untimed, retired in (({u"tier": u"same-provider"}, False), (None, True)):
+        asked[:] = []
+        run = NS(_not_taken={}, report=NS(results=[], notes=[]), progress=lambda *a, **k: None, handoff=None,
+                 s=NS(write_beside_video=True))
+        result = NS(not_taken=None, video=u"D:/Anime/Show - 01.mkv", wrote=True, skip=None, untimed=untimed)
+        pipeline._Run._keep_result(run, NS(results=[]), result)
+        assert bool(asked) is retired
+        assert bool(run.report.notes) is retired and (not retired or u"went to the trash" in run.report.notes[0])
