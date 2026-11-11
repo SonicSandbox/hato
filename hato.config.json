@@ -239,6 +239,12 @@
         "why": "LAYER 11, auto-update (ruled 2026-09-24). 11a: X.Y.Z only (surasura's 2.2-vs-2.2.0 offered a copy itself); the manifest's strict parser, one refusal per case against an accepted control; the Ed25519 signature with THROWAWAY keys -- a changed byte, a stranger's key, garbage, no key and no PyCryptodome all refused, a second key is how one rotates; keygen never overwrites and refuses a git work tree; the manifest is read out of the published zip and the written pair checked the way an install checks it. Cannot cover whether GitHub still answers in the recorded shape, or whether a FROZEN build carries PyCryptodome -- the smoke drives the built bytes for that (11h)."
       },
       {
+        "name": "speech",
+        "cmd": ["-m", "pytest", "tests/test_speech.py", "-q", "--no-header"],
+        "default": true,
+        "why": "LAYER 19, subtitles made from the audio. Every download pinned (https, size, sha256), resumed from its part, checked whole and thrown away when wrong; archives judged before a byte is written (zip-slip, links, walls); install brings only the add-on and the picked model, nothing from a held copy, the pick never in config.toml; make places <stem>.ja.from-audio.srt whole, never over a file, skips a video with a real Japanese subtitle, refuses two videos making one name, leaves nothing beside a video on a stop; 19f trashes only what hato made and nobody changed. Cannot cover what the models hear: the add-on is a stand-in here; the real one runs in speech_live and the frozen one in the smoke."
+      },
+      {
         "name": "gui_updates",
         "cmd": ["-m", "pytest", "tests/test_gui_updates.py", "-q", "--no-header"],
         "default": true,

@@ -43,6 +43,7 @@ JA_TAGS = ("ja", "jpn", "jp", "japanese")
 # The cues: one sentence where it can be, never longer than MAX_CUE_S, never across a pause over GAP_S
 MAX_CUE_S = 7.0
 GAP_S = 0.8
+TOKEN_MAX_S = 1.0                # a token whose model gives no end lasts at most this long
 ENDS = u"。！？!?"
 FAST_SPEECH_S = 8.0              # Parakeet reads one voice region at a time: short ones
 WHISPER_SPEECH_S = 30.0          # Whisper reads 30 s windows
@@ -164,8 +165,9 @@ def cues_from_tokens(pieces):
     cur = None
     for _start, end, toks in pieces:
         for i, (t, t_end, tok) in enumerate(toks):
-            if t_end is None:
-                t_end = toks[i + 1][0] if i + 1 < len(toks) else end
+            if t_end is None:                   # Parakeet gives starts only: a token lasts until the next one,
+                #                                     never past TOKEN_MAX_S (a pause stays a pause)
+                t_end = min(toks[i + 1][0] if i + 1 < len(toks) else end, t + TOKEN_MAX_S)
             t_end = min(max(t_end, t), end)
             if cur and (t - cur[1] > GAP_S or t_end - cur[0] > MAX_CUE_S):
                 cues.append(cur)
