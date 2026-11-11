@@ -105,16 +105,13 @@ def test_a_download_cut_short_resumes_from_its_part_and_is_checked_whole(root):
     with pytest.raises(speech.SpeechError):
         speech.fetch(pin, get=get)
     part = speech.downloads_dir() / u"model.bin.part"
-    assert 0 < part.stat().st_size < 1000, u"what came before the cut is kept"
+    kept = part.stat().st_size
+    assert 0 < kept < 1000, u"what came before the cut is kept"
     seen = []
     got = speech.fetch(pin, get=get, progress=lambda done, total: seen.append((done, total)))
     assert got.read_bytes() == data and not part.exists()
-    assert get.state["starts"] == [0, part_size(get)], u"the second asks from where the part ended"
-    assert seen[-1] == (1000, 1000)
-
-
-def part_size(get):
-    return get.state["starts"][1]
+    assert get.state["starts"] == [0, kept], u"the second asks from where the part ended"
+    assert seen[0][0] > kept and seen[-1] == (1000, 1000), u"its progress goes on from the part"
 
 
 def test_a_download_whose_sha256_is_wrong_is_thrown_away_and_said(root):
@@ -129,9 +126,11 @@ def test_a_download_running_past_its_pinned_size_is_thrown_away(root):
     u"""More bytes than the pin names is another file: never kept, never cut to fit."""
     data = os.urandom(500)
     pin = speech.Pin(u"x.bin", u"https://example.invalid/x.bin", 200, _sha(data[:200]))
+    seen = []
     with pytest.raises(speech.SpeechError, match=u"thrown away"):
-        speech.fetch(pin, get=_server({pin.url: data}))
+        speech.fetch(pin, get=_server({pin.url: data}), progress=lambda done, total: seen.append(done))
     assert not list(speech.downloads_dir().iterdir())
+    assert seen and max(seen) <= 200, u"never a byte written past the pinned size: %s" % max(seen)
 
 
 def test_no_network_refuses_before_a_socket(root):
@@ -625,3 +624,20 @@ def test_an_untimed_keep_never_sends_the_made_file_to_the_trash(root, monkeypatc
         pipeline._Run._keep_result(run, NS(results=[]), result)
         assert bool(asked) is retired
         assert bool(run.report.notes) is retired and (not retired or u"went to the trash" in run.report.notes[0])
+
+
+
+@pytest.mark.skipif(os.name != "nt", reason=u"the add-on is Windows-only: its rename is the last wall there")
+def test_a_file_that_appears_while_the_add_on_writes_is_never_written_over(tmp_path, monkeypatch):
+    u"""M19-10's wall: the check before writing AND the rename after (Windows refuses an existing target) -- a file
+    that appears between the two is never replaced, and nothing of the add-on's is left."""
+    path = tmp_path / "x.srt"
+    real = os.fsync
+
+    def appears(fd):
+        real(fd)
+        path.write_text(u"theirs", encoding="utf-8")
+    monkeypatch.setattr(speech_engine.os, "fsync", appears)
+    with pytest.raises(FileExistsError):
+        speech_engine.write_whole(str(path), JA)
+    assert path.read_text(encoding="utf-8") == u"theirs" and os.listdir(str(tmp_path)) == [u"x.srt"]

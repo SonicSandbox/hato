@@ -608,12 +608,13 @@ def plan(media_paths, beside=True, presence=None, tracks=None):
     from hato import present
     presence = presence or presence_for()
     tracks = tracks or (lambda video: present.read_tracks(video, LANG).kind)
-    targets = [(m, target_of(m, beside)) for m in media_paths]
-    count = collections.Counter(os.path.normcase(str(t)) for _m, t in targets)
     out = []
-    for media, target in targets:
+    for media in media_paths:
+        target = target_of(media, beside)
         why = None
-        if count[os.path.normcase(str(target))] > 1 or sibling_shares_stem(media):
+        # two files making one name always sit in one folder with one stem (hato's own folder is one a video
+        # folder): the sibling check refuses both, whether or not the other is in this run
+        if sibling_shares_stem(media):
             why = u"clash"
         elif os.path.lexists(str(target)):
             why = u"already"
