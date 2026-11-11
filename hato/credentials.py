@@ -40,17 +40,56 @@ _FILE_HEADER = (
     "# The key is the LAST non-empty line of this file; lines above it are notes.\n"
     "# Never commit this file, never paste it into config.toml.\n")
 
+#: ⭐ LAYER 20 -- the keys hato can hold: {service: (its name, its env var, where to get
+#: one)}. jimaku's is 1.0.0's, word for word. The two CHINESE sources' (`hato/chinese.py`)
+#: are the learner's OWN, each in its own file beside key.txt (`paths.key_file_path`),
+#: under exactly jimaku's rules: never in config.toml, a log, an argv or a message, and
+#: four characters at most ever shown. ⛔ No dev-keystore fallback for them -- a check
+#: can never borrow a real token by running in this tree (LEDGER-HOT, the smoke's key).
+JIMAKU = "jimaku"
+ASSRT = "assrt"
+OPENSUBTITLES = "opensubtitles"
+SERVICES = {
+    JIMAKU: (u"jimaku", "HATO_JIMAKU_KEY", u"https://jimaku.cc/account -> Developer Access"),
+    ASSRT: (u"assrt.net", "HATO_ASSRT_KEY",
+            u"https://assrt.net -> sign in -> 用户面板 (your user panel) -> API Token"),
+    OPENSUBTITLES: (u"OpenSubtitles", "HATO_OPENSUBTITLES_KEY",
+                    u"https://www.opensubtitles.com/consumers -> New consumer -> API key"),
+}
+
+
+def _service(service):
+    if service not in SERVICES:
+        raise ValueError("service must be one of %s, got %r" % (", ".join(sorted(SERVICES)), service))
+    return SERVICES[service]
+
+
+def _key_path(service):
+    u"""The key file for `service`. ⛔ jimaku's is asked exactly as before 1.3, with no
+    argument (a suite's own stand-in for `paths.key_file_path` takes none)."""
+    return paths.key_file_path() if service == JIMAKU else paths.key_file_path(service)
+
+
+def _header(service):
+    if service == JIMAKU:
+        return _FILE_HEADER
+    name, _env, where = _service(service)
+    return (u"# hato's %s key, for Chinese subtitles. Get one at %s.\n"
+            u"# The key is the LAST non-empty line of this file; lines above it are notes.\n"
+            u"# Never commit this file, never paste it into config.toml.\n" % (name, where))
+
 
 class KeyMissing(Exception):
     """No usable key. The message names where it looked and what would fix it."""
 
 
 class Key(object):
-    __slots__ = ("_value", "source")
+    __slots__ = ("_value", "source", "service")
 
-    def __init__(self, value, source):
+    def __init__(self, value, source, service=JIMAKU):
         self._value = value
         self.source = source
+        self.service = service
 
     def reveal(self):
         """The raw key. ⛔ For the Authorization header and nothing else."""
@@ -62,7 +101,8 @@ class Key(object):
         return u"…" + tail if tail else u"(shorter than 4 characters)"
 
     def __repr__(self):
-        return "<jimaku key from %s, ending %s>" % (self.source, self.hint)
+        return "<%s key from %s, ending %s>" % (SERVICES.get(self.service, (self.service,))[0],
+                                                self.source, self.hint)
 
     __str__ = __repr__
 
@@ -71,7 +111,7 @@ class Key(object):
 
     def __reduce__(self):
         # Pickling would carry the value into whatever file or process gets it.
-        raise TypeError("a jimaku key is never serialised")
+        raise TypeError("a %s key is never serialised" % SERVICES.get(self.service, (self.service,))[0])
 
 
 def read_key_file(path):
@@ -179,7 +219,7 @@ def _owner_only(path):
     return True
 
 
-def check_key_value(value):
+def check_key_value(value, service=JIMAKU):
     """A raw key string -> the cleaned key, or raise KeyMissing.
 
     ⭐ THE SAME SENTENCES `read_key_file` USES, BECAUSE THERE ARE NOW TWO ROADS
@@ -192,23 +232,27 @@ def check_key_value(value):
     report at once.
     """
     cleaned = (value or u"").strip()
+    where = _service(service)[2]
     if not cleaned:
-        raise KeyMissing("No key was given. Get one at https://jimaku.cc/account "
-                         "-> Developer Access.")
+        raise KeyMissing("No key was given. Get one at %s." % where)
     if cleaned.startswith("#"):
         raise KeyMissing("That looks like a comment, not a key. Paste the key "
-                         "itself from https://jimaku.cc/account -> Developer "
-                         "Access.")
+                         "itself from %s." % where)
     if len(cleaned.splitlines()) > 1:
         raise KeyMissing("A key is one line, and %d were given. Paste just the "
                          "key." % len(cleaned.splitlines()))
     if any(ch.isspace() for ch in cleaned):
         raise KeyMissing("That key has a space in it, so it is probably a "
                          "sentence or a copied label rather than the key.")
+    if service != JIMAKU and not cleaned.isascii():
+        # ⭐ LAYER 20 -- a header is Latin-1: a pasted zero-width or full-width character
+        # would fail every request (and its error would carry the header whole)
+        raise KeyMissing("That key holds a character that is not plain ASCII (a hidden "
+                         "zero-width space, or a full-width letter). Paste it again as plain text.")
     return cleaned
 
 
-def save_key_value(value, destination=None):
+def save_key_value(value, destination=None, service=JIMAKU):
     """Put a key STRING into <root>/key.txt. -> (Key, Path).
 
     ⭐ THE NON-FILE ROAD (RUNBOOK 7a). `--set-from` takes a path, so the window's
@@ -223,27 +267,29 @@ def save_key_value(value, destination=None):
     on the destination would truncate an existing, working key file the moment it
     opened, losing it if the write then raised.
     """
-    destination = Path(paths.key_file_path() if destination is None else destination)
-    value = check_key_value(value)                  # validated BEFORE anything is written
-    return _write_key(value, destination)
+    destination = Path(_key_path(service) if destination is None else destination)
+    value = check_key_value(value, service)         # validated BEFORE anything is written
+    return _write_key(value, destination, service)
 
 
-def save_key_from(source, destination=None):
+def save_key_from(source, destination=None, service=JIMAKU):
     """Copy the key out of `source` into <root>/key.txt. -> (Key, Path)."""
     source = Path(source)
-    destination = Path(paths.key_file_path() if destination is None else destination)
+    destination = Path(_key_path(service) if destination is None else destination)
     if not source.is_file():
         raise KeyMissing("No key file at %s. Save the key from "
-                         "https://jimaku.cc/account -> Developer Access to a text "
-                         "file first, then point --set-from at it." % source)
+                         "%s to a text file first, then point --set-from at it."
+                         % (source, _service(service)[2]))
     if source.resolve() == destination.resolve():
         raise KeyMissing("%s is already hato's key file -- nothing to copy."
                          % destination)
     value = read_key_file(source)                      # validated BEFORE anything is written
-    return _write_key(value, destination)
+    if service != JIMAKU:
+        value = check_key_value(value, service)        # ⭐ LAYER 20 -- plain ASCII only
+    return _write_key(value, destination, service)
 
 
-def _write_key(value, destination):
+def _write_key(value, destination, service=JIMAKU):
     """The shared write. ⛔ Both roads land here; neither has its own copy."""
     _refuse_a_repo(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -251,7 +297,7 @@ def _write_key(value, destination):
     try:
         handle = os.open(str(temp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(_FILE_HEADER)
+            fh.write(_header(service))
             fh.write(value + "\n")
         _owner_only(temp)
         os.replace(str(temp), str(destination))
@@ -262,11 +308,14 @@ def _write_key(value, destination):
             except OSError:
                 pass
     _owner_only(destination)
-    return Key(value, "%s: %s" % ("key.txt in hato's data folder", destination)), destination
+    return Key(value, "%s: %s" % ("%s in hato's data folder" % destination.name, destination),
+               service), destination
 
 
-def resolve_key(start=None):
+def resolve_key(start=None, service=JIMAKU):
     """-> Key, or raise KeyMissing."""
+    if service != JIMAKU:
+        return _resolve_other(service)
     env = os.environ.get("HATO_JIMAKU_KEY")
     if env is not None:
         value = env.strip()
@@ -288,3 +337,24 @@ def resolve_key(start=None):
             "key on the last line of that file (`hato key --set-from <file>` "
             "does it for you), or set HATO_JIMAKU_KEY." % (path, source))
     return Key(read_key_file(path), "%s: %s" % (source, path))
+
+
+def _resolve_other(service):
+    u"""⭐ LAYER 20 -- a Chinese source's key: its env var, then its own file in hato's
+    data folder. -> Key, or raise KeyMissing. ⛔ Never HATO_KEYFILE (that is jimaku's,
+    and the harness's pin) and never the source tree's keystore."""
+    name, env_name, where = _service(service)
+    env = os.environ.get(env_name)
+    if env is not None:
+        value = env.strip()
+        if not value:
+            raise KeyMissing("%s is set but empty. Unset it to use the key file, or set "
+                             "it to your %s key (%s)." % (env_name, name, where))
+        return Key(check_key_value(value, service), env_name, service)
+    path = Path(paths.key_file_path(service))
+    if not path.is_file():
+        raise KeyMissing(
+            "No %s key: %s does not exist. Get one at %s, then `hato key --service %s "
+            "--set-from -` (or set %s)." % (name, path, where, service, env_name))
+    return Key(check_key_value(read_key_file(path), service),
+               "%s in hato's data folder: %s" % (path.name, path), service)

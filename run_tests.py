@@ -317,6 +317,8 @@ def suite_env(temp_root, suite):
         # ⛔ No test reads the real keystore.
         env.pop("HATO_JIMAKU_KEY", None)
         env["HATO_KEYFILE"] = str(root / "no-such-key.txt")
+        env.pop("HATO_ASSRT_KEY", None)                 # ⭐ LAYER 20
+        env.pop("HATO_OPENSUBTITLES_KEY", None)
     extra = [str(HERE)]
     checkout = checkout_of_tsubasa()
     if checkout is not None:

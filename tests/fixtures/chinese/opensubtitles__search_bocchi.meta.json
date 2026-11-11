@@ -1,0 +1,14 @@
+{
+ "body_kept": true,
+ "bytes": 3752,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "GET",
+ "note": "",
+ "provenance": "SHAPED from the service's documented/recorded answer (see make_fixtures.py) -- no real key was available; re-capture with one.",
+ "response_headers": {
+  "content-type": "application/json; charset=utf-8"
+ },
+ "sha256": "682637ba7299ea231d202bc426fbf1c84f8c8465283120893f5fa495c708c683",
+ "status": 200,
+ "url": "https://api.opensubtitles.com/api/v1/subtitles?languages=zh-cn,zh-tw&query=bocchi+the+rock"
+}

@@ -327,6 +327,21 @@ def check_lang(value, where):
     return lang.lower()
 
 
+#: ⭐ LAYER 20 -- the tags a CHINESE run is asked by: Surasura passes `--lang zh`, and a
+#: person may write any of these in config.toml. ⛔ STANDARD LIBRARY ONLY, like the rest
+#: of this module: the window and the tray ask it without loading tsubasa.
+CHINESE_TAGS = ("zh", "zho", "chi")
+
+
+def is_chinese(lang):
+    u"""True when a run (or the window) is for CHINESE subtitles. -> bool
+
+    ⛔ Everything Layer 20 adds -- assrt.net, OpenSubtitles, their keys, their words --
+    hangs off this one answer, so a Japanese learner (`ja`, the default) never sees,
+    is asked for or calls any of it."""
+    return isinstance(lang, str) and lang.strip().lower() in CHINESE_TAGS
+
+
 def _absolute(raw, where):
     """'' stays '' (meaning: the default). Anything else must be absolute."""
     if raw == "":

@@ -1,0 +1,14 @@
+{
+ "body_kept": true,
+ "bytes": 105,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "GET",
+ "note": "",
+ "provenance": "SHAPED from the service's documented/recorded answer (see make_fixtures.py) -- no real key was available; re-capture with one.",
+ "response_headers": {
+  "content-type": "application/json; charset=utf-8"
+ },
+ "sha256": "6587d39775f56d3c70825ddc3901b12ca494983141b44ac0d9d07e63adf65d33",
+ "status": 200,
+ "url": "https://api.assrt.net/v1/sub/search?q=Bocchi+the+Rock&cnt=15&pos=0&filelist=1"
+}

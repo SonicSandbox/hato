@@ -82,7 +82,11 @@ KEY_VERSION = "hato-resolution-v1"
 SOURCE_JIMAKU = "jimaku"
 SOURCE_ANIME_FALSE = "jimaku anime=false"
 SOURCE_KITSU = "kitsu"
-SOURCES = (SOURCE_JIMAKU, SOURCE_ANIME_FALSE, SOURCE_KITSU)
+#: ⭐ LAYER 20 -- a CHINESE run's show (`hato/chinese.py`): the title it searches the two
+#: sources by, never a jimaku entry. ⛔ In memory only -- not in the store's CHECK, so a
+#: Chinese resolution can never be cached under a title key a Japanese run reads.
+SOURCE_CHINESE = "assrt.net / OpenSubtitles"
+SOURCES = (SOURCE_JIMAKU, SOURCE_ANIME_FALSE, SOURCE_KITSU, SOURCE_CHINESE)
 
 MATCH_FLOOR = 0.6
 CONFIDENT = 0.75
@@ -375,7 +379,10 @@ def identify(title, *, season=None, year=None, client, cache, kitsu=None):
     propagate: the run stops, and nothing is cached."""
     query, season, year, full = _parts(title, season, year)
     key = cache_key(title, season, year)
-    hit = cache.get(key)
+    # ⭐ LAYER 20 -- a Chinese client (`jimaku` False) is never cached: the key is the
+    # TITLE's, shared with every Japanese run, and its "entry" is only that title.
+    jimaku = getattr(client, "jimaku", True)
+    hit = cache.get(key) if jimaku else None
     if hit is not None:
         return Identification(hit, 0, 0, True, [],
                               "from the resolution cache -- nothing was asked")
@@ -385,7 +392,18 @@ def identify(title, *, season=None, year=None, client, cache, kitsu=None):
     candidates, why = [], []
     resolved, doubts = None, []
 
-    for anime, source in ((True, SOURCE_JIMAKU), (False, SOURCE_ANIME_FALSE)):
+    roads = (((True, SOURCE_JIMAKU), (False, SOURCE_ANIME_FALSE)) if jimaku
+             else ())
+    if not jimaku:
+        # ⭐ LAYER 20 -- the "entry" IS the title (and its season, which the client keeps
+        # for OpenSubtitles): nothing to score and no season to doubt. ⚠ Ranked, a season-2
+        # title read as LOW CONFIDENCE every time ("nothing matched season 2").
+        entries = [e for e in client.search(query, anime=True, season=season)
+                   if _positive_int(e.get("id"))]
+        if entries:
+            resolved = Resolved(entries[0]["id"], (_entry_names(entries[0]) or [query])[0],
+                                False, 1.0, False, SOURCE_CHINESE)
+    for anime, source in roads:
         results = client.search(query, anime=anime)
         entries = [e for e in results if _positive_int(e.get("id"))]
         ranked = _rank([(e["id"], (_entry_names(e) or ["entry %d" % e["id"]])[0],
@@ -439,7 +457,8 @@ def identify(title, *, season=None, year=None, client, cache, kitsu=None):
     kitsu_calls = kitsu.calls - kitsu_before if kitsu is not None else 0
     if resolved is None:
         return Identification(None, calls, kitsu_calls, False, candidates, "; ".join(why))
-    cache.put(key, resolved)
+    if jimaku:
+        cache.put(key, resolved)
     reason = "%s: %s (score %d)" % (resolved.source, resolved.entry_name,
                                     round(resolved.score * 100))
     if doubts:

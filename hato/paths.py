@@ -119,14 +119,20 @@ def state_db_path():
     return data_root() / "state.db"
 
 
-def key_file_path():
+def key_file_path(service="jimaku"):
     """<root>/key.txt -- the ONE file `hato key --set-from` ever writes.
 
     ⛔ Deliberately NOT HATO_KEYFILE: the destination must be the same place a
     stranger, the window and this machine's next run all look, whatever a stray
     environment variable says.
+    ⭐ LAYER 20 -- a Chinese source's key is its own file beside it,
+    `<root>/<service>-key.txt` (`credentials.SERVICES`).
     """
-    return data_root() / KEY_FILENAME
+    if service == "jimaku":
+        return data_root() / KEY_FILENAME
+    if service not in ("assrt", "opensubtitles"):
+        raise ValueError("no key file for %r" % (service,))
+    return data_root() / ("%s-key.txt" % service)
 
 
 def default_subs_dir():

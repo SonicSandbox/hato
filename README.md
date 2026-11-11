@@ -131,6 +131,36 @@ From the Windows download, the command line is `hato-cli.exe` — so
 It never goes in a config file, and hato never prints more than its last four
 characters.
 
+### Chinese subtitles
+
+For a **Chinese** library — `lang = "zh"` in hato's config, or a Chinese library in
+Surasura, which runs hato with `--lang zh` — hato looks somewhere else: **assrt.net
+(射手网(伪)) first**, and **OpenSubtitles** when assrt.net has nothing. Each needs your
+own free key; a Japanese library never asks for either and never calls either.
+
+- **assrt.net** — sign in at [assrt.net](https://assrt.net) and copy the API token
+  from your user panel (用户面板). It answers 20 requests a minute; hato paces itself.
+- **OpenSubtitles** — make a free account at opensubtitles.com, then *API consumers →
+  New consumer*, and copy its API key. Without a logged-in account it gives **5
+  downloads a day**; hato says so when they run out and the rest wait for the next run.
+
+In the app they are in **Settings → Chinese subtitles** (the card shows only for a
+Chinese library). From the command line, the same rules as jimaku's key:
+
+```bash
+python -m hato key --service assrt --set-from -          # paste the token, then Ctrl+Z / Ctrl+D
+python -m hato key --service opensubtitles --set-from -
+python -m hato key --service assrt --test                # one request: does it work?
+```
+
+Simplified Chinese is tried before traditional, files that name only another language
+are never tried, and the timing still decides. Most Chinese subtitles are `.srt` (all of
+OpenSubtitles' are): with the default `.ass` preference, tick *“or another format”* to
+take them.
+
+字幕服务由 [assrt.net](https://assrt.net) 提供 · subtitles also from
+[OpenSubtitles](https://www.opensubtitles.com).
+
 ---
 
 ## When it isn't sure, it asks
@@ -238,6 +268,8 @@ has to work harder.
 ### Everything it talks to
 
 - **jimaku.cc** — finding, listing and downloading subtitles. The key is for this.
+- **assrt.net**, then **OpenSubtitles** — only for a **Chinese** library, each on your
+  own key: searching by the show's title, then the files it picks. Never for Japanese.
 - **Kitsu** — the second service above, only when a show's name is hard to place.
 - **GitHub** — the update check, and the new version's download when there is one.
 - **The anime-relations list**, from `raw.githubusercontent.com` — which episode

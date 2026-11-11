@@ -162,7 +162,10 @@ def hand_to_surasura(video, subtitle, written, forced, result=None):
         return None, []
     try:
         with state.StateDB() as db:
-            link = connect.refresh(cfg.surasura_connect)
+            # ⭐ LAYER 20 -- a Chinese pick goes to the Chinese library: the language the
+            # timed file was written with, else this hato's own
+            link = connect.refresh(cfg.surasura_connect, connect.handoff_lang(
+                getattr(result, "lang", None) or cfg.lang))
             handoff = connect.Handoff(db, cfg.surasura_connect,
                                       subs_dir=str(cfg.subs_dir_resolved), link=link)
             verdict = connect.FORCED if forced else connect.TIMED

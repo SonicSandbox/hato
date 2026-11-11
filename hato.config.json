@@ -173,6 +173,18 @@
         "why": "Step 3b. Candidate ranking: AI and non-Japanese filtered, .ass first even as [CHS, JPN], single- before multi-language within a format, alignment quality, version, size only within a format and language class, seen groups. Structurally cannot say whether the top candidate is RIGHT -- only the timing verdict knows."
       },
       {
+        "name": "chinese",
+        "cmd": ["-m", "pytest", "tests/test_chinese.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Layer 20. Chinese subtitles: assrt.net first, OpenSubtitles when it has nothing, on the learner's own keys -- each pack member a file, one detail per pack, the token a header and never a URL, no key on any download, a rejected key never retried (the two REAL refusals), pacing, a 429 and the used-up day, the unreachable ladder; simplified ranked first; a Chinese title never cached; the CLI end to end (assrt.net, the OpenSubtitles fallback, the source-aware words, the hand-off to the Chinese library); a Japanese run never builds any of it. Cannot cover the live services: the successes are SHAPED from their documented answers (no real key was available)."
+      },
+      {
+        "name": "gui-chinese",
+        "cmd": ["-m", "pytest", "tests/test_gui_chinese.py", "-q", "--no-header"],
+        "default": true,
+        "why": "Layer 20. The window's Chinese card: absent for a Japanese learner (no Chinese key file even read), there for a Chinese hato or a Surasura with a Chinese library; both keys through stdin with --service; jimaku's argv unchanged; a Chinese hato needs a Chinese key, not jimaku's."
+      },
+      {
         "name": "archives",
         "cmd": ["-m", "pytest", "tests/test_archives.py", "-q", "--no-header"],
         "default": true,

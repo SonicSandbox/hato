@@ -35,6 +35,10 @@ def register(parser):
                            "own key file. Use - to read the key from stdin, so "
                            "it is never written to a second file first")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    # ⭐ LAYER 20 -- the Chinese sources' keys, the learner's own. Absent: jimaku's, as ever.
+    parser.add_argument("--service", choices=sorted(credentials.SERVICES), default="jimaku",
+                        help="which key: jimaku (the default), or assrt / opensubtitles "
+                             "for Chinese subtitles")
 
 
 def _looked_in():
@@ -158,7 +162,73 @@ def _fail_test(args, headline, detail):
     return EXIT_FAILED
 
 
+def _other(args):
+    u"""⭐ LAYER 20 -- `--service assrt|opensubtitles`: the same three answers, for a Chinese
+    source's key. ⛔ The key is read from stdin or a file, never argv; at most its last four
+    characters are ever printed. `--test` spends ONE metered request."""
+    service = args.service
+    name = credentials.SERVICES[service][0]
+    if args.show:
+        try:
+            key = credentials.resolve_key(service=service)
+        except (credentials.KeyMissing, paths.PathError) as exc:
+            print(json.dumps({"found": False, "reason": str(exc)}, ensure_ascii=False)
+                  if args.json else "%s key   MISSING\n             %s" % (name, exc))
+            return EXIT_FAILED
+        print(json.dumps({"found": True, "hint": key.hint, "source": key.source},
+                         ensure_ascii=False)
+              if args.json else "%s key   found, ending %s\n             from %s"
+              % (name, key.hint, key.source))
+        return EXIT_OK
+    if getattr(args, "test", False):
+        from hato.chinese import ChineseClient
+        from hato.client import JimakuError, KeyRejected, Unreachable
+        try:
+            key = credentials.resolve_key(service=service)
+        except (credentials.KeyMissing, paths.PathError) as exc:
+            return _fail_test(args, u"no key to test", str(exc))
+        try:
+            said = ChineseClient(**{service: key}).check_key(service)
+        except KeyRejected as exc:
+            return _fail_test(args, u"%s refused the key" % name, str(exc))
+        except Unreachable as exc:
+            return _fail_test(args, u"%s could not be reached" % name, str(exc))
+        except JimakuError as exc:
+            return _fail_test(args, u"the test request failed", str(exc))
+        if args.json:
+            print(json.dumps({"ok": True, "connected": True, "hint": key.hint,
+                              "source": key.source, "said": said}, ensure_ascii=False))
+        else:
+            print("%s key   %s, ending %s" % (name, said, key.hint))
+        return EXIT_OK
+    from_stdin = args.set_from == "-"         # the window's road: never a second file
+    try:
+        if from_stdin:
+            raw = sys.stdin.buffer.read().decode("utf-8", "replace")
+            key, written = credentials.save_key_value(raw, service=service)
+        else:
+            key, written = credentials.save_key_from(args.set_from, service=service)
+    except (credentials.KeyMissing, paths.PathError, OSError) as exc:
+        if not isinstance(exc, (credentials.KeyMissing, paths.PathError)):
+            exc = (u"a file could not be read or written (%s). Make sure that folder is yours "
+                   u"and not read-only -- or set HATO_CACHE to a folder you own, or %s to the "
+                   u"key -- and try again." % (exc, credentials.SERVICES[service][1]))
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        else:
+            sys.stderr.write("hato: the key was not saved -- %s\n" % exc)
+        return EXIT_FAILED
+    if args.json:
+        print(json.dumps({"ok": True, "path": str(written), "hint": key.hint},
+                         ensure_ascii=False))
+    else:
+        print("%s key   saved, ending %s\n             %s" % (name, key.hint, written))
+    return EXIT_OK
+
+
 def run(args):
+    if getattr(args, "service", "jimaku") != "jimaku":
+        return _other(args)
     if args.show:
         return _show(args)
     if getattr(args, "test", False):

@@ -373,7 +373,8 @@ class VideoResult(object):
                  "reason", "jimaku_entry", "jimaku_filename", "attempts",
                  "candidates_offered", "tsubasa", "output_path", "kept_path",
                  "api_calls", "bytes_downloaded", "retry_after", "tried_before",
-                 "newest_offered", "taken_from", "not_taken", "untimed", "untimed_wait")
+                 "newest_offered", "taken_from", "not_taken", "untimed", "untimed_wait",
+                 "source")
 
     def __init__(self, video, outcome, reason=u"", **fields):
         self.video = str(getattr(video, "path", video))
@@ -412,6 +413,9 @@ class VideoResult(object):
         #: ⭐ LAYER 15 -- a wait on that road: `{choice, since, stops, waits_for}`, the
         #: dates absolute (ISO), so a view taken any day reads it alike (fork 13).
         self.untimed_wait = None
+        #: ⭐ LAYER 20 -- where a CHINESE run looked (`chinese.WHERE`); None on every
+        #: jimaku row, which then reads exactly as before (`report.as_dict`)
+        self.source = None
         for key, value in fields.items():
             setattr(self, key, value)
         if outcome != CONFIDENT and not (self.reason or u"").strip():
@@ -563,6 +567,8 @@ class _Run(object):
         self.kitsu = kitsu
         self.cache = cache if cache is not None else Cache()
         self.download = downloader if downloader is not None else client.download
+        #: ⭐ LAYER 20 -- where the run's files come from, in its words (`chinese.WHERE`)
+        self.where = getattr(client, "where", u"jimaku")
         self.engine = engine
         self.reader = reader
         #: ⭐ RUNBOOK 14c -- `tsubasa.extract_subtitle`, or a suite's own. ⚠ None on
@@ -580,7 +586,8 @@ class _Run(object):
         self.handoff = None
         if not settings.dry_run:
             try:
-                link = connect.refresh(settings.surasura_connect)
+                link = connect.refresh(settings.surasura_connect,
+                                       connect.handoff_lang(settings.lang))   # ⭐ LAYER 20
                 self.handoff = connect.Handoff(db, settings.surasura_connect,
                                                subs_dir=settings.subs_dir, link=link)
             except Exception as exc:                 # noqa: BLE001 -- never why a run fails
@@ -1063,6 +1070,8 @@ class _Run(object):
         # instead: whichever row it ends in says why, so it is the funnel's job.
         if result.not_taken is None:
             result.not_taken = self._not_taken.get(_key(result.video))
+        if self.where != u"jimaku" and result.source is None:
+            result.source = self.where          # ⭐ LAYER 20 -- never "a jimaku entry"
         show.results.append(result)
         self.report.results.append(result)
         # ⭐ THE ONE FUNNEL (RUNBOOK 7b). Every outcome -- decided at the gate,
@@ -1114,10 +1123,14 @@ class _Run(object):
             show=({u"title": resolved.entry_name, u"season": result.season,
                    u"episode": result.episode, u"movie": bool(resolved.movie)}
                   if resolved else None),
-            jimaku_entry_id=resolved.entry_id if resolved else None,
+            # ⭐ LAYER 20 -- a Chinese run's "entry" is only its title: no jimaku id, and the
+            # provider is the source that listed the file (`assrt` / `opensubtitles`)
+            jimaku_entry_id=resolved.entry_id if resolved and self.where == u"jimaku" else None,
             anilist_id=resolved.anilist_id if resolved else None,
             tmdb_id=resolved.tmdb_id if resolved else None,
-            source_provider=u"video-track" if result.taken_from else u"jimaku",
+            source_provider=u"video-track" if result.taken_from else (
+                u"jimaku" if self.where == u"jimaku"
+                else self.client.provider_of(result.jimaku_filename) or u"unknown"),
             source_name=(taken.get(u"name") or u"track %s" % taken.get(u"track", u"?")
                          if result.taken_from else result.jimaku_filename))
 
@@ -1127,7 +1140,12 @@ class _Run(object):
         ⚠ THE KEY MUST BE THE ONE `_identify` STORED UNDER -- title, season AND
         year. It was built without the year, so on a show whose name carries one
         this dropped nothing at all, silently.
+        🚨 LAYER 20 -- NEVER FROM A CHINESE RUN: it cached nothing, and the key (title,
+        season, year) is shared with Japanese runs -- forgetting here would drop a
+        JAPANESE learner's match and make their next run pay jimaku to find it again.
         """
+        if self.where != u"jimaku":
+            return
         try:
             dropped = self.resolutions.forget(cache_key(show.title, show.season, show.year))
         except (_client.EmptyQuery, ValueError, TypeError):
@@ -1613,12 +1631,13 @@ class _Run(object):
                                    newest_offered=newest)
         ranking = rank.rank(mine, allow_ai=self.s.allow_ai, seen_groups=frozenset(),
                             prefer=self.s.prefer_format, fallback=self.s.format_fallback,
-                            favourites=self.s.favourite_groups)
+                            favourites=self.s.favourite_groups, lang=self.lang)
         ranked = [r.candidate for r in ranking.ordered]
         if not ranked:
             # ⭐ 9a on this road: the files the choice takes are there, in a format the
             # settings do not -- a wait the fallback ends (`_starts_over`)
-            return self._road_wait(video, _unranked_reason(ranking, entry, self.s.prefer_format),
+            return self._road_wait(video, _unranked_reason(ranking, entry, self.s.prefer_format,
+                                                           self.where),
                                    entry, newest_offered=newest)
         fresh = [c for c in ranked
                  if self.s.force or not self.db.refused(
@@ -2322,11 +2341,11 @@ class _Run(object):
                             seen_groups=frozenset(seen_groups),
                             prefer=self.s.prefer_format,
                             fallback=self.s.format_fallback,
-                            favourites=self.s.favourite_groups)
+                            favourites=self.s.favourite_groups, lang=self.lang)
         ranked = [r.candidate for r in ranking.ordered]
         if not ranked:
             return self._not_found(video, _unranked_reason(ranking, entry,
-                                                           self.s.prefer_format),
+                                                           self.s.prefer_format, self.where),
                                    entry=entry, hard=False,
                                    tried_before=earlier, newest_offered=newest)
 
@@ -2661,7 +2680,7 @@ def _sentence(text):
     return text + u"."
 
 
-def _unranked_reason(ranking, entry, prefer):
+def _unranked_reason(ranking, entry, prefer, where=u"jimaku"):
     u"""Why the ranking left no file for the episode -- one copy, for the timed road and
     LAYER 15's untimed one alike: a wait's words in two copies drift. -> text
 
@@ -2675,13 +2694,16 @@ def _unranked_reason(ranking, entry, prefer):
     kinds = sorted(set(kind for kind in (tokens.subtitle_format(c.file["name"])
                                          for c in ranking.other_format) if kind))
     if kinds:
-        return formats.waiting_reason(kinds, prefer, len(ranking.other_format))
+        return formats.waiting_reason(kinds, prefer, len(ranking.other_format), where)
     if ranking.excluded:
         return (u"every one of the %d file(s) the entry offers for this episode "
                 u"was filtered out: %s"
                 % (len(ranking.excluded),
                    u"; ".join(sorted(set(why.rstrip(u".").split(u" -- ")[0]
                                          for _c, why in ranking.excluded)))))
+    if where != u"jimaku":
+        # ⭐ LAYER 20 -- a Chinese run has no entry; the sources are what it asked
+        return u"%s has no Chinese file for this episode" % where
     return u"jimaku entry %d has no file for this episode" % entry
 
 

@@ -413,6 +413,16 @@ class State(object):
         #: spend a metered request to tell somebody what they already know.
         self.key_status = u""
         self.key_ok = None
+        #: ⭐ LAYER 20 -- CHINESE SUBTITLES. `chinese_runs`: hato's own language is Chinese,
+        #: so its runs need an assrt.net or OpenSubtitles key, not jimaku's. `chinese`: the
+        #: Chinese card shows at all (that, or Surasura has a Chinese library). ⛔ Both False
+        #: for a Japanese learner, who sees hato exactly as before -- nothing is read for them.
+        self.chinese_runs = False
+        self.chinese = False
+        #: {service: "…ab12" or None} -- the last four, as hato itself reads them
+        self.zh_hints = {}
+        #: {service: (what the check said, worked)} -- ⛔ only on key entry, like jimaku's
+        self.zh_status = {}
         #: ⛔ Why the settings look empty, when they do. A config hato refuses
         #: is the one reason this window cannot show what is on disk, and
         #: opening on silent defaults would read as "your settings vanished".
@@ -2527,9 +2537,21 @@ class KeyDialog(QDialog):
     is readable by every other process on the machine.
     """
 
-    def __init__(self, parent=None, replacing=False):
+    #: ⭐ LAYER 20 -- {service: (its name, where to get one)}; jimaku's words are 1.0.0's
+    _WHERE = {
+        u"jimaku": (u"jimaku", u"Get one at jimaku.cc → Account → Developer Access."),
+        u"assrt": (u"assrt.net", u"For Chinese subtitles. Sign in at assrt.net and copy the "
+                                 u"API token from your user panel (用户面板)."),
+        u"opensubtitles": (u"OpenSubtitles", u"For Chinese subtitles, when assrt.net has "
+                                             u"nothing. Make a free account at "
+                                             u"opensubtitles.com, then API consumers → New "
+                                             u"consumer, and copy its API key."),
+    }
+
+    def __init__(self, parent=None, replacing=False, service=u"jimaku"):
         super().__init__(parent)
-        self.setWindowTitle(u"jimaku key")
+        name, where = self._WHERE[service]
+        self.setWindowTitle(u"%s key" % name)
         self.setModal(True)
         self.setStyleSheet(theme.qss())
         self.setMinimumWidth(460)
@@ -2538,14 +2560,14 @@ class KeyDialog(QDialog):
         box.setContentsMargins(GAP, 16, GAP, 14)
         box.setSpacing(12)
 
-        lead = label(u"Swap the jimaku key" if replacing
-                     else u"Add your jimaku key", u"emptylead", self)
+        lead = label(u"Swap the %s key" % name if replacing
+                     else u"Add your %s key" % name, u"emptylead", self)
         box.addWidget(lead)
 
         box.addWidget(paragraph(
-            u"Get one at jimaku.cc → Account → Developer Access. hato keeps it "
+            u"%s hato keeps it "
             u"in its own folder — never in the project, never in a config "
-            u"file, and never in a log.", self))
+            u"file, and never in a log." % where, self))
 
         self._field = QLineEdit(self)
         self._field.setObjectName(u"filter")
@@ -3255,7 +3277,7 @@ class HatoWindow(Styled):
         # it used to stop it SILENTLY. ⛔ Only when there is nothing to show:
         # a person who has run before keeps their results on screen, because
         # replacing real rows with a nag would be worse than the nag is worth.
-        if not state.key_hint and not state.rows:
+        if not self.has_key() and not state.rows:
             column.addStretch(1)
             column.addWidget(self._no_key())
             column.addStretch(1)
@@ -3385,9 +3407,14 @@ class HatoWindow(Styled):
         entry = next((row.get(u"jimaku_entry") for row in rows
                       if row.get(u"jimaku_entry") is not None), None)
         calls = sum(int(row.get(u"api_calls") or 0) for row in rows)
+        source = next((row.get(u"source") for row in rows if row.get(u"source")), None)
         if rows and all(gui_run.taken_from(row) for row in rows):
             said = (u"Taken out of the videos themselves — nothing was looked up on "
                     u"jimaku for this show.")
+        elif source:
+            # ⭐ LAYER 20 -- a Chinese show has no entry: it is searched by its title
+            said = (u"Searched for on %s by its title. %d API call%s for this show."
+                    % (source, calls, u"" if calls == 1 else u"s"))
         else:
             said = (u"Matched to jimaku entry %s. %d API call%s for this show. "
                     u"A show is looked up once and then remembered."
@@ -3491,6 +3518,8 @@ class HatoWindow(Styled):
         box = QVBoxLayout(host)
         box.setContentsMargins(PAD, 0, PAD, 0)
         box.setSpacing(14)
+        if self.state.chinese_runs:
+            return self._no_key_chinese(host, box)
 
         mark = QLabel(host)
         pixmap = branding.mark_pixmap(96, host.devicePixelRatioF())
@@ -3519,6 +3548,31 @@ class HatoWindow(Styled):
             link_label(u"Get a key at jimaku.cc/account",
                        u"https://jimaku.cc/account", u"hint", host),
             0, Qt.AlignmentFlag.AlignHCenter)
+        return host
+
+    def has_key(self):
+        u"""⭐ LAYER 20 -- whether this hato's runs have the key they need: jimaku's, or for a
+        Chinese hato (`chinese_runs`) assrt.net's or OpenSubtitles'. -> bool"""
+        if self.state.chinese_runs:
+            return any(self.state.zh_hints.values())
+        return bool(self.state.key_hint)
+
+    def _no_key_chinese(self, host, box):
+        u"""⭐ LAYER 20 -- the no-key screen of a Chinese hato: the same three things (the
+        problem, the control, where to get one), for its two sources."""
+        lead = label(u"No Chinese subtitle key yet", u"emptylead", host)
+        lead.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        box.addWidget(lead, 0, Qt.AlignmentFlag.AlignHCenter)
+        why = label(u"hato finds Chinese subtitles on assrt.net, then OpenSubtitles, each with "
+                    u"your own free key.", u"hint", host)
+        why.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        why.setWordWrap(True)
+        box.addWidget(why, 0, Qt.AlignmentFlag.AlignHCenter)
+        add = button(u"Add your assrt.net key", host, accent=True)
+        add.clicked.connect(lambda _checked=False: self.choose_zh_key(u"assrt"))
+        box.addWidget(add, 0, Qt.AlignmentFlag.AlignHCenter)
+        box.addWidget(link_label(u"Get one at assrt.net (your user panel)", u"https://assrt.net",
+                                 u"hint", host), 0, Qt.AlignmentFlag.AlignHCenter)
         return host
 
     def _empty(self, lead, tail):
@@ -4070,6 +4124,8 @@ class HatoWindow(Styled):
         stack.addWidget(self._card_folders(holder))
         stack.addWidget(self._card_format(holder))
         stack.addWidget(self._card_key(holder))
+        if state.chinese:                     # ⭐ LAYER 20 -- never for a Japanese learner
+            stack.addWidget(self._card_chinese(holder))
         stack.addWidget(self._card_skips(holder))
         stack.addWidget(self._card_blacklist(holder))
         stack.addWidget(self._card_memory(holder))
@@ -4766,6 +4822,9 @@ class HatoWindow(Styled):
             box.addWidget(label(u"●", u"dotok", line))
             box.addWidget(label(u"set, ending %s" % self.state.key_hint,
                                 None, line))
+        elif self.state.chinese_runs:
+            # ⭐ LAYER 20 -- a Chinese hato fetches without it
+            box.addWidget(label(u"Not set — only Japanese subtitles need it.", u"hint", line))
         else:
             box.addWidget(label(u"Not set — hato cannot fetch anything "
                                 u"until it is.", u"hint", line))
@@ -4795,6 +4854,49 @@ class HatoWindow(Styled):
         body.addWidget(paragraph(
             u"Kept in hato's own folder — never in the project and never "
             u"in a config file.", card))
+        return card
+
+    def _card_chinese(self, parent):
+        u"""⭐ LAYER 20 -- Chinese subtitles: assrt.net first, OpenSubtitles when it has
+        nothing, each on the learner's own free key. ⛔ Built only when `state.chinese`.
+
+        ⭐ assrt.net's credit and link, as its API page asks ("请在合适的位置添加来源说明及本站
+        链接"), and the two things a learner would otherwise meet as a silent miss: Chinese
+        files are mostly .srt, and OpenSubtitles gives 5 downloads a day without an account."""
+        card, body = self._card(u"Chinese subtitles", parent)
+        body.addWidget(paragraph(
+            u"For Chinese videos hato asks assrt.net first, then OpenSubtitles when assrt.net "
+            u"has nothing. Each needs your own free key.", card))
+        for service, name in ((u"assrt", u"assrt.net"), (u"opensubtitles", u"OpenSubtitles")):
+            hint = self.state.zh_hints.get(service)
+            line = QWidget(card)
+            box = QHBoxLayout(line)
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(10)
+            if hint:
+                box.addWidget(label(u"●", u"dotok", line))
+                box.addWidget(label(u"%s — set, ending %s" % (name, hint), None, line))
+            else:
+                box.addWidget(label(u"%s — not set" % name, u"hint", line))
+            box.addStretch(1)
+            choose = button(u"Swap for a different key" if hint else u"Add a key", line)
+            choose.clicked.connect(lambda _checked=False, s=service: self.choose_zh_key(s))
+            kept(choose, u"key.choose.%s" % service)
+            box.addWidget(choose)
+            body.addWidget(line)
+            said = self.state.zh_status.get(service)
+            if said:
+                checked = label(said[0], u"dotok" if said[1] else u"keybad", card)
+                checked.setWordWrap(True)      # the service's own words: they wrap
+                body.addWidget(checked)
+        if self.state.prefer_format == u"ass" and not self.state.format_fallback:
+            body.addWidget(paragraph(
+                u"Most Chinese subtitles are .srt, and OpenSubtitles has only .srt — tick "
+                u"“%s” under Subtitle format to take them." % formats.fallback_words(u"ass"), card))
+        body.addWidget(paragraph(
+            u"OpenSubtitles gives 5 downloads a day without an account. Keys are kept in "
+            u"hato's own folder — never in the project and never in a config file.", card))
+        body.addWidget(link_label(u"字幕服务由 assrt.net 提供", u"https://assrt.net", u"hint", card))
         return card
 
     def _card_skips(self, parent):
@@ -6779,7 +6881,7 @@ class HatoWindow(Styled):
         self.render()
         return fresh
 
-    def set_key(self, value, timeout=20.0):
+    def set_key(self, value, timeout=20.0, service=u"jimaku"):
         u"""Put a jimaku key in hato's own file. -> True when one was SAVED.
 
         🚨 THROUGH STDIN, NEVER A FILE AND NEVER argv. `hato key --set-from -`
@@ -6796,8 +6898,10 @@ class HatoWindow(Styled):
         self.key_save_error = u""
         if not value:
             return False
+        # ⭐ LAYER 20 -- `--service` only for a Chinese source: jimaku's argv is 1.0.0's
         process = self.spawn(
-            gui_run.cli_argv() + [u"key", u"--set-from", u"-", u"--json"],
+            gui_run.cli_argv() + [u"key", u"--set-from", u"-", u"--json"]
+            + ([u"--service", service] if service != u"jimaku" else []),
             stdin_text=value + u"\n")
         # 🚨 WAIT FOR THE WRITE, AND READ ITS VERDICT. ⛔ This used to spawn and
         # `return True` unconditionally, which was wrong twice over. The card
@@ -6837,7 +6941,12 @@ class HatoWindow(Styled):
                 return False
         # ⚠ Only the LAST FOUR, and only what hato itself would print. The
         # window never holds the key. ⭐ And only once the write has SUCCEEDED.
-        self.state.key_hint = u"…" + value[-4:] if len(value) >= 4 else u""
+        hint = u"…" + value[-4:] if len(value) >= 4 else u""
+        if service != u"jimaku":
+            self.state.zh_hints[service] = hint
+            self.render()
+            return True
+        self.state.key_hint = hint
         self.render()
         return True
 
@@ -6882,14 +6991,15 @@ class HatoWindow(Styled):
         if path:
             self.add_skips([path])
 
-    def verify_key(self, timeout=30.0):
+    def verify_key(self, timeout=30.0, service=u"jimaku"):
         u"""Ask jimaku whether the saved key works. -> (ok, message)
 
         ⭐ ONE METERED REQUEST, through `hato key --test`. ⛔ Not on launch and
         not on every render -- Sonic: *"just on the key entry, not another
         time."*
         """
-        argv = gui_run.cli_argv() + [u"key", u"--test", u"--json"]
+        argv = gui_run.cli_argv() + [u"key", u"--test", u"--json"] + (
+            [u"--service", service] if service != u"jimaku" else [])
         process = self.spawn(argv)
         try:
             out, _err = process.communicate(timeout=timeout)
@@ -6908,7 +7018,9 @@ class HatoWindow(Styled):
         if not answer:
             return False, u"hato gave an answer this window could not read"
         if answer.get(u"connected"):
-            return True, u"Connected — the key works"
+            return True, answer.get(u"said") or u"Connected — the key works"
+        if service != u"jimaku":
+            return False, answer.get(u"error") or u"the key was not accepted"
         return False, answer.get(u"error") or u"jimaku would not accept it"
 
     def choose_key(self):
@@ -6949,6 +7061,28 @@ class HatoWindow(Styled):
         ok, message = self.verify_key()
         self.state.key_status = message
         self.state.key_ok = ok
+        self.render()
+        return ok
+
+    def choose_zh_key(self, service):
+        u"""⭐ LAYER 20 -- ask for a Chinese source's key, save it, then prove it works: the
+        jimaku flow (`choose_key`), for `assrt` or `opensubtitles`. ⛔ Never tested unless it
+        saved (F-B05); ⛔ the value never leaves the dialog but on stdin."""
+        dialog = KeyDialog(self, replacing=bool(self.state.zh_hints.get(service)),
+                           service=service)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        value = dialog.value()
+        if not value:
+            return None
+        if not self.set_key(value, service=service):
+            why = getattr(self, u"key_save_error", u"")
+            self.state.zh_status[service] = (u"the key could not be saved — %s" % why
+                                             if why else u"the key could not be saved", False)
+            self.render()
+            return False
+        ok, message = self.verify_key(service=service)
+        self.state.zh_status[service] = (message, ok)
         self.render()
         return ok
 
@@ -7871,8 +8005,10 @@ class HatoWindow(Styled):
         #
         # ⭐ Refused HERE, before anything is spawned, so the reason is the
         # thing on screen rather than an exit code nobody sees.
-        if not self.state.key_hint:
-            self.state.live = u"no jimaku key — add one in Settings"
+        if not self.has_key():
+            self.state.live = (u"no assrt.net or OpenSubtitles key — add one in Settings"
+                               if self.state.chinese_runs
+                               else u"no jimaku key — add one in Settings")
             self.state.tab = TAB_SUBS
             self.render()
             return None
@@ -8291,6 +8427,18 @@ def read_schedule(state):
     return state
 
 
+def surasura_has_chinese():
+    u"""⭐ LAYER 20 -- True when Surasura's tools entry names a Chinese drop folder: its
+    learner has a Chinese library, and Surasura runs hato with `--lang zh`. A local file
+    read; ⛔ any failure reads False, so a Japanese learner never sees the card."""
+    try:
+        from hato import connect
+        found = connect.read_entry()
+        return found.status == u"present" and connect.drop_folder(found.entry, u"zh") is not None
+    except Exception:                         # noqa: BLE001
+        return False
+
+
 def settings_from_disk(state=None):
     u"""Fill a `State`'s settings from what is actually on disk. -> State
 
@@ -8323,6 +8471,7 @@ def settings_from_disk(state=None):
         state.schedule = cfg.schedule
         state.surasura_connect = cfg.surasura_connect     # ⭐ LAYER 16
         state.connect_key_in_file = cfg.origin(u"surasura_connect") == u"config.toml"
+        state.chinese_runs = _config.is_chinese(cfg.lang)  # ⭐ LAYER 20
         state.favourite_groups = tuple(cfg.favourite_groups)   # ⭐ LAYER 16 (16k)
         state.favourites_key_in_file = cfg.origin(u"favourite_groups") == u"config.toml"
         state.prefer_format = cfg.prefer_format
@@ -8353,6 +8502,16 @@ def settings_from_disk(state=None):
         state.key_hint = credentials.resolve_key().hint
     except Exception:                         # noqa: BLE001
         state.key_hint = None                 # not set yet is a normal state
+    # ⭐ LAYER 20 -- the Chinese card, for a Chinese hato or a Surasura with a Chinese
+    # library (its `drop_folders.zh`). ⛔ Neither: no key file of theirs is even opened.
+    state.chinese = state.chinese_runs or surasura_has_chinese()
+    state.zh_hints = {}
+    if state.chinese:
+        for service in (credentials.ASSRT, credentials.OPENSUBTITLES):
+            try:
+                state.zh_hints[service] = credentials.resolve_key(service=service).hint
+            except Exception:                 # noqa: BLE001
+                state.zh_hints[service] = None
 
     # ⭐ AND WHAT THE LAST RUN FOUND. Settings without results meant reopening
     # showed an empty Subtitles tab under a header naming the time of a run

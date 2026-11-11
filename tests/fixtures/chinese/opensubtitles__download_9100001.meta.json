@@ -1,0 +1,18 @@
+{
+ "body": {
+  "file_id": 9100001,
+  "sub_format": "srt"
+ },
+ "body_kept": true,
+ "bytes": 363,
+ "captured_at": "2026-11-11T21:00:00+00:00",
+ "method": "POST",
+ "note": "",
+ "provenance": "SHAPED from the service's documented/recorded answer (see make_fixtures.py) -- no real key was available; re-capture with one.",
+ "response_headers": {
+  "content-type": "application/json; charset=utf-8"
+ },
+ "sha256": "63b443610780f6dac13c44c9aae4c1654527bca87ce46729afe947d45c5e1084",
+ "status": 200,
+ "url": "https://api.opensubtitles.com/api/v1/download"
+}
