@@ -162,19 +162,23 @@ FIND = BASE / u"find-e2e"
 FIXTURES = Path(__file__).resolve().parent / u"fixtures"
 
 
-def _mkv(path, title):
+def _mkv(path, title, cues=((1, 3),)):
     u"""A real, tiny Matroska file with an English text track (the reference a download is
-    timed against) -- so hato's real reader says *fetch* and the run searches for it."""
+    timed against) -- so hato's real reader says *fetch* and the run searches for it.
+    `cues`: the track's (start s, end s); the video runs 5 s past the last."""
     import shutil
     ffmpeg = shutil.which(u"ffmpeg")
     if ffmpeg is None:
         pytest.skip(u"ffmpeg is not on PATH: no real video to hand Surasura")
     path.parent.mkdir(parents=True, exist_ok=True)
     srt = path.parent / u"_en.srt"
-    srt.write_text(u"1\n00:00:01,000 --> 00:00:03,000\nHello there.\n", encoding="utf-8")
+    words = [u"Hello there."] if len(cues) == 1 else [u"Line %d." % (n + 1) for n in range(len(cues))]
+    srt.write_text(u"\n".join(u"%d\n00:00:%02d,000 --> 00:00:%02d,000\n%s\n" % (n + 1, a, b, w)
+                              for n, ((a, b), w) in enumerate(zip(cues, words))), encoding="utf-8")
+    seconds = u"%d" % (cues[-1][1] + 5)
     subprocess.run([ffmpeg, u"-loglevel", u"error", u"-y", u"-f", u"lavfi", u"-i",
-                    u"color=c=black:s=160x120:d=8", u"-f", u"lavfi", u"-i",
-                    u"anullsrc=r=48000:cl=mono", u"-i", str(srt), u"-t", u"8", u"-map", u"0",
+                    u"color=c=black:s=160x120:d=" + seconds, u"-f", u"lavfi", u"-i",
+                    u"anullsrc=r=48000:cl=mono", u"-i", str(srt), u"-t", seconds, u"-map", u"0",
                     u"-map", u"1", u"-map", u"2", u"-c:v", u"libx264", u"-preset", u"ultrafast",
                     u"-c:a", u"aac", u"-c:s", u"srt", u"-metadata:s:s:0", u"language=eng",
                     u"-metadata", u"title=%s" % title, str(path)], check=True, timeout=120)
@@ -252,3 +256,119 @@ def test_17_surasuras_own_finder_against_this_hato(monkeypatch):
     assert said[u"notes"][late_rel] and said[u"notes"][late_rel][0], said[u"notes"]
     assert said[u"beside_on"] is False, u"Surasura did not read write_beside_video off"
     assert sorted(os.listdir(str(show))) == [u"Extras", late.name], u"something was written beside"
+
+
+# -- LAYER 20 + 09-hato-layer.md §7.9: Surasura's OWN Chinese finder against this hato ------------
+
+FIND_ZH = BASE / u"find-zh-e2e"
+ZH_DRIVER = Path(__file__).resolve().parent / u"_surasura_find_zh.py"
+
+
+def _zh_recordings(out):
+    u"""hato's Chinese recordings with SIX cues a body, into `out` -> the cues' times.
+    ⭐ The suite's own generator (`fixtures/chinese/make_fixtures.py --cues 6`): with one cue
+    tsubasa cannot time a file, and nothing comes back CONFIDENT."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        u"hato_zh_recordings", str(FIXTURES / u"chinese" / u"make_fixtures.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.main(str(out), 6)
+    return module.CUE_TIMES
+
+
+def test_20_surasuras_own_chinese_finder_against_this_hato(monkeypatch):
+    u"""⭐ §7.9 END TO END, hato's side: Surasura's `no_subs.find` for a CHINESE library -- its
+    Chinese yes, its gate on hato.json's `version` (≥ 1.3.0, now countersigned) and on
+    `<cli> --version`, `--lang zh` -- against THIS hato, started through a `hato-cli` wrapper
+    in an isolated world: its own data root and config, no key, no network
+    (`HATO_NO_NETWORK`), assrt.net and OpenSubtitles answered from six-cue recordings.
+    ⛔ Never Sonic's library or hato.
+
+    `Sousou no Frieren - 01`: assrt.net's season pack, simplified first -> CONFIDENT, written
+    beside the video as `.zh.ass` and registered into the Chinese library, filling the item
+    that waited (the copy beside it makes no second one). `- 04`: assrt.net has only what
+    hato leaves out -> NOT_FOUND, with hato's date. And the control arm first: an entry
+    naming 1.2.1 (a hato that lists `find` but finds Japanese only) is sent nothing."""
+    clone_finder = BASE / u"surasura-3.0" / u"app" / u"no_subs.py"
+    if u"SETTING_ZH" not in clone_finder.read_text(encoding="utf-8"):
+        pytest.skip(u"the scratch Surasura predates Zh-H (Surasura #387): it hands hato no "
+                    u"Chinese video yet")
+    import hato
+    import shutil
+    if FIND_ZH.exists():
+        shutil.rmtree(str(FIND_ZH))
+    times = _zh_recordings(FIND_ZH / u"recordings")
+    show = FIND_ZH / u"library" / u"Frieren"
+    one = _mkv(show / u"[SubsPlease] Sousou no Frieren - 01 (1080p).mkv", u"ep1", cues=times)
+    four = _mkv(show / u"[SubsPlease] Sousou no Frieren - 04 (1080p).mkv", u"ep4", cues=times)
+    home = FIND_ZH / u"hato"
+    home.mkdir(parents=True)
+    (home / u"config.toml").write_text(u"write_beside_video = true\nformat_fallback = true\n",
+                                       encoding="utf-8")
+    wrapper = FIND_ZH / u"hato-cli-find-zh.cmd"
+    py = Path(sys.executable)
+    repo = Path(__file__).resolve().parents[1]
+    wrapper.write_bytes((
+        u"@echo off\r\n"
+        u"set \"PYTHONPATH=%s\"\r\nset \"PYTHONUTF8=1\"\r\nset \"HATO_NO_NETWORK=1\"\r\n"
+        u"set \"HATO_CACHE=%s\"\r\nset \"HATO_CONFIG=%s\"\r\nset \"HATO_KEYFILE=%s\"\r\n"
+        u"set \"HATO_ASSRT_KEY=\"\r\nset \"HATO_OPENSUBTITLES_KEY=\"\r\n"
+        u"set \"TSUBASA_CACHE=%s\"\r\nset \"LOCALAPPDATA=%s\"\r\nset \"APPDATA=%s\"\r\n"
+        u"set \"HOUSEKI_TOOLS_DIR=%s\"\r\nset \"HATO_TOOLS_CLI=%%~f0\"\r\n"
+        u"if /I \"%%~1\"==\"config\" goto plain\r\n"
+        u"\"%s\" -m hato %%* --fixtures \"%s\"\r\nexit /b %%ERRORLEVEL%%\r\n"
+        u":plain\r\n\"%s\" -m hato %%*\r\n" % (
+            repo, home / u"data", home / u"config.toml", home / u"no-key.txt",
+            home / u"tsubasa", home / u"localappdata", home / u"appdata", TOOLS,
+            py, FIND_ZH / u"recordings", py)).encode("ascii"))
+
+    _scratch(u"make_root.py", u"--fresh", u"--connect", u"off")
+    made = json.loads(_scratch(ZH_DRIVER, u"setup").strip().splitlines()[-1])
+    assert (made[u"surasura.json"].get(u"drop_folders") or {}).get(u"zh"), made
+    monkeypatch.setenv("HOUSEKI_TOOLS_DIR", str(TOOLS))
+    monkeypatch.setenv(connect.TOOLS_CLI_ENV, str(wrapper))
+
+    # ⛔ THE CONTROL ARM FIRST: 1.2.1's entry lists `find`, and finds Japanese only
+    assert connect.write_hato_json(u"auto", version=u"1.2.1"), u"hato.json was not written"
+    said = json.loads(_scratch(ZH_DRIVER, u"find", show).strip().splitlines()[-1])
+    assert said[u"hato_finds"] is None and said[u"state"] is None, said
+    assert not (home / u"data" / u"hato.log").exists(), u"a Japanese-only hato was sent a run"
+
+    # this hato's own entry: its real version (§7.9)
+    assert connect.write_hato_json(u"auto"), u"hato.json was not written"
+    with open(str(TOOLS / u"hato.json"), encoding="utf-8") as handle:
+        assert json.load(handle)[u"version"] == hato.__version__
+    said = json.loads(_scratch(ZH_DRIVER, u"find", show).strip().splitlines()[-1])
+    assert os.path.normcase(said[u"hato_finds"] or u"") == os.path.normcase(str(wrapper)), said
+    assert sorted(os.path.normcase(v) for _r, v in said[u"waiting"]) == sorted(
+        os.path.normcase(str(p)) for p in (one, four)), said[u"waiting"]
+    found = said[u"find"]
+    assert (found[u"asked"], found[u"found"], found[u"not_found"], found[u"failed"]) == (
+        2, 1, 1, 0), found
+    outcomes = sorted(r[u"outcome"] for r in said[u"state"][u"hato"].values())
+    assert outcomes == [u"CONFIDENT", u"NOT_FOUND"], said[u"state"]
+    late = [r for r in said[u"state"][u"hato"].values() if r[u"outcome"] == u"NOT_FOUND"][0]
+    assert late[u"retry_at"] > time.time() + 3600, late             # hato's own date, ahead
+    assert not said[u"state"].get(u"offline_until"), u"Surasura read the run as failed whole"
+    four_rel = [r for r, v in said[u"waiting"] if os.path.normcase(v) == os.path.normcase(str(four))][0]
+    assert (said[u"notes"][four_rel] or [None])[0] == u"not-found", said[u"notes"]
+    assert said[u"beside_on"] is True, u"Surasura did not read write_beside_video on"
+    beside = one.with_name(one.stem + u".zh.ass")
+    assert sorted(os.listdir(str(show))) == sorted([one.name, beside.name, four.name])
+    assert u"芙莉莲" in beside.read_text(encoding="utf-8"), u"not the simplified file"
+
+    # what hato told Surasura: a Chinese pairing, from assrt.net, registered
+    with state.StateDB(home / u"data" / u"state.db") as db:
+        row = db.latest_pairing(cache.video_hash(one), u"zh")
+    assert row is not None and row.state == u"registered", row
+    assert row.record[u"language"] == u"zh" and row.record[u"jimaku_entry_id"] is None, row.record
+    assert row.record[u"subtitle_source"][u"provider"] == u"assrt", row.record
+    filled = [i for i in said[u"items"] if i[u"rel_path"].endswith(u".zh.ass")]
+    assert len(filled) == 1 and filled[0][u"availability"] == u"available", said[u"items"]
+
+    # the next look: the copy beside the video makes no second item, and 01 waits no more
+    looked = json.loads(_scratch(ZH_DRIVER, u"look", show).strip().splitlines()[-1])
+    assert [i for i in looked[u"items"] if u"Frieren - 01" in i[u"rel_path"]] == filled, looked
+    assert [os.path.normcase(v) for _r, v in looked[u"waiting"]] == [
+        os.path.normcase(str(four))], looked[u"waiting"]

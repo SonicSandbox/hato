@@ -233,6 +233,27 @@ def test_hato_json_is_utf8_not_escaped_and_leaves_no_temp(tools, tmp_path, monke
     assert sorted(os.listdir(str(tools))) == [u"hato.json", u"surasura.json"]
 
 
+def test_7_9_hato_json_names_hatos_real_version_in_the_one_shape_a_client_compares(
+        tools, tmp_path, monkeypatch):
+    u"""⭐ 09-hato-layer.md §7.9, COUNTERSIGNED for hato 2026-11-12: Surasura hands a Chinese
+    video only to a hato whose entry says X.Y.Z at or past 1.3.0. So `version` is the
+    package's own `__version__`, read when the entry is made (never a copy taken earlier),
+    in `update.parse_version`'s one strict shape -- and a hato that starts as a different
+    version rewrites it, or Surasura would go on comparing the old one."""
+    import hato
+    from hato import update
+    _surasura(tools, tmp_path)
+    monkeypatch.setenv(connect.TOOLS_CLI_ENV, _cli(tmp_path, u"hato-cli.cmd"))
+    assert update.parse_version(hato.__version__) is not None, (
+        u"hato %r is not X.Y.Z: a client would read it as no version at all" % hato.__version__)
+    assert connect.write_hato_json("auto", version=u"1.2.1") is True    # an older hato's entry
+    assert _hato_json(tools)["version"] == u"1.2.1"
+    assert connect.write_hato_json("auto") is True, u"a new version left the old one in place"
+    assert _hato_json(tools)["version"] == hato.__version__
+    monkeypatch.setattr(hato, "__version__", u"9.8.7")
+    assert connect.hato_entry("auto")["version"] == u"9.8.7", u"the version is read at the time"
+
+
 def test_a_crashed_writers_old_temp_is_cleared_and_a_fresh_one_kept(tools, tmp_path,
                                                                      monkeypatch):
     u"""Surasura's A2 note: hato clears its OWN leftovers after a crash."""
