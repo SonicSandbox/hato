@@ -120,6 +120,8 @@ def main(argv=None):
         print(usage())
         return EXIT_OK
     if argv and argv[0] in ("-V", "--version"):
+        # ⛔ A CONTRACT (09-hato-layer.md §7.9): Surasura reads this line, `hato X.Y.Z`, and
+        # compares the version before handing hato a Chinese video. Nothing else, before or after.
         print("hato %s" % __version__)
         return EXIT_OK
 

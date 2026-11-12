@@ -115,7 +115,9 @@ def read_entry(tool="surasura"):
     `status`: "present" · "absent" (no file, unreadable twice, not an object, over
     4 KiB, or its `cli` not a file on disk -- an uninstalled Surasura leaves its
     file behind, edge 2) · "too-new" (`schema` or `contract` above what hato
-    speaks: a note, treated as absent). `version` is a string, shown, never compared.
+    speaks: a note, treated as absent). Another tool's `version` is a string hato shows
+    and never compares. ⭐ hato's OWN entry is the other way round (`hato_entry`): its
+    `version` is hato's real version, and a client may compare it (§7.9).
     """
     path = os.path.join(tools_dir(), "%s.json" % tool)
     found = _read_json(path)
@@ -205,6 +207,16 @@ def hato_entry(setting, version=None):
     ⭐ A1 (Surasura confirmed 2026-10-29): `verbs` is `VERBS` unless the setting is
     OFF, then `[]` -- and `cli` STAYS filled, because Surasura drops an entry whose
     `cli` is missing rather than reading it as "hato can't be asked".
+
+    ⭐ `version` MAY BE COMPARED (09-hato-layer.md §7.9, Amendment WP2, countersigned for
+    hato 2026-11-12): it is `hato.__version__`, read at the call, in `update.parse_version`'s
+    one strict X.Y.Z shape, and Surasura hands a Chinese video only to a hato at or past
+    1.3.0. ⛔ So a later hato keeps finding Chinese, or says so in a field; and a release is
+    X.Y.Z only -- an `rc` / `.post` stamp reads to a client as no version (Japanese only, fail
+    closed), and `test_connect`'s §7.9 check refuses it in the tree. The entry names
+    the hato that last wrote it -- after *Go back* the newer one, until the kept hato starts
+    -- so a client asks `<cli> --version` before relying on it (§3), and that answer is
+    `hato X.Y.Z` on one line (`cli.main`).
     """
     found = advertised()
     if found is None:

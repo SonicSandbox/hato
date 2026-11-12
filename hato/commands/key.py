@@ -3,6 +3,8 @@
 
     hato key --show [--json]           the SOURCE and the last four characters
     hato key --set-from <file> [--json]  copy a key into <root>/key.txt
+    hato key --show --service assrt|opensubtitles --json
+                                       set or not, and where (Surasura's read, §7.9)
 
 ⭐ THIS IS THE COMMAND A STRANGER RUNS (RUNBOOK 1c). They save the key from
 https://jimaku.cc/account -> Developer Access into any text file, point
@@ -22,11 +24,17 @@ from hato import credentials, paths
 EXIT_OK = 0
 EXIT_FAILED = 1
 
+#: ⭐ 09-hato-layer.md §7.9 (b), signed for hato 2026-11-12 -- where a learner sets a Chinese
+#: key, in the window's own words (its tab and its card). PROVISIONAL words.
+WHERE_TO_SET = u"hato → Settings → Chinese subtitles"
+
 
 def register(parser):
     what = parser.add_mutually_exclusive_group(required=True)
     what.add_argument("--show", action="store_true",
-                      help="say whether the key resolves, from where, and its last four characters")
+                      help="say whether the key resolves, from where, and its last four "
+                           "characters (with --service assrt|opensubtitles --json: only "
+                           "whether it is set, and where to set it)")
     what.add_argument("--test", action="store_true", dest="test",
                       help="ask jimaku whether the key actually works. ⚠ Spends "
                            "ONE metered request")
@@ -168,17 +176,15 @@ def _other(args):
     characters are ever printed. `--test` spends ONE metered request."""
     service = args.service
     name = credentials.SERVICES[service][0]
+    if args.show and args.json:
+        return _zh_is_set(service, name)
     if args.show:
         try:
             key = credentials.resolve_key(service=service)
         except (credentials.KeyMissing, paths.PathError) as exc:
-            print(json.dumps({"found": False, "reason": str(exc)}, ensure_ascii=False)
-                  if args.json else "%s key   MISSING\n             %s" % (name, exc))
+            print("%s key   MISSING\n             %s" % (name, exc))
             return EXIT_FAILED
-        print(json.dumps({"found": True, "hint": key.hint, "source": key.source},
-                         ensure_ascii=False)
-              if args.json else "%s key   found, ending %s\n             from %s"
-              % (name, key.hint, key.source))
+        print("%s key   found, ending %s\n             from %s" % (name, key.hint, key.source))
         return EXIT_OK
     if getattr(args, "test", False):
         from hato.chinese import ChineseClient
@@ -224,6 +230,30 @@ def _other(args):
     else:
         print("%s key   saved, ending %s\n             %s" % (name, key.hint, written))
     return EXIT_OK
+
+
+def _zh_is_set(service, name):
+    u"""⭐ 09-hato-layer.md §7.9 (b) -- `--show --service assrt|opensubtitles --json`: would a
+    run find this key, and where does the learner set it. One line, always these four fields;
+    exit 0 set, 1 not. Surasura's Chinese card reads it before a press, to say *set your keys
+    in hato* instead of a run that waits an hour for keys that are not there.
+
+    🚨 NOT ONE CHARACTER OF THE KEY -- not its last four (the terminal and the window keep
+    those), not the file's path, not a refusal's words (they may name a path): another
+    program reads this, and what it reads can end up in its log. "Set" is what a run would
+    take (`resolve_key`): an empty variable or a rich-text file is not set. No network.
+
+    ⚠ SINCE hato 1.4.1. hato 1.3.0 and 1.4.0 answer this same command with `found`, the last
+    four and the file's path: a client asks only a hato whose `--version` says 1.4.1 or later
+    (§7.9), and reads only a line whose `set` is true or false."""
+    try:
+        credentials.resolve_key(service=service)
+        found = True
+    except Exception:                         # noqa: BLE001 -- ⛔ ONE LINE, ALWAYS: a stat
+        found = False                         # refused (PermissionError) is not a key either
+    print(json.dumps({"service": service, "name": name, "set": found, "where": WHERE_TO_SET},
+                     ensure_ascii=False))
+    return EXIT_OK if found else EXIT_FAILED
 
 
 def run(args):

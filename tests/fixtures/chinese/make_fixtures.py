@@ -16,6 +16,12 @@ u"""
   extensionless `file_name`, `feature_details`, `remaining`, `reset_time_utc`). The titles,
   ids and file names are this suite's own. ▶ Re-capture with a real key when one exists.
 - The subtitle BODIES are this suite's own short lines -- never anyone's subtitle text.
+
+    python -I tests/fixtures/chinese/make_fixtures.py --out DIR --cues 6
+
+⭐ The same recordings with SIX cues a body, into DIR: tsubasa needs five cues to time a file,
+so with one nothing can come back CONFIDENT. `connect_e2e`'s Chinese arm (test_20) writes
+them to its scratch folder; this folder keeps its one-cue bodies (`tests/test_chinese.py`).
 """
 import json
 import os
@@ -29,6 +35,13 @@ ASSRT = "https://api.assrt.net/v1"
 OS_API = "https://api.opensubtitles.com/api/v1"
 
 
+#: Where `write` puts the recordings, and how many cues a body carries (`main`'s arguments).
+OUT = HERE
+#: Each cue's start and end, in seconds: the first is the one-cue bodies' own.
+CUE_TIMES = ((1, 3), (5, 7), (9, 11), (14, 16), (19, 21), (25, 27))
+CUES = 1
+
+
 def write(stem, url, status, body, method="GET", post=None, headers=None, provenance=SHAPED,
           note=u""):
     data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -39,9 +52,9 @@ def write(stem, url, status, body, method="GET", post=None, headers=None, proven
             "response_headers": headers or {"content-type": "application/json; charset=utf-8"}}
     if post is not None:
         meta["body"] = post
-    with open(os.path.join(HERE, stem + ".json"), "wb") as fh:
+    with open(os.path.join(OUT, stem + ".json"), "wb") as fh:
         fh.write(data)
-    with open(os.path.join(HERE, stem + ".meta.json"), "w", encoding="utf-8", newline="\n") as fh:
+    with open(os.path.join(OUT, stem + ".meta.json"), "w", encoding="utf-8", newline="\n") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1, sort_keys=True)
         fh.write("\n")
 
@@ -52,14 +65,22 @@ def search_url(q, pos=0):
                                                    ("filelist", "1")]))
 
 
+def _cues(line):
+    u"""-> [(start s, end s, text)]: CUES of them; one cue says `line`, more number theirs."""
+    return [(a, b, line if CUES == 1 else u"%s (%d)" % (line, n + 1))
+            for n, (a, b) in enumerate(CUE_TIMES[:CUES])]
+
+
 def ass(line):
     return (u"[Script Info]\r\nScriptType: v4.00+\r\n\r\n[Events]\r\nFormat: Layer, Start, End, "
-            u"Style, Name, MarginL, MarginR, MarginV, Effect, Text\r\nDialogue: 0,0:00:01.00,"
-            u"0:00:03.00,Default,,0,0,0,,%s\r\n" % line).encode("utf-8")
+            u"Style, Name, MarginL, MarginR, MarginV, Effect, Text\r\n" + u"".join(
+                u"Dialogue: 0,0:00:%02d.00,0:00:%02d.00,Default,,0,0,0,,%s\r\n" % cue
+                for cue in _cues(line))).encode("utf-8")
 
 
 def srt(line, codec="utf-8"):
-    return (u"1\r\n00:00:01,000 --> 00:00:03,000\r\n%s\r\n" % line).encode(codec)
+    return u"\r\n".join(u"%d\r\n00:00:%02d,000 --> 00:00:%02d,000\r\n%s\r\n" % ((n + 1,) + cue)
+                         for n, cue in enumerate(_cues(line))).encode(codec)
 
 
 FRIEREN = u"Sousou no Frieren"
@@ -68,10 +89,14 @@ PACK = [u"[Nekomoe kissaten] Sousou no Frieren - %02d [WebRip 1080p].%s.ass" % (
 ONE = u"Sousou.no.Frieren.S01E03.1080p.WEB-DL"
 
 
-def main():
-    for name in os.listdir(HERE):
+def main(out=HERE, cues=1):
+    global OUT, CUES
+    OUT, CUES = out, cues
+    if not os.path.isdir(out):
+        os.makedirs(out)
+    for name in os.listdir(out):
         if name.endswith(".json"):
-            os.remove(os.path.join(HERE, name))
+            os.remove(os.path.join(out, name))
     # -- assrt.net: a title with a season pack, a single .srt, and four left out ----------
     lang_both = {"langlist": {"langchs": True, "langcht": True}, "desc": u"简 繁"}
     write("assrt__search_frieren", search_url(FRIEREN), 200, {"status": 0, "sub": {
@@ -176,8 +201,13 @@ def main():
           "%s/subtitles?languages=zh-cn,zh-tw&query=yuru+camp" % OS_API, 200,
           {"total_pages": 0, "total_count": 0, "per_page": 50, "page": 1, "data": []},
           note=u"shares its URL with the invalid-key recording: a suite picks one (stems=)")
-    print("wrote", len([n for n in os.listdir(HERE) if n.endswith(".meta.json")]), "recordings")
+    print("wrote", len([n for n in os.listdir(out) if n.endswith(".meta.json")]), "recordings")
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out", default=HERE)
+    parser.add_argument("--cues", type=int, default=1, choices=range(1, len(CUE_TIMES) + 1))
+    given = parser.parse_args()
+    main(given.out, given.cues)
