@@ -54,6 +54,22 @@ def test_version_flag_matches_the_package():
     assert out(proc).strip() == "hato %s" % hato.__version__
 
 
+def test_7_9_version_answers_one_line_in_the_shape_a_client_compares():
+    u"""⭐ 09-hato-layer.md §7.9 (countersigned 2026-11-12): before each Chinese run Surasura
+    asks the PROGRAM, `<cli> --version`, and trusts it over hato.json (after *Go back* the
+    entry still names the newer hato). So the answer is exactly `hato X.Y.Z` and a line end
+    on stdout, nothing on stderr, exit 0 -- for `-V` too -- and X.Y.Z is `__version__`."""
+    import hato
+    from hato import update
+    for flag in ("--version", "-V"):
+        proc = run_hato([flag], cwd=ROOT)
+        said = proc.stdout.decode("utf-8")
+        assert proc.returncode == 0 and proc.stderr == b"", (flag, out(proc))
+        assert re.fullmatch(r"hato (\d+\.\d+\.\d+)\r?\n", said), (flag, said)
+        assert update.parse_version(said.split()[1]) == update.parse_version(hato.__version__)
+        assert update.parse_version(said.split()[1]) is not None, said
+
+
 # -- tsubasa resolves to the vault checkout and nowhere else -------------------
 
 # 🚨 THESE TWO CHECKS ARE ABOUT A SOURCE CHECKOUT, AND THEY HAVE TO SAY SO.

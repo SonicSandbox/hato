@@ -66,6 +66,18 @@ def test_the_card_names_both_sources_their_keys_and_assrts_credit(qapp):
                                                          u"key.choose.opensubtitles"]
 
 
+def test_7_9_where_surasura_sends_the_learner_is_this_windows_tab_and_card(qapp):
+    u"""⭐ 09-hato-layer.md §7.9 (b): `hato key --show --service … --json` tells Surasura where
+    a Chinese key is set (`key.WHERE_TO_SET`), and Surasura's card says it. ⛔ The words are
+    this window's own -- its tab, then its card -- or the learner looks for a place that
+    is not there."""
+    from hato.commands import key as key_cmd
+    app, tab, card = [part.strip() for part in key_cmd.WHERE_TO_SET.split(u"→")]
+    window = make(chinese=True, zh_hints={u"assrt": None, u"opensubtitles": None})
+    assert app == u"hato" and window.tab_buttons[gui_app.TAB_SET].text() == tab
+    assert card.upper() in titles(window), titles(window)
+
+
 def test_with_the_format_fallback_on_the_srt_line_is_not_said(qapp):
     window = make(chinese=True, format_fallback=True, zh_hints={})
     texts = u" ".join(w.text() for w in window.findChildren(QLabel))

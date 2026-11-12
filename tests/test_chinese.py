@@ -20,6 +20,7 @@ import test_endtoend as e2e
 from hato import chinese, cli, config, credentials, paths, rank, report, resolution, tokens
 from hato.client import (DownloadError, DownloadNotFound, EmptyQuery, KeyRejected,
                          NetworkDisabled, RateLimited, RecordedSession, Unreachable)
+from hato.commands import key as key_cmd
 from hato.commands import run as run_cmd
 from hato.episodes import Candidate
 
@@ -737,3 +738,127 @@ def test_a_chinese_row_says_where_it_looked_and_carries_no_jimaku_entry(tmp_path
     code, rows = lab.json_rows(capsys)
     row = rows[FRIEREN[0]]
     assert row["source"] == chinese.WHERE and row["jimaku_entry"] is None
+
+
+# ===========================================================================
+# 7.9 -- `hato key --show --service assrt|opensubtitles --json`, the read Surasura makes
+# ===========================================================================
+
+#: A key with no run of three characters that the answer's own words could hold.
+_ZH_KEY = u"Qz7Kx9Wv3Jm5Lp8Rt2Ny"
+
+
+def _never_any_of_the_key(said, key=_ZH_KEY):
+    u"""No three characters of `key` in a row anywhere in `said` -- not the key, not its end."""
+    parts = [key[i:i + 3] for i in range(len(key) - 2)]
+    assert not [p for p in parts if p in said], (said, u"a part of the key was printed")
+
+
+@pytest.mark.parametrize("service, name", [("assrt", u"assrt.net"),
+                                           ("opensubtitles", u"OpenSubtitles")])
+def test_7_9_key_show_json_says_only_whether_a_chinese_key_is_set_and_where(
+        service, name, tmp_path, monkeypatch, capsys):
+    u"""⭐ 09-hato-layer.md §7.9 (b), countersigned 2026-11-12: Surasura's Chinese card asks
+    this before a press, so it can say *Set your Chinese keys in hato* instead of a run that
+    waits an hour, silently, for keys that are not there. ⛔ The answer is set or not and
+    where -- never the key, never its last four (the human `--show` keeps those), never the
+    file's path. One JSON line, the same four fields set or not."""
+    env = credentials.SERVICES[service][1]
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    monkeypatch.delenv(env, raising=False)
+    shape = {u"service": service, u"name": name, u"where": key_cmd.WHERE_TO_SET}
+
+    # -- nothing set: not set, and where
+    assert cli.main(["key", "--show", "--service", service, "--json"]) == 1
+    said = capsys.readouterr().out
+    assert json.loads(said) == dict(shape, set=False), said
+    assert len(said.strip().splitlines()) == 1, said
+
+    # -- saved through the window's road (stdin): set, and still nothing of the key
+    class _Stdin(object):
+        buffer = io.BytesIO((_ZH_KEY + u"\n").encode("ascii"))
+    monkeypatch.setattr("sys.stdin", _Stdin())
+    assert cli.main(["key", "--service", service, "--set-from", "-", "--json"]) == 0
+    capsys.readouterr()
+    assert cli.main(["key", "--show", "--service", service, "--json"]) == 0
+    said = capsys.readouterr()
+    assert json.loads(said.out) == dict(shape, set=True), said.out
+    _never_any_of_the_key(said.out + said.err)
+
+    # -- from the environment (a run reads it the same way): set
+    (tmp_path / "data" / ("%s-key.txt" % service)).unlink()
+    monkeypatch.setenv(env, _ZH_KEY)
+    assert cli.main(["key", "--show", "--service", service, "--json"]) == 0
+    said = capsys.readouterr().out
+    assert json.loads(said)[u"set"] is True
+    _never_any_of_the_key(said)
+
+
+def test_7_9_a_key_hato_would_not_use_reads_as_not_set(tmp_path, monkeypatch, capsys):
+    u"""What a run would refuse is not a key that is set: an empty variable, a rich-text file
+    (TextEdit's default) and a pasted label all answer `set: false` -- the card then says to
+    set the key, which is the one thing that helps. ⛔ And the refusal's own words, which may
+    name a path, stay out of the answer."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    monkeypatch.setenv("HATO_ASSRT_KEY", u"   ")
+    assert cli.main(["key", "--show", "--service", "assrt", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)[u"set"] is False
+    monkeypatch.delenv("HATO_ASSRT_KEY")
+    (tmp_path / "data").mkdir()
+    for body in (b"{\rtf1\ansi " + _ZH_KEY.encode("ascii") + b"}\n",
+                 (u"API Token: " + _ZH_KEY + u"\n").encode("utf-8")):
+        (tmp_path / "data" / "assrt-key.txt").write_bytes(body)
+        assert cli.main(["key", "--show", "--service", "assrt", "--json"]) == 1
+        said = capsys.readouterr().out
+        assert json.loads(said) == {u"service": u"assrt", u"name": u"assrt.net",
+                                    u"set": False, u"where": key_cmd.WHERE_TO_SET}, said
+        _never_any_of_the_key(said)
+
+
+def test_7_9_a_key_hato_cannot_read_still_answers_one_line(tmp_path, monkeypatch, capsys):
+    u"""⛔ ONE JSON LINE, ALWAYS: a data folder hato cannot use (a relative HATO_CACHE:
+    `PathError`) and a key file the system will not let it look at (`PermissionError` from
+    a stat) both answer `set: false` -- never a traceback, which would leave the card nothing
+    to read."""
+    monkeypatch.delenv("HATO_ASSRT_KEY", raising=False)
+    monkeypatch.setenv("HATO_CACHE", u"relative-data-folder")
+    assert cli.main(["key", "--show", "--service", "assrt", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)[u"set"] is False
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+
+    def _refused(service=credentials.JIMAKU, start=None):
+        raise PermissionError(13, "Access is denied", str(tmp_path / "data" / "assrt-key.txt"))
+    monkeypatch.setattr(credentials, "resolve_key", _refused)
+    assert cli.main(["key", "--show", "--service", "assrt", "--json"]) == 1
+    said = capsys.readouterr()
+    assert json.loads(said.out)[u"set"] is False and said.err == u"", said
+
+
+def test_the_recordings_generator_still_makes_these_recordings_byte_for_byte(tmp_path):
+    u"""`make_fixtures.py` now also writes six-cue bodies elsewhere (connect_e2e's Chinese
+    arm). ⛔ Its default must stay THIS folder's recordings, byte for byte -- the e2e's
+    recordings are only worth what they share with the ones this suite proves."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(u"hato_zh_make", str(ZH / u"make_fixtures.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.main(str(tmp_path))
+    made = sorted(p.name for p in tmp_path.iterdir())
+    assert made == sorted(p.name for p in ZH.glob(u"*.json")), made
+    assert [n for n in made if (tmp_path / n).read_bytes() != (ZH / n).read_bytes()] == []
+    module.main(str(tmp_path / u"six"), 6)
+    six = (tmp_path / u"six" / u"assrt__file_700002.json").read_bytes().decode("gbk")
+    assert six.count(u"-->") == 6 and u"(6)" in six, six
+
+
+def test_7_9_the_human_show_is_unchanged_and_jimakus_json_too(tmp_path, monkeypatch, capsys):
+    u"""Only the Chinese `--json` read changed: a person at a terminal still sees the last
+    four (the window does too), and jimaku's `--show --json` keeps 1.0's shape."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    monkeypatch.setenv("HATO_ASSRT_KEY", _ZH_KEY)
+    monkeypatch.setenv("HATO_JIMAKU_KEY", u"jimakuKeyForTheShow9876")
+    assert cli.main(["key", "--show", "--service", "assrt"]) == 0
+    assert u"assrt.net key   found, ending …t2Ny" in capsys.readouterr().out
+    assert cli.main(["key", "--show", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        u"found": True, u"hint": u"…9876", u"source": u"HATO_JIMAKU_KEY"}
