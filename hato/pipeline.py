@@ -1092,6 +1092,21 @@ class _Run(object):
         # never raises): the subtitle beside the video is written and correct.
         if self.handoff is not None and result.wrote and not result.skip:
             self._hand_off(show, result)
+        # ⭐ LAYER 19 (19f, PROVISIONAL) -- a REAL Japanese subtitle was just kept: the
+        # `.from-audio.srt` hato made for this video goes to the trash (restorable). From
+        # the ONE funnel, for the same reason as the hand-off. ⛔ Only a file hato made
+        # and nobody changed (`speech.made_by_hato`): Surasura's own copy beside a video
+        # carries the same name and is never touched. ⛔ `speech.retire` never raises.
+        # ⚠ A19-4 -- never for a Layer 15 keep: a file NOBODY TIMED never displaces one made from the
+        # video's own audio, which is in sync with it.
+        if result.wrote and not result.skip and result.untimed is None:
+            from hato import speech
+            gone = speech.retire(result.video, beside=self.s.write_beside_video)
+            if gone:
+                # ⚠ A19-5 -- a decision made on the person's behalf is said where they look (LEDGER-HOT)
+                self.report.notes.append(
+                    u"%s: the subtitle hato made from its audio went to the trash (a real one was found)"
+                    % os.path.basename(result.video))
 
     def _hand_off(self, show, result):
         u"""⭐ LAYER 16 -- one kept file to Surasura, its record built FROM THE ROAD

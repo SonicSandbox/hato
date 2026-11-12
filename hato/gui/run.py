@@ -732,6 +732,12 @@ def argv_for_config(*flags):
     return list(cli_argv()) + [u"config"] + [str(f) for f in flags] + [u"--json"]
 
 
+def argv_for_speech(*flags):
+    u"""⭐ LAYER 19 -- `hato speech`, the ONE implementation the window and a person share.
+    -> [unicode]. `--json` always: the window reads `progress`, `speech` and `result` objects."""
+    return list(cli_argv()) + [u"speech"] + [str(f) for f in flags] + [u"--json"]
+
+
 def no_console_kwargs():
     u"""Popen keywords that stop a console flashing over the app. -> dict
 
@@ -1515,7 +1521,7 @@ __all__ = ["ADDED", "NEEDS_YOU", "NOT_YET", "FAILED", "SKIPPED",
            "PICK_OVERRIDES_TIMING", "PAIRED", "FORCED", "PICK_REFUSED", "PICK_FAILED",
            "PICK", "WAITING", "TROUBLE",
            "Run", "Runner", "apply_waits", "argv_for", "argv_for_blacklist",
-           "argv_for_clear", "argv_for_config", "argv_for_update", "blacklist_entries",
+           "argv_for_clear", "argv_for_config", "argv_for_speech", "argv_for_update", "blacklist_entries",
            "load_waits",
            "memory_summary", "save_waits", "waits_path",
            "argv_for_pair", "argv_for_problems", "argv_for_retry",

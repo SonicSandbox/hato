@@ -6812,13 +6812,14 @@ def test_every_settings_control_the_keyboard_reaches_keeps_a_name_of_its_own(qap
               u"updates.auto", u"updates.restart_tray", u"blacklist.sweep",
               u"format.embedded:save", u"format.embedded.restart_tray",   # 14c
               u"format.untimed:any_provider", u"format.untimed.restart_tray",   # LAYER 15
-              u"favourites", u"favourites.restart_tray"}                        # 16k
+              u"favourites", u"favourites.restart_tray",                        # 16k
+              u"speech.install"}                                                # LAYER 19
     assert wanted <= reached, u"the shapes never built %s" % sorted(wanted - reached)
     window = make(running=False)
     window.show_tab(gui_app.TAB_SET)
     radios = window.panes[gui_app.TAB_SET].findChildren(gui_app.Radio)
-    # ⭐ LAYER 15 -- three more: the untimed choice's
-    assert len(radios) == 8 and all(r.property(gui_app.KEEP) for r in radios), (
+    # ⭐ LAYER 15 -- three more: the untimed choice's · ⭐ LAYER 19 -- two more: Fast / More accurate
+    assert len(radios) == 10 and all(r.property(gui_app.KEEP) for r in radios), (
         [r.property(gui_app.KEEP) for r in radios])
     # ⚠ And no two alike (the 14z gate: M14-14 survived once unchosen radios left the
     # Tab walk above -- Z14-3's rule is every control's, a Tab stop or not)
@@ -7950,3 +7951,237 @@ def test_16z_D5_a_failing_progress_callback_is_complained_of_once_per_reader(
         window._poll_reads()
     assert window._reading == []
     assert len(said) == 2 and all(u"progress" in s for s in said), (len(said), said[:3])
+
+
+# ===========================================================================
+# ⭐ LAYER 19 -- *Subtitles from the audio* (RUNBOOK 19h, words PROVISIONAL)
+# ===========================================================================
+
+def _speech_found(fast=False, accurate=False, addon=False, gpu=False, surasura=False, nvidia=False,
+                  picked=u"fast"):
+    part = lambda on, size: {u"installed": on, u"download": size, u"on_disk": size if on else 0}  # noqa: E731
+    return {u"type": u"speech", u"addon": dict(part(addon, 90000000), version=u"1.0.0", published=True),
+            u"models": {u"fast": part(fast, 489389564), u"accurate": part(accurate, 1621666983),
+                        u"gpu": part(gpu, 1325871888)},
+            u"picked": picked, u"nvidia": nvidia, u"surasura": surasura, u"held": False}
+
+
+class _Reading(object):
+    u"""What `_read` hands back when a child really started (the card is busy only then: A19-2)."""
+
+    def __init__(self):
+        self.stopped = 0
+
+    def stop(self):
+        self.stopped += 1
+
+
+def _speech_window(**found):
+    window = make(running=False)
+    window.state.speech = _speech_found(**found)
+    reads = []
+    window._read = lambda argv, done, each=None: reads.append(argv) or _Reading()
+    window.show_tab(gui_app.TAB_SET)
+    return window, reads
+
+
+def _speech_card_words(window):
+    return u" ".join(w.text() for w in window.panes[gui_app.TAB_SET].findChildren(QLabel) if w.text())
+
+
+def _speech_buttons(window):
+    return dict((b.property(gui_app.KEEP), b) for b in window.panes[gui_app.TAB_SET].findChildren(QPushButton)
+                if str(b.property(gui_app.KEEP) or u"").startswith(u"speech."))
+
+
+def test_the_speech_card_offers_both_models_with_their_size_and_downloads_nothing_by_itself(qapp):
+    window, reads = _speech_window()
+    words = _speech_card_words(window)
+    assert u"Make Japanese subtitles from a video's own audio, on this computer." in words
+    assert u"Fast" in words and u"More accurate" in words and u"faster with an NVIDIA card" in words
+    assert u"0.5 GB" in words and u"1.6 GB" in words, words
+    buttons = _speech_buttons(window)
+    assert set(buttons) == {u"speech.install"} and buttons[u"speech.install"].text() == u"Download (0.6 GB)…"
+    assert reads == [] and window.spawned == [], u"⛔ a card on screen downloads nothing"
+    assert u"Surasura makes these" not in words
+
+
+def test_with_a_surasura_the_card_says_so_quietly_and_stays_usable(qapp):
+    window, _reads = _speech_window(surasura=True)
+    note = [w for w in window.panes[gui_app.TAB_SET].findChildren(QLabel)
+            if w.text() == u"Surasura makes these through Anki Miner."]
+    assert len(note) == 1 and note[0].objectName() == u"hint"
+    assert u"speech.install" in _speech_buttons(window)
+
+
+def test_download_asks_first_and_cancel_fetches_nothing(qapp, monkeypatch):
+    monkeypatch.setattr(gui_app, u"SpeechDialog", _confirm(gui_app.QDialog.DialogCode.Rejected))
+    window, reads = _speech_window()
+    window.choose_speech_install()
+    assert reads == [] and window.state.speech_busy is None
+
+
+def test_download_on_the_yes_installs_the_picked_model_and_the_nvidia_pack_only_when_chosen(qapp, monkeypatch):
+    for gpu in (False, True):
+        confirm = _confirm(gui_app.QDialog.DialogCode.Accepted)
+        confirm.use_gpu = lambda self, on=gpu: on
+        monkeypatch.setattr(gui_app, u"SpeechDialog", confirm)
+        window, reads = _speech_window(picked=u"accurate")
+        window.choose_speech_install()
+        argv, = reads
+        assert argv == gui_run.argv_for_speech(*([u"install", u"--model", u"accurate", u"--progress"] +
+                                                 ([u"--gpu"] if gpu else []))), argv
+        assert window.state.speech_busy == u"install"
+
+
+def test_the_confirm_names_the_size_and_offers_the_nvidia_pack_only_with_a_card(qapp):
+    dialog = gui_app.SpeechDialog(None, _speech_found(nvidia=False), u"accurate")
+    words = u" ".join(w.text() for w in dialog.findChildren(QLabel) if w.text())
+    assert u"Download More accurate (1.7 GB)?" in words and u"Nothing you watch is sent anywhere." in words, words
+    assert dialog.findChildren(gui_app.Switch) == [] and dialog.use_gpu() is False
+    dialog = gui_app.SpeechDialog(None, _speech_found(nvidia=True), u"accurate")
+    switch, = dialog.findChildren(gui_app.Switch)
+    assert not switch.isChecked(), u"NVIDIA's pack is a second download: off until chosen"
+    switch.setChecked(True)
+    assert dialog.use_gpu() is True
+    assert gui_app.SpeechDialog(None, _speech_found(nvidia=True), u"fast").findChildren(gui_app.Switch) == []
+
+
+def test_once_installed_the_card_makes_for_a_folder_or_one_file_and_can_remove(qapp, tmp_path, monkeypatch):
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    window, reads = _speech_window(fast=True, addon=True)
+    assert set(_speech_buttons(window)) == {u"speech.make_folder", u"speech.make_file", u"speech.remove"}
+    window.start_speech_make([str(tmp_path / "Anime")])
+    argv, = reads
+    listed = argv[argv.index(u"--list") + 1]
+    assert argv == gui_run.argv_for_speech(u"make", u"--list", listed, u"--model", u"fast", u"--progress",
+                                           u"--cancel-file", str(window._speech_cancel)), argv
+    assert open(listed, encoding="utf-8").read() == str(tmp_path / "Anime") + u"\n"
+    assert window.state.speech_busy == u"make" and set(_speech_buttons(window)) == {u"speech.cancel"}
+    window.speech_cancel()
+    assert window._speech_cancel.exists(), u"Cancel is the cancel file the run watches"
+
+
+def test_the_runs_end_is_counted_in_the_cards_words(qapp):
+    window, _reads = _speech_window(fast=True, addon=True)
+    window.state.speech_busy = u"make"
+    window._speech_made(None, [{u"type": u"result", u"ok": True,
+                                u"counts": {u"made": 3, u"present": 1, u"no_speech": 1}}])
+    assert window.state.speech_busy is None
+    assert window.state.speech_said == (u"3 made from audio · 1 already has Japanese subtitles · "
+                                        u"1 no speech heard")
+    window._speech_made(None, [{u"type": u"result", u"ok": False,
+                                u"error": u"subtitles are already being made from audio"}])
+    assert window.state.speech_said == u"Not made: subtitles are already being made from audio"
+
+
+def test_progress_says_the_download_in_sizes_and_the_file_being_listened_to(qapp):
+    window, _reads = _speech_window()
+    window.state.speech_busy = u"install"
+    window._speech_progress({u"type": u"progress", u"stage": u"downloading", u"done": 120000000,
+                             u"total": 579000000})
+    assert window.state.speech_said == u"Downloading… 0.1 GB of 0.6 GB"
+    window._speech_painted = 0.0
+    window._speech_progress({u"type": u"progress", u"stage": u"listening", u"done": 45, u"total": 90,
+                             u"path": u"D:/Anime/Show - 01.mkv"})
+    assert window.state.speech_said == u"Listening to Show - 01.mkv… 50 %"
+
+
+def _not_yet_strip(window):
+    for widget in window.panes[gui_app.TAB_PICK].findChildren(QLabel):
+        if u"not on jimaku yet" in widget.text():
+            return widget.parentWidget()
+    return None
+
+
+def test_a_waiting_episode_with_a_made_subtitle_says_made_from_audio_and_still_waits(qapp, monkeypatch, tmp_path):
+    u"""19e -- the made file is never *found*: the episode stays in *not on jimaku yet* (hato keeps looking, 17e)
+    and the strip counts it as made from audio."""
+    from hato import speech
+    window = make(running=False)
+    waiting = [r for r in window.state.problems()
+               if gui_run.problem_kind(r) == gui_run.WAITING and not gui_run.is_format_wait(r)
+               and not gui_run.untimed_wait_of(r) and not r.get(u"waiting_by_choice")]
+    assert waiting, u"the fixture has episodes not on jimaku yet"
+    made = tmp_path / ("x" + speech.SUFFIX)
+    made.write_text(u"1\n00:00:01,000 --> 00:00:02,000\nあ\n", encoding="utf-8")
+    first = waiting[0][u"video"]
+    monkeypatch.setattr(speech, "made_for", lambda video, beside=True: made if video == first else
+                        tmp_path / "none.srt")
+    window.state.speech = _speech_found()
+    window.show_tab(gui_app.TAB_PICK)
+    strip = _not_yet_strip(window)
+    words = u" ".join(w.text() for w in strip.findChildren(QLabel))
+    assert u"1 made from audio" in words, words
+
+
+def test_make_from_audio_is_offered_on_the_waiting_strip_only_when_installed_and_no_surasura(qapp, monkeypatch):
+    for found, offered in ((dict(), False), (dict(fast=True, addon=True), True),
+                           (dict(fast=True, addon=True, surasura=True), False)):
+        window = make(running=False)
+        window.state.speech = _speech_found(**found)
+        reads = []
+        window._read = lambda argv, done, each=None: reads.append(argv) or _Reading()
+        window.show_tab(gui_app.TAB_PICK)
+        buttons = [b for b in _not_yet_strip(window).findChildren(QPushButton)
+                   if b.property(gui_app.KEEP) == u"speech.make_waiting"]
+        assert bool(buttons) is offered, found
+        if buttons:
+            buttons[0].click()
+            argv, = reads
+            assert argv[len(gui_run.cli_argv()):len(gui_run.cli_argv()) + 2] == [u"speech", u"make"]
+
+
+
+def test_a_child_that_never_started_leaves_the_card_free_with_a_sentence(qapp, tmp_path, monkeypatch):
+    u"""A19-2 -- busy only once a child is really reading: never busy for ever with a Cancel that finds no one."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    window, _reads = _speech_window(fast=True, addon=True)
+    window._read = lambda argv, done, each=None: None
+    window.start_speech_make([str(tmp_path / "Anime")])
+    assert window.state.speech_busy is None and window.state.speech_said == u"couldn't start"
+
+    def raising(argv, done, each=None):
+        raise OSError(u"The filename or extension is too long")
+    window._read = raising
+    window.start_speech_make([str(tmp_path / "Anime")])
+    assert window.state.speech_busy is None and u"too long" in window.state.speech_said
+
+
+def test_cancel_asks_the_run_to_stop_by_its_file_and_never_kills_it_at_once(qapp, tmp_path, monkeypatch):
+    u"""A19-3 -- the cancel file alone: a kill could leave a temp file beside a video and a made file unrecorded.
+    The end then says *Stopped*, never *No videos or audio there*."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    window, _reads = _speech_window(fast=True, addon=True)
+    reading = _Reading()
+    window._read = lambda argv, done, each=None: window._reading.append((reading, done, [], each)) or reading
+    window.start_speech_make([str(tmp_path / "Anime")])
+    window.speech_cancel()
+    assert window._speech_cancel.exists() and reading.stopped == 0
+    window._speech_made(None, [])
+    assert window.state.speech_said == u"Stopped."
+
+
+def test_progress_repaints_the_cards_line_in_place_and_never_rebuilds_settings(qapp, tmp_path, monkeypatch):
+    u"""A19-1 -- RUNBOOK 13b: a rebuild 4 times a second for an hour, and a Cancel destroyed under the pointer."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    window, _reads = _speech_window(fast=True, addon=True)
+    window.start_speech_make([str(tmp_path / "Anime")])
+    built = []
+    monkeypatch.setattr(window, u"render", lambda *a, **k: built.append(1))
+    window._speech_painted = 0.0
+    window._speech_progress({u"type": u"progress", u"stage": u"listening", u"done": 30, u"total": 60,
+                             u"path": u"D:/Anime/Show - 01.mkv"})
+    assert built == [] and window._speech_line.text() == u"Listening to Show - 01.mkv… 50 %"
+
+
+def test_the_waiting_strip_can_stop_a_run_it_started(qapp, tmp_path, monkeypatch):
+    u"""A19-16 -- *Make from audio* pressed on Needs you: the run is seen and stopped there, not only in Settings."""
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    window, _reads = _speech_window(fast=True, addon=True)
+    window.start_speech_make([str(tmp_path / "Anime")])
+    window.show_tab(gui_app.TAB_PICK)
+    stop, = [b for b in _not_yet_strip(window).findChildren(QPushButton)
+             if b.property(gui_app.KEEP) == u"speech.stop_waiting"]
+    stop.click()
+    assert window._speech_cancel.exists()

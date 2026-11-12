@@ -80,6 +80,11 @@ COPIED = [
     "packaging/entry_update.py",
     "packaging/smoke_standalone.py",
     "packaging/package_standalone.py",
+    # ⭐ 1.4.0 (LAYER 19) -- the speech add-on's build: its Corresponding Source too, for the exe in
+    # `hato-speech-<ver>-windows-x64.zip`, an asset of the release
+    "packaging/entry_speech.py",
+    "packaging/hato-speech.spec",
+    "packaging/package_speech.py",
     # ⚠ The launcher a Windows Run key points at. `hato/startup.py` registers
     # it by name; without it, "Start with Windows" from a clone is dead.
     "hato-watch.pyw",

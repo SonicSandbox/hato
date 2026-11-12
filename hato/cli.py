@@ -47,6 +47,7 @@ COMMANDS = {
     "problems": "hato.commands.problems",
     "update": "hato.commands.update",           # RUNBOOK LAYER 11
     "pairings": "hato.commands.pairings",       # RUNBOOK LAYER 16 (Surasura reads it)
+    "speech": "hato.commands.speech",           # RUNBOOK LAYER 19 (subtitles from the audio)
 }
 
 #: The folder run (spec/RUNBOOK.md 4b + 5a).

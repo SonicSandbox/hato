@@ -63,6 +63,38 @@ are present in the *unpacked* copy.
 
 ---
 
+## The speech add-on, and what it downloads only on your yes (LAYER 19)
+
+**`hato-speech-<version>-windows-x64.zip`** is a separate download, never part of hato's zip. hato fetches it only
+after you say yes in *Settings › Subtitles from the audio*. It is built by `packaging/hato-speech.spec` and
+`packaging/package_speech.py`, and carries `LICENSE` and this file at its top and each bundled wheel's own licence
+files under `licenses/`. Read from each package's installed metadata on 2026-11-12:
+
+| Bundled in the add-on | Licence | Note |
+| --- | --- | --- |
+| **CPython** and its standard library | **PSF-2.0** | As in hato's zip, OpenSSL included (**Apache-2.0**) |
+| **sherpa-onnx** 2.0.1 (with **sherpa-onnx-core**) | **Apache-2.0** | Finds the voice (Silero VAD) for both models and runs *Fast* |
+| **ONNX Runtime**, inside sherpa-onnx | **MIT** | sherpa-onnx's own copy. ⛔ The `onnxruntime` package is left out (its DLL would collide) |
+| **CTranslate2** 4.9.0 | **MIT** | Runs *More accurate* |
+| **faster-whisper** 1.2.1 | **MIT** | Whisper on CTranslate2. Its download code is never used: hato fetches the model itself, and the add-on has no network library |
+| **tokenizers** 0.23.3 | **Apache-2.0** | Whisper's tokenizer |
+| **PyAV** 18.1.0 and the **FFmpeg** libraries in its wheel | **BSD-3-Clause**; FFmpeg built with x264 / x265, so **GPL-2.0-or-later** | Reads the video's or audio file's sound. ⭐ GPL-2.0-or-later is compatible with hato's GPL-3.0-or-later, and the add-on is conveyed under GPL-3.0 as a whole |
+| **numpy** 2.4.6 | **BSD-3-Clause** (with its bundled libraries' own: 0BSD, MIT, Zlib, CC0-1.0) | |
+| **tqdm** | **MPL-2.0 AND MIT** | Imported by faster-whisper |
+| **PyYAML** | **MIT** | Imported by CTranslate2 |
+| **Silero VAD** (`silero_vad.onnx`), [snakers4/silero-vad](https://github.com/snakers4/silero-vad), as published by sherpa-onnx | **MIT** | The voice finder's model, 0.6 MB |
+| **PyInstaller bootloader** | **GPL-2.0-with-exception** | As in hato's zip |
+
+**Downloaded on your yes, never bundled.** Each download is pinned by URL, size and sha256 in `hato/speech.py`:
+
+| Downloaded | From | Licence | Note |
+| --- | --- | --- | --- |
+| **NVIDIA Parakeet TDT-CTC 0.6B ja** (int8, sherpa-onnx's conversion): *Fast* | github.com/k2-fsa/sherpa-onnx, release `asr-models` | **CC-BY-4.0**, © NVIDIA | Attribution: *"parakeet-tdt_ctc-0.6b-ja" by NVIDIA, CC BY 4.0, converted to ONNX by the sherpa-onnx project* |
+| **Whisper large-v3-turbo** (CTranslate2 conversion): *More accurate* | huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo, fixed commit `0a363e91` | **MIT** (OpenAI's Whisper, MIT; the conversion, MIT) | |
+| **NVIDIA cuBLAS, cuDNN and NVRTC** for CUDA 12: only with *Use my NVIDIA card* | files.pythonhosted.org (NVIDIA's own wheels) | **NVIDIA's licence agreements** | ⛔ Never conveyed by hato. They are fetched on your machine, and only their DLLs are kept |
+
+---
+
 ## Runtime dependencies
 
 | Package | Why hato needs it | Licence | Read from |
