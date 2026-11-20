@@ -1740,6 +1740,45 @@ def test_a_video_inside_a_skipped_folder_is_never_looked_at(tmp_path):
     assert any(u"skipped folder" in note for note in report.notes)
 
 
+def test_a_folder_skipped_in_surasura_is_skipped_by_the_run_too(tmp_path, monkeypatch):
+    u"""⭐ Sonic, 2026-11-18: *"hato doesn't also ignore what I ignore"* -- a folder
+    skipped in Surasura (*Never read this folder*) is read from surasura.json's
+    `skipped_folders` for the hand-off's language and skipped as the run's own
+    `skip_folders` are: never looked at, said out loud. ONE list, Surasura's.
+
+    ⛔ And only that language's: a Chinese library's skip never takes a Japanese
+    run's folder out. Switched off (`surasura_connect = off`), Surasura's list is
+    not read at all."""
+    lab = Lab(tmp_path, names=[])
+    watched = lab.second_root(u"lib", u"frieren S2 - 01.mkv")
+    downloading = lab.second_root(os.path.join(u"lib", u"ダウンロード中"),
+                                  u"frieren S2 - 02.mkv")
+    other = lab.second_root(os.path.join(u"lib", u"下载中"), u"frieren S2 - 03.mkv")
+    _surasura.install(tmp_path, monkeypatch,
+                      skipped_folders={"ja": [str(downloading)], "zh": [str(other)]})
+
+    report = lab.run(folders=[watched])
+
+    kept = sorted(os.path.basename(r.video) for r in report.results)
+    assert kept == [u"frieren S2 - 01.mkv", u"frieren S2 - 03.mkv"]
+    assert any(u"skipped folder" in note and str(downloading) in note
+               for note in report.notes)
+    off = lab.run(folders=[watched], surasura_connect=u"off")
+    assert len(off.results) == 3, u"switched off, Surasura's list was still read"
+
+
+def test_an_entry_with_no_skipped_folders_skips_nothing_more(tmp_path, monkeypatch):
+    u"""An older Surasura writes no `skipped_folders` (or a field hato can't read):
+    the run's own list alone, nothing taken out by a guess."""
+    for odd in (None, {"ja": u"not a list"}, {"ja": [u"relative/path", 7]}):
+        lab = Lab(tmp_path / str(id(odd)), names=[])
+        watched = lab.second_root(u"lib", u"frieren S2 - 01.mkv")
+        lab.second_root(os.path.join(u"lib", u"sub"), u"frieren S2 - 02.mkv")
+        fields = {} if odd is None else {"skipped_folders": odd}
+        _surasura.install(tmp_path / str(id(odd)), monkeypatch, **fields)
+        assert len(lab.run(folders=[watched]).results) == 2, odd
+
+
 def test_a_folder_whose_name_merely_starts_the_same_is_not_skipped(tmp_path):
     u"""🚨 THE PREFIX TRAP, at the seam rather than in the helper. A
     `startswith` test says `_incoming2` is inside `_incoming`, so skipping one

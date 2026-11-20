@@ -707,6 +707,25 @@ class _Run(object):
 
     # -- discovery ----------------------------------------------------------
 
+    def _surasura_skips(self):
+        u"""⭐ The folders the learner skipped in Surasura (surasura.json's
+        `skipped_folders`, for the hand-off's language) -> [path]. Read from the entry
+        this run's link already read (a dry run, which hands nothing over, reads it
+        once here); [] when hato's Surasura setting is off or there is no entry.
+
+        ⭐ Sonic, 2026-11-18: a folder skipped in Surasura is skipped by hato too --
+        ONE list, Surasura's, never a second one to keep in step by hand.
+        ⛔ Never raises: Surasura is never why a run fails."""
+        try:
+            if self.s.surasura_connect == u"off":
+                return []
+            lang = connect.handoff_lang(self.s.lang)
+            link = getattr(self.handoff, "link", None) if self.handoff is not None else None
+            entry = link.entry if link is not None else connect.read_entry().entry
+            return connect.skipped_folders(entry, lang)
+        except Exception:                            # noqa: BLE001
+            return []
+
     def _discover(self):
         u"""-> [ShowReport], each carrying `(video, root)` pairs.
 
@@ -733,6 +752,7 @@ class _Run(object):
         carry SEVERAL different ones -- which is the collision itself.
         """
         seen, shows, usable, skipped = set(), OrderedDict(), 0, 0
+        skips = list(self.s.skip_folders) + self._surasura_skips()
         for root in self.s.folders:
             try:
                 found = tsubasa.scan(videos=root, recurse=self.s.recurse).videos
@@ -748,7 +768,7 @@ class _Run(object):
                 # ⭐ RUNBOOK 7e -- the skipped folders, applied to what was
                 # FOUND. ⛔ Before `seen`, so a video reachable from two roots
                 # cannot be admitted by whichever root was walked first.
-                if _under_any(video.path, self.s.skip_folders):
+                if _under_any(video.path, skips):
                     skipped += 1
                     continue
                 key = _key(video.path)
@@ -766,7 +786,7 @@ class _Run(object):
             self.report.notes.append(
                 u"%d video(s) were not looked at because they are inside a "
                 u"skipped folder (%s)."
-                % (skipped, u", ".join(self.s.skip_folders)))
+                % (skipped, u", ".join(skips)))
         if not usable:
             raise ConfigProblem(
                 u"none of the %d folder(s) given could be scanned: %s"
