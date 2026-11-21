@@ -143,6 +143,22 @@ def drop_folder(entry, lang):
     return None
 
 
+def skipped_folders(entry, lang):
+    u"""⭐ The folders the learner skipped in Surasura for `lang` (surasura.json's
+    `skipped_folders[lang]`: Surasura's *Never read this folder*, ONE list, Surasura's)
+    -> [absolute path], [] when the entry names none (an older Surasura, another
+    language, a field that isn't a list). A run skips them as it skips its own
+    `skip_folders`; Surasura refuses a hand-over from one anyway (`register`'s
+    `skipped`), so an entry that leaves them out only costs a download.
+
+    ⛔ Read, never kept: a skip (or Surasura's *Read again*) reaches the next run."""
+    found = (entry or {}).get("skipped_folders")
+    folders = found.get(lang) if isinstance(found, dict) else None
+    if not isinstance(folders, list):
+        return []
+    return [f for f in folders if isinstance(f, str) and f and os.path.isabs(f)]
+
+
 def verbs(entry):
     u"""The verbs an entry offers, as a tuple of strings (anything else dropped)."""
     found = (entry or {}).get("verbs")
@@ -945,6 +961,6 @@ def watched(found=None):
 
 __all__ = ["SCHEMA", "CONTRACT", "STATES", "OFF", "ABSENT", "TOO_NEW", "OFFLINE", "DROPS",
            "REGISTERS", "Entry", "Link", "Status", "tools_dir", "read_entry", "drop_folder",
-           "verbs", "VERBS", "state", "advertised", "hato_entry", "write_hato_json",
+           "skipped_folders", "verbs", "VERBS", "state", "advertised", "hato_entry", "write_hato_json",
            "refresh",
            "library_there", "status", "watched"]
