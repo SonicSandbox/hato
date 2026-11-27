@@ -10,6 +10,9 @@ u"""Keep hato itself up to date -- RUNBOOK LAYER 11.
                                                  this command exits, the swapper swaps and
                                                  opens hato again
     hato update --rollback [--json]              the same, putting the KEPT version back
+    hato update --quiet-install [--json]         what is staged goes in now, quietly, if
+                                                 nothing of hato is open -- for a program
+                                                 with no tray to do it (Surasura)
 
 ⭐ ONE IMPLEMENTATION, THREE CALLERS: the window drives this through its Runner and
 reads the `--progress` stream exactly as it reads a run's; the tray and the 03:00 run
@@ -74,6 +77,9 @@ def register(parser):
                         help="install the staged version now: hato closes and opens again")
     parser.add_argument("--rollback", action="store_true",
                         help="put back the version kept before the last update")
+    parser.add_argument("--quiet-install", action="store_true",
+                        help="what is staged goes in now, if updating is automatic and "
+                             "nothing of hato is open; nothing reopens")
     parser.add_argument("--json", action="store_true", help="one JSON object per line")
     parser.add_argument("--progress", action="store_true",
                         help="with --stage --json: stream the download's progress")
@@ -263,6 +269,55 @@ def _auto(args, now):
     return EXIT_OK
 
 
+def _quiet_install(args):
+    u"""`--quiet-install` -- the DAILY RUN's quiet install (`watch.update_now`'s second
+    half), for a program with no tray to do it: Surasura starts `--auto` once a day
+    while nothing of hato is open, then asks this. Without it a release `--auto`
+    staged waited for a press in the window -- a tray is off by default, a daily run
+    is opted into -- while Surasura's Settings said hato was updating itself.
+
+    What is staged goes in NOW through `watch.install_when_idle(tray=False)`, under
+    every rule the tray's and the daily run's install keeps: frozen Windows only,
+    *Update automatically* on, not a version turned away, no window, no run. ⛔ NOT
+    WHILE A TRAY WATCHES: the tray puts it in itself, and a hand-off under it would
+    wait a minute for a tray that never exits. ⛔ Nothing reopens: nobody opened
+    anything. -> EXIT_OK whatever happened; `--json`: `{"type": "applying",
+    "version"}` once the swapper has it (this command then exits: the swapper waits
+    for it), else `{"type": "waiting", "version"}` -- the release staged, or None."""
+    from hato import watch
+    staged, handed = None, False
+    try:
+        staged = update.staged_version(install_dir(), __version__)
+        if staged is not None and watch.watching_pid() is None:
+            handed = bool(watch.install_when_idle(tray=False))
+    except Exception:                         # noqa: BLE001 -- unsure is not now
+        handed = False
+    if handed:
+        _say(args, {u"type": u"applying", u"version": staged},
+             u"hato %s is installing -- nothing of hato opens." % staged)
+    elif staged:
+        _say(args, {u"type": u"waiting", u"version": staged},
+             u"hato %s is downloaded and checked -- it waits for nothing of hato to be "
+             u"open, or for Restart now in hato's window." % staged)
+    else:
+        _say(args, {u"type": u"waiting", u"version": None},
+             u"Nothing is waiting to be installed.")
+    return EXIT_OK
+
+
+def _keep_entry():
+    u"""hato.json kept in step (`connect.refresh`), as the window, the tray and each run
+    keep it at their start. ⭐ After `--quiet-install` nothing of hato starts, so the
+    entry named the version before it until something did -- and Surasura, reading
+    it, compared the new release with the old number. ⛔ Never raises: Connect is
+    never why an answer fails."""
+    try:
+        from hato import config, connect
+        connect.refresh(config.load().surasura_connect)
+    except Exception:                         # noqa: BLE001
+        pass
+
+
 def tried_today(state, version, now):
     u"""True when staging `version` already failed within the day."""
     tried = state.get(u"stage_tried")
@@ -319,6 +374,10 @@ def _run(args, now):
         # silent (nothing to do), the rest say why.
         if args.auto:
             return EXIT_OK
+        if getattr(args, u"quiet_install", False):
+            _say(args, {u"type": u"waiting", u"version": None},
+                 sentence(update.Decision(update.NONE, reason=update.HELD), __version__))
+            return EXIT_OK
         decision = update.Decision(update.NONE, reason=update.HELD)
         if args.apply or args.rollback or args.stage:
             return _fail(args, sentence(decision, __version__))
@@ -328,6 +387,8 @@ def _run(args, now):
         return EXIT_OK
     if args.auto:
         return _auto(args, now)
+    if getattr(args, u"quiet_install", False):
+        return _quiet_install(args)
     if args.apply or args.rollback:
         return _apply(args)
     if args.stage:
@@ -367,4 +428,5 @@ def _run(args, now):
     obj = dict(decision.as_dict())
     obj.update({u"type": u"update", u"current": __version__})
     _say(args, obj, sentence(decision, __version__))
+    _keep_entry()
     return EXIT_OK
