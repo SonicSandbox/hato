@@ -1629,6 +1629,134 @@ def test_a_failed_apply_never_costs_the_tray(capsys, monkeypatch, tmp_path):
     assert calls == [u"stop", watch.watch_argv()], u"the tray was not started again: %s" % calls
 
 
+def _quiet(monkeypatch, install, auto=True, run=False, window=False, tray=None):
+    u"""`--quiet-install`'s world: 1.0.4 frozen at `install` -- the tray's and the daily
+    run's install reads the folder from the exe and the version from `hato` --
+    *Update automatically* `auto`, a run, the window, a tray -> the starts made."""
+    import sys
+    import hato
+    from hato import config, runlock, watch
+    calls = _frozen_at(monkeypatch, install, tray=tray)
+    monkeypatch.setattr(hato, "__version__", u"1.0.4")
+    monkeypatch.setattr(sys, "executable", str(install / u"hato-cli.exe"))
+    monkeypatch.setattr(watch, "can_update_itself", lambda: True)
+    monkeypatch.setattr(watch, "_START_FAILED", {})
+
+    class Cfg(object):
+        auto_update = auto
+        surasura_connect = u"auto"
+    monkeypatch.setattr(config, "load", lambda *a, **k: Cfg())
+    monkeypatch.setattr(runlock, "run_in_flight", lambda path=None: run)
+    monkeypatch.setattr(watch, "window_open", lambda install, ops=None: window)
+    return calls
+
+
+def test_quiet_install_hands_the_staged_release_over_and_reopens_nothing(capsys, monkeypatch,
+                                                                          tmp_path):
+    u"""⭐ Surasura's daily start -- `--auto`, then this. A default hato (no tray, no daily
+    run) had the release `--auto` staged wait for a press in its window, for days, while
+    Surasura's Settings said hato was updating itself. Now it goes in as the daily run's
+    does: the swapper, quiet, with no window and no tray to bring back."""
+    from hato.commands import update as command
+    install, root, pending = _staged_over(tmp_path, monkeypatch, root=None,
+                                          current=_running(monkeypatch))
+    calls = _quiet(monkeypatch, install)
+    assert command.run(_args(quiet_install=True, json=True)) == command.EXIT_OK
+    said = _said(capsys)
+    assert (said[u"type"], said[u"version"]) == (u"applying", u"1.0.5"), said
+    copy = os.path.join(str(root), update.swapper_copy_name(u"1.0.5"))
+    assert calls == [[copy, u"--pending", os.path.abspath(pending), u"--quiet"]], calls
+    with open(pending, encoding="utf-8") as handle:
+        hand = json.load(handle)
+    assert (hand[u"window"], hand[u"tray"]) == (False, False), hand
+
+
+@pytest.mark.parametrize("change", [u"auto-off", u"run", u"window", u"tray", u"skipped"])
+def test_quiet_install_waits_while_hato_is_busy_or_told_not_to(capsys, monkeypatch, tmp_path,
+                                                               change):
+    u"""Every rule the tray's install keeps: *Update automatically* off, a run, the
+    window, a version turned away -- and ⛔ a tray watching (it puts the release in
+    itself; a hand-off under it waits a minute for a tray that never exits). Nothing
+    starts, the release is named as waiting, exit 0."""
+    from hato.commands import update as command
+    install, _root, _pending = _staged_over(tmp_path, monkeypatch, root=None,
+                                            current=_running(monkeypatch))
+    calls = _quiet(monkeypatch, install, auto=change != u"auto-off", run=change == u"run",
+                   window=change == u"window", tray=4242 if change == u"tray" else None)
+    if change == u"skipped":
+        update.skip(u"1.0.5")
+    assert command.run(_args(quiet_install=True, json=True)) == command.EXIT_OK
+    said = _said(capsys)
+    assert (said[u"type"], said[u"version"]) == (u"waiting", u"1.0.5"), said
+    assert calls == [], u"something started: %s" % calls
+
+
+def test_quiet_install_with_nothing_staged_says_so_and_starts_nothing(capsys, monkeypatch,
+                                                                      tmp_path):
+    from hato.commands import update as command
+    _running(monkeypatch)
+    monkeypatch.setenv("HATO_CACHE", str(tmp_path / "data"))
+    install = _installed(tmp_path)
+    calls = _quiet(monkeypatch, install)
+    assert command.run(_args(quiet_install=True, json=True)) == command.EXIT_OK
+    said = _said(capsys)
+    assert (said[u"type"], said[u"version"]) == (u"waiting", None), said
+    assert calls == []
+    assert command.run(_args(quiet_install=True)) == command.EXIT_OK
+    assert u"Nothing is waiting" in capsys.readouterr().out
+
+
+def test_quiet_install_in_a_copy_another_program_holds_touches_nothing(capsys, monkeypatch,
+                                                                       tmp_path):
+    u"""LAYER 17 (H6): its holder moves its version -- nothing read, nothing started."""
+    from hato import paths
+    from hato.commands import update as command
+    install, _root, _pending = _staged_over(tmp_path, monkeypatch, root=None,
+                                            current=_running(monkeypatch))
+    calls = _quiet(monkeypatch, install)
+    monkeypatch.setattr(paths, "held_by", lambda install=None: u"surasura")
+    assert command.run(_args(quiet_install=True, json=True)) == command.EXIT_OK
+    said = _said(capsys)
+    assert (said[u"type"], said[u"version"]) == (u"waiting", None), said
+    assert calls == []
+
+
+def test_quiet_install_is_a_flag_of_the_command_line(monkeypatch):
+    u"""`hato-cli update --quiet-install --json` parses (an older hato's usage error, exit
+    2, is how a caller tells it has none)."""
+    import argparse
+    from hato.commands import update as command
+    parser = argparse.ArgumentParser()
+    command.register(parser)
+    args = parser.parse_args([u"--quiet-install", u"--json"])
+    assert args.quiet_install and args.json
+
+
+def test_the_answer_keeps_hatos_entry_in_step(capsys, monkeypatch):
+    u"""⭐ After a quiet install nothing of hato starts, so hato.json named the version
+    before it -- and Surasura compared the new release with that old number. `--check`
+    (the answer Surasura reads next) keeps the entry in step, as the window, the tray
+    and each run do at their start; ⛔ an entry that can't be written never costs it."""
+    from hato import config, connect
+    from hato.commands import update as command
+    monkeypatch.setenv("HATO_NO_NETWORK", "1")
+
+    class Cfg(object):
+        surasura_connect = u"auto"
+    monkeypatch.setattr(config, "load", lambda *a, **k: Cfg())
+    kept = []
+    monkeypatch.setattr(connect, "refresh", lambda setting, *a, **k: kept.append(setting))
+    assert command.run(_args(if_due=True, json=True), now=1000.0) == command.EXIT_OK
+    assert kept == [u"auto"], kept
+    assert json.loads(capsys.readouterr().out)[u"type"] == u"update"
+
+    def broken(setting, *a, **k):
+        raise OSError(u"stand-in: the tools folder is gone")
+    monkeypatch.setattr(connect, "refresh", broken)
+    assert command.run(_args(json=True), now=1000.0) == command.EXIT_OK
+    assert json.loads(capsys.readouterr().out)[u"type"] == u"update"
+
+
 @WINDOWS_ONLY
 def test_rollback_hands_off_with_the_CURRENT_swapper(capsys, monkeypatch, tmp_path):
     u"""*Go back* runs the version that wrote the hand-off -- not the kept one's."""
